@@ -1,0 +1,20 @@
+[database]
+url = "postgresql://username:password@localhost:5432/comps"
+max_connections = 10
+
+[s3]
+endpoint = "http://localhost:9000"  
+region = "us-east-1"
+bucket = "competition-data"
+access_key_id = "your-access-key"
+secret_access_key = "your-secret-key"
+
+[recall]
+endpoint = "http://localhost:9090/rpc/v0"
+private_key = "your-private-key"
+
+[sync]
+interval_seconds = 60
+batch_size = 100
+workers = 5
+state_db_path = "sync_state.db"
