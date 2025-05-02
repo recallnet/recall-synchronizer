@@ -1,20 +1,15 @@
-use anyhow::Result;
+use anyhow::{Context, Result};
 use sqlx::postgres::{PgPool, PgPoolOptions};
 use sqlx::types::chrono::{DateTime, Utc};
-use tracing::{debug, info};
+use tracing::{debug, info, warn};
 
+use self::models::ObjectInfo;
 use crate::config::DatabaseConfig;
+
+pub mod models;
 
 pub struct DbConnector {
     pool: PgPool,
-}
-
-#[derive(Debug)]
-pub struct ObjectInfo {
-    pub key: String,
-    pub updated_at: DateTime<Utc>,
-    pub competition_id: Option<String>,
-    pub metadata: Option<serde_json::Value>,
 }
 
 impl DbConnector {
@@ -22,7 +17,14 @@ impl DbConnector {
         let pool = PgPoolOptions::new()
             .max_connections(config.max_connections)
             .connect(&config.url)
-            .await?;
+            .await
+            .context("Failed to connect to PostgreSQL database")?;
+
+        // Test connection
+        sqlx::query("SELECT 1")
+            .execute(&pool)
+            .await
+            .context("Failed to execute test query on PostgreSQL database")?;
 
         info!("Connected to PostgreSQL database");
         Ok(Self { pool })
@@ -35,7 +37,7 @@ impl DbConnector {
         limit: usize,
     ) -> Result<Vec<ObjectInfo>> {
         let mut query = sqlx::QueryBuilder::new(
-            "SELECT key, updated_at, competition_id, metadata FROM object_store_index WHERE 1=1 ",
+            "SELECT key, updated_at, competition_id, metadata, size_bytes FROM object_store_index WHERE 1=1 "
         );
 
         if let Some(since_time) = since {
@@ -43,7 +45,7 @@ impl DbConnector {
             query.push_bind(since_time);
         }
 
-        if let Some(comp_id) = competition_id {
+        if let Some(comp_id) = &competition_id {
             query.push(" AND competition_id = ");
             query.push_bind(comp_id);
         }
@@ -51,8 +53,11 @@ impl DbConnector {
         query.push(" ORDER BY updated_at ASC LIMIT ");
         query.push_bind(limit as i64);
 
-        let query = query.build_query_as::<ObjectInfo>();
-        let objects = query.fetch_all(&self.pool).await?;
+        let query = query.build_query_as();
+        let objects = query
+            .fetch_all(&self.pool)
+            .await
+            .context("Failed to fetch updated objects from database")?;
 
         debug!("Found {} objects to sync", objects.len());
         Ok(objects)
@@ -61,7 +66,8 @@ impl DbConnector {
     pub async fn get_latest_updated_timestamp(&self) -> Result<Option<DateTime<Utc>>> {
         let record = sqlx::query!("SELECT MAX(updated_at) as latest FROM object_store_index")
             .fetch_one(&self.pool)
-            .await?;
+            .await
+            .context("Failed to fetch latest updated timestamp")?;
 
         Ok(record.latest)
     }
