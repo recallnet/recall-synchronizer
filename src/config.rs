@@ -3,7 +3,7 @@ use serde::Deserialize;
 use std::fs;
 use std::path::Path;
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Clone, Deserialize)]
 pub struct Config {
     pub database: DatabaseConfig,
     pub s3: S3Config,
@@ -11,13 +11,13 @@ pub struct Config {
     pub sync: SyncConfig,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Clone, Deserialize)]
 pub struct DatabaseConfig {
     pub url: String,
     pub max_connections: u32,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Clone, Deserialize)]
 pub struct S3Config {
     pub endpoint: Option<String>,
     pub region: String,
@@ -26,18 +26,21 @@ pub struct S3Config {
     pub secret_access_key: Option<String>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Clone, Deserialize)]
 pub struct RecallConfig {
     pub endpoint: String,
     pub private_key: String,
+    pub prefix: Option<String>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Clone, Deserialize)]
 pub struct SyncConfig {
     pub interval_seconds: u64,
     pub batch_size: usize,
     pub workers: usize,
     pub state_db_path: String,
+    pub retry_limit: u32,
+    pub retry_delay_seconds: u64,
 }
 
 pub fn load_config(path: &str) -> Result<Config> {

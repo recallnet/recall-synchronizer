@@ -3,15 +3,16 @@ url = "postgresql://username:password@localhost:5432/comps"
 max_connections = 10
 
 [s3]
-endpoint = "http://localhost:9000"  
+endpoint = "http://localhost:9000" 
 region = "us-east-1"
 bucket = "competition-data"
 access_key_id = "your-access-key"
 secret_access_key = "your-secret-key"
 
 [recall]
-endpoint = "http://localhost:9090/rpc/v0"
-private_key = "your-private-key"
+endpoint = "http://localhost:8080/rpc/v0"
+private_key = "your-private-key-hex"
+prefix = "competitions/data"  # Optional prefix for all keys stored in Recall
 
 [sync]
 interval_seconds = 60
