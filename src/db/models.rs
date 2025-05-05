@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
 use sqlx::types::chrono::{DateTime, Utc};
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct ObjectInfo {
     pub key: String,
     pub updated_at: DateTime<Utc>,

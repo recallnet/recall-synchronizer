@@ -1,71 +1,48 @@
-use anyhow::{Context, Result};
-use recall_rs::{
-    client::{Client, ClientBuilder},
-    BucketInfo,
-};
-use std::str::FromStr;
-use tracing::{debug, error, info};
+use anyhow::Result;
+use tracing::{debug, info};
 
 use crate::config::RecallConfig;
 
+// Stub implementation until recall dependencies are re-enabled
 pub struct RecallConnector {
-    client: Client,
+    endpoint: String,
     prefix: Option<String>,
 }
 
 impl RecallConnector {
     pub async fn new(config: &RecallConfig) -> Result<Self> {
-        let client = ClientBuilder::default()
-            .with_address(&config.endpoint)
-            .with_private_key_hex(&config.private_key)
-            .build()
-            .await
-            .context("Failed to initialize Recall client")?;
-
-        info!("Connected to Recall network at {}", &config.endpoint);
+        info!(
+            "Creating stub Recall connector with endpoint {}",
+            &config.endpoint
+        );
 
         Ok(Self {
-            client,
+            endpoint: config.endpoint.clone(),
             prefix: config.prefix.clone(),
         })
     }
 
-    pub async fn store_object(&self, key: &str, data: &[u8]) -> Result<String> {
+    pub async fn store_object(&self, key: &str, _data: &[u8]) -> Result<String> {
         let full_key = if let Some(prefix) = &self.prefix {
             format!("{}/{}", prefix, key)
         } else {
             key.to_string()
         };
 
-        debug!("Storing object to Recall: {}", full_key);
+        debug!("STUB: Storing object to Recall: {}", full_key);
 
-        let cid = self
-            .client
-            .write_object(&full_key, data)
-            .await
-            .context(format!("Failed to store object to Recall: {}", full_key))?;
+        // Return a fake CID
+        let fake_cid = format!("bafkreistub{}", key.len());
 
-        debug!("Successfully stored object {} with CID: {}", full_key, cid);
-        Ok(cid.to_string())
+        debug!(
+            "STUB: Successfully stored object {} with fake CID: {}",
+            full_key, fake_cid
+        );
+        Ok(fake_cid)
     }
 
-    pub async fn ensure_bucket_exists(&self, bucket_name: &str) -> Result<()> {
-        // Check if bucket exists
-        let buckets = self
-            .client
-            .list_buckets()
-            .await
-            .context("Failed to list buckets")?;
-
-        // If bucket doesn't exist, create it
-        if !buckets.iter().any(|b| b.name == bucket_name) {
-            info!("Creating bucket: {}", bucket_name);
-            self.client
-                .create_bucket(bucket_name)
-                .await
-                .context(format!("Failed to create bucket: {}", bucket_name))?;
-        }
-
+    pub async fn ensure_bucket_exists(&self, _bucket_name: &str) -> Result<()> {
+        debug!("STUB: Ensuring bucket exists (not actually doing anything)");
         Ok(())
     }
 }

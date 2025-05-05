@@ -1,8 +1,8 @@
 use anyhow::Result;
-use sqlx::types::chrono::{DateTime, Utc};
+use sqlx::types::chrono::Utc;
 use std::sync::Arc;
 use thiserror::Error;
-use tracing::{debug, error, info, warn};
+use tracing::{debug, error, info};
 use uuid::Uuid;
 
 use super::state::SyncState;
@@ -40,7 +40,7 @@ impl SyncJob {
 
     pub async fn execute(
         &mut self,
-        db: &Arc<DbConnector>,
+        _db: &Arc<DbConnector>,
         s3: &Arc<S3Connector>,
         recall: &Arc<RecallConnector>,
         state: &Arc<SyncState>,

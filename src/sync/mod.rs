@@ -104,7 +104,11 @@ impl Synchronizer {
             // Get updated objects
             let objects = self
                 .db
-                .get_updated_objects(since, competition_id.clone(), self.config.sync.batch_size)
+                .get_updated_objects(
+                    since,
+                    competition_id.clone(),
+                    self.config.sync.batch_size as u32,
+                )
                 .await?;
 
             if objects.is_empty() {
@@ -112,10 +116,11 @@ impl Synchronizer {
                 continue;
             }
 
-            info!("Processing {} objects", objects.len());
+            let objects_len = objects.len();
+            info!("Processing {} objects", objects_len);
 
             // Process objects in parallel with worker pool
-            let (tx, mut rx) = mpsc::channel(objects.len());
+            let (tx, mut rx) = mpsc::channel(objects_len);
             let semaphore = Arc::new(Semaphore::new(self.config.sync.workers));
 
             for object in objects {
@@ -195,8 +200,7 @@ impl Synchronizer {
 
             info!(
                 "Completed batch: {} of {} objects synced successfully",
-                success_count,
-                objects.len()
+                success_count, objects_len
             );
 
             // Update the last sync time
