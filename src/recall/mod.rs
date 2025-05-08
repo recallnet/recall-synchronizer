@@ -1,4 +1,9 @@
 use anyhow::Result;
+use recall_provider::json_rpc::JsonRpcProvider;
+use recall_sdk::{
+    machine::{bucket::Bucket, Machine},
+    network::Network,
+};
 use tracing::{debug, info};
 
 use crate::config::RecallConfig;
@@ -11,6 +16,7 @@ pub struct RecallConnector {
 
 impl RecallConnector {
     pub async fn new(config: &RecallConfig) -> Result<Self> {
+        let network = Network::Testnet.init();
         info!(
             "Creating stub Recall connector with endpoint {}",
             &config.endpoint

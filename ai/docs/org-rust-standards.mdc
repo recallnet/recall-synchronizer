@@ -1,0 +1,100 @@
+---
+description: Rust coding standards for organization repositories
+globs: *.rs, Cargo.toml, Cargo.lock
+alwaysApply: true
+---
+# Organization Rust Standards
+
+## Core Requirement
+- Use Rust for all new systems programming and performance-critical development.
+
+## Code Quality & Style
+- **Documentation:** Maintain comprehensive RustDoc documentation:
+  - All public items (functions, structs, enums, traits, modules) must have RustDoc comments.
+  - All functions must document parameters and return values with proper RustDoc syntax.
+  - All structs, enums, and traits must have descriptive comments.
+  - Complex algorithms or logic must include detailed explanations within comments.
+  - Provide examples for non-obvious usage with `# Examples` blocks.
+  - Place comments on their own line, not at the end of code lines.
+  - Aim for near-complete documentation coverage (>90%).
+- **Type Safety:** Leverage Rust's type system effectively. Create specific types rather than using generic types where appropriate.
+- **Error Handling:** Use Result and Option types consistently. Avoid unwrap() and expect() in production code except where a panic is the intended behavior. Each module should define its own Error enum using thiserror to properly represent its specific error cases. See `rust-snippet-error.mdc` for detailed guidelines.
+- **Memory Safety:** Follow Rust's ownership model strictly. Avoid unsafe blocks where possible; when used, document thoroughly with safety justifications.
+- **Formatting:** Use rustfmt with the organization's configuration for consistent code formatting.
+- **Style Guide:** Follow the official Rust Style Guide for naming conventions and code structure.
+
+## Package Development (for Libraries/Crates)
+- **Modularity:** Keep crates small, focused, and with clear responsibilities.
+- **API Design:** Export types for all public APIs, focusing on usability and consistency.
+- **Versioning:** Follow Semantic Versioning (SemVer) strictly. Use Cargo.toml properly for version specification.
+- **Change Management:** Document breaking changes clearly in CHANGELOG.md files.
+- **Compatibility:** Strive for backward compatibility when making changes.
+- **Dependencies:** Minimize dependencies and specify version requirements appropriately.
+
+## Cargo.toml Standards
+- **Fields:** Include all required metadata fields (name, version, authors, edition, license).
+- **Dependencies:** Specify version requirements with appropriate constraints (avoid "*").
+- **Features:** Document all feature flags in Cargo.toml with clear descriptions.
+- **Organization:** Group dependencies logically (standard dependencies, dev-dependencies, build-dependencies).
+- **Formatting:** Don't use quotes around standard key names; use bare keys following TOML specifications.
+
+## Error Management
+- **Custom Errors:** Define custom error types for libraries using the thiserror crate or Rust's standard error handling.
+- **Context:** Provide context for errors using anyhow or similar patterns for application code.
+- **User Feedback:** Implement clear user-facing error messages for application errors.
+- **Propagation:** Use the ? operator for consistent error propagation rather than match expressions where appropriate.
+- **Recovery:** Design for graceful recovery from recoverable errors.
+
+## Testing
+- **Unit Tests:** Write unit tests for all modules, aiming for high code coverage.
+- **Integration Tests:** Implement integration tests to verify interactions between different parts of the system.
+- **Documentation Tests:** Include runnable examples in documentation that also serve as tests.
+- **Benchmarks:** Use criterion or similar for performance-critical code benchmarking.
+- **Scenario Coverage:** Ensure tests cover common use cases, edge cases, and error scenarios.
+- **Testing Dependencies:** Create lightweight in-memory fake implementations of traits for testing rather than using mocking frameworks. Each trait representing an external dependency should have both a real implementation and a test double. See `rust-snippet-fake.mds` for detailed examples and guidance.
+
+## Performance
+- **Optimization:** Be mindful of performance implications. Profile and optimize critical code paths.
+- **Allocation:** Minimize heap allocations in performance-critical code.
+- **Concurrency:** Use Rust's concurrency primitives (threads, async/await) appropriately and safely.
+- **Resource Management:** Implement proper resource cleanup with Drop trait implementations.
+- **Compilation:** Configure appropriate optimization levels for different build profiles.
+
+## Documentation Standards
+- **API Changes:** Document changes to public APIs clearly in CHANGELOG.md files.
+- **Usage Examples:** Update usage examples when APIs change or new features are added.
+- **Setup Instructions:** Ensure setup and installation instructions are clear and accurate.
+- **Environment Variables:** Document necessary environment variables for setup and configuration.
+- **Build Scripts:** Document any custom build scripts or build requirements.
+
+## Deployment Guidelines
+- **Pre-Deployment Checks:** Verify all tests pass, check binary sizes, and review dependency updates before deploying.
+- **Staging Environment:** Test thoroughly in a staging environment that mirrors production.
+- **Monitoring:** Implement proper error logging and performance monitoring for deployed applications.
+- **Cross-Compilation:** Ensure builds work correctly for all target platforms.
+- **Release Process:** Document the release process clearly, including versioning and packaging.
+
+## Dependency Management
+- Minimize adding new external dependencies. Check if existing project dependencies or standard library can achieve the goal first.
+- If adding a new dependency is necessary, justify its inclusion and prefer well-maintained and reputable crates from crates.io.
+- Review security implications of all dependencies, including transitive dependencies.
+- Regularly update dependencies to address security vulnerabilities and bug fixes.
+- Pin dependency versions appropriately to balance stability and security updates.
+
+## Security Guidelines
+- **Memory Safety:** Leverage Rust's ownership system to prevent memory-related vulnerabilities.
+- **Input Validation:** Always validate user inputs, particularly when parsing data from external sources.
+- **Cryptography:** Use proven, audited crates for cryptographic operations. Never implement custom cryptographic algorithms.
+- **Secrets Management:** Implement proper handling of secrets and sensitive data.
+- **Unsafe Code:** Minimize use of unsafe code blocks; when necessary, thoroughly document and verify safety invariants.
+
+## AI Interaction Guidelines (When using AI Assistance)
+- **Language:** Generate idiomatic Rust code that follows the language's ownership and borrowing rules.
+- **Consistency:** Follow existing project patterns, conventions, and architectural choices.
+- **Error Handling:** Implement consistent and robust error handling using Rust idioms.
+- **Documentation:** Ensure AI-generated code, especially complex algorithms, is well-documented.
+- **Testing:** Thoroughly test any code generated or modified by AI.
+- **Performance:** Consider the performance implications of generated code, particularly around allocations and concurrency.
+- **Reuse:** Prefer using existing utilities, components, and libraries within the project.
+- **Structure:** Respect the established workspace structure and crate boundaries.
+- **Dependencies:** Be mindful of adding new dependencies; use existing ones where possible (see Dependency Management section).
