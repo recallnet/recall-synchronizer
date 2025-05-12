@@ -1,7 +1,7 @@
 use anyhow::{Context, Result};
 use chrono::{DateTime, Utc};
 use std::sync::Arc;
-use tracing::{debug, info, warn};
+use tracing::{debug, info};
 
 use crate::config::Config;
 use crate::db::Database;
@@ -12,26 +12,41 @@ use crate::sync::storage::SqliteSyncStorage;
 use crate::sync::storage::SyncStorage;
 
 #[cfg(test)]
-use crate::s3::test_utils::FakeS3Connector;
-#[cfg(test)]
 use crate::recall::test_utils::FakeRecallConnector;
+#[cfg(test)]
+use crate::s3::test_utils::FakeS3Connector;
 
 // Define a trait for S3 access that both real and fake implementations can satisfy
 #[cfg(test)]
 pub trait S3Access {
-    fn get_object<'a>(&'a self, key: &'a str) -> std::pin::Pin<Box<dyn std::future::Future<Output = anyhow::Result<bytes::Bytes>> + Send + 'a>>;
+    fn get_object<'a>(
+        &'a self,
+        key: &'a str,
+    ) -> std::pin::Pin<
+        Box<dyn std::future::Future<Output = anyhow::Result<bytes::Bytes>> + Send + 'a>,
+    >;
 }
 
 #[cfg(test)]
 impl S3Access for S3Connector {
-    fn get_object<'a>(&'a self, key: &'a str) -> std::pin::Pin<Box<dyn std::future::Future<Output = anyhow::Result<bytes::Bytes>> + Send + 'a>> {
+    fn get_object<'a>(
+        &'a self,
+        key: &'a str,
+    ) -> std::pin::Pin<
+        Box<dyn std::future::Future<Output = anyhow::Result<bytes::Bytes>> + Send + 'a>,
+    > {
         Box::pin(self.get_object(key))
     }
 }
 
 #[cfg(test)]
 impl S3Access for FakeS3Connector {
-    fn get_object<'a>(&'a self, key: &'a str) -> std::pin::Pin<Box<dyn std::future::Future<Output = anyhow::Result<bytes::Bytes>> + Send + 'a>> {
+    fn get_object<'a>(
+        &'a self,
+        key: &'a str,
+    ) -> std::pin::Pin<
+        Box<dyn std::future::Future<Output = anyhow::Result<bytes::Bytes>> + Send + 'a>,
+    > {
         Box::pin(self.get_object(key))
     }
 }
@@ -39,19 +54,33 @@ impl S3Access for FakeS3Connector {
 // Define a trait for Recall access
 #[cfg(test)]
 pub trait RecallAccess {
-    fn store_object<'a>(&'a self, key: &'a str, data: &'a [u8]) -> std::pin::Pin<Box<dyn std::future::Future<Output = anyhow::Result<String>> + Send + 'a>>;
+    fn store_object<'a>(
+        &'a self,
+        key: &'a str,
+        data: &'a [u8],
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = anyhow::Result<String>> + Send + 'a>>;
 }
 
 #[cfg(test)]
 impl RecallAccess for RecallConnector {
-    fn store_object<'a>(&'a self, key: &'a str, data: &'a [u8]) -> std::pin::Pin<Box<dyn std::future::Future<Output = anyhow::Result<String>> + Send + 'a>> {
+    fn store_object<'a>(
+        &'a self,
+        key: &'a str,
+        data: &'a [u8],
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = anyhow::Result<String>> + Send + 'a>>
+    {
         Box::pin(self.store_object(key, data))
     }
 }
 
 #[cfg(test)]
 impl RecallAccess for FakeRecallConnector {
-    fn store_object<'a>(&'a self, key: &'a str, data: &'a [u8]) -> std::pin::Pin<Box<dyn std::future::Future<Output = anyhow::Result<String>> + Send + 'a>> {
+    fn store_object<'a>(
+        &'a self,
+        key: &'a str,
+        data: &'a [u8],
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = anyhow::Result<String>> + Send + 'a>>
+    {
         Box::pin(self.store_object(key, data))
     }
 }
@@ -103,7 +132,10 @@ impl<D: Database, S: SyncStorage> Synchronizer<D, S> {
 #[cfg(test)]
 impl<D: Database, S: SyncStorage> Synchronizer<D, S> {
     /// Test version that works with dynamic trait objects
-    pub fn with_storage<T1: S3Access + Send + Sync + 'static, T2: RecallAccess + Send + Sync + 'static>(
+    pub fn with_storage<
+        T1: S3Access + Send + Sync + 'static,
+        T2: RecallAccess + Send + Sync + 'static,
+    >(
         database: D,
         sync_storage: S,
         s3_connector: T1,
@@ -125,6 +157,7 @@ impl<D: Database, S: SyncStorage> Synchronizer<D, S> {
 #[cfg(not(test))]
 impl<D: Database, S: SyncStorage> Synchronizer<D, S> {
     /// Returns a reference to the sync storage
+    #[allow(dead_code)]
     pub fn get_sync_storage(&self) -> &Arc<S> {
         &self.sync_storage
     }
@@ -133,6 +166,7 @@ impl<D: Database, S: SyncStorage> Synchronizer<D, S> {
 #[cfg(test)]
 impl<D: Database, S: SyncStorage> Synchronizer<D, S> {
     /// Returns a reference to the sync storage
+    #[allow(dead_code)]
     pub fn get_sync_storage(&self) -> &Arc<S> {
         &self.sync_storage
     }
@@ -151,9 +185,11 @@ impl<D: Database, S: SyncStorage> Synchronizer<D, S> {
 
         // Parse the since parameter if provided
         let since_time = if let Some(ts) = &since {
-            Some(DateTime::parse_from_rfc3339(ts)
-                .context(format!("Failed to parse provided timestamp: {}", ts))?
-                .with_timezone(&Utc))
+            Some(
+                DateTime::parse_from_rfc3339(ts)
+                    .context(format!("Failed to parse provided timestamp: {}", ts))?
+                    .with_timezone(&Utc),
+            )
         } else {
             // If no since parameter was provided, use the last sync timestamp
             self.sync_storage.get_last_sync_timestamp().await?
@@ -172,7 +208,10 @@ impl<D: Database, S: SyncStorage> Synchronizer<D, S> {
 
         // Get objects to sync
         let batch_size = self.config.sync.batch_size as u32;
-        let objects = self.database.get_objects_to_sync(batch_size, since_time).await?;
+        let objects = self
+            .database
+            .get_objects_to_sync(batch_size, since_time)
+            .await?;
 
         if objects.is_empty() {
             info!("No objects found to synchronize");
@@ -187,7 +226,11 @@ impl<D: Database, S: SyncStorage> Synchronizer<D, S> {
 
         for object in objects {
             // Check if already synced (to handle restarts)
-            if self.sync_storage.is_object_synced(&object.object_key).await? {
+            if self
+                .sync_storage
+                .is_object_synced(&object.object_key)
+                .await?
+            {
                 debug!("Object already synced: {}", object.object_key);
                 continue;
             }
@@ -198,19 +241,30 @@ impl<D: Database, S: SyncStorage> Synchronizer<D, S> {
 
             // Upload to Recall
             debug!("Storing object to Recall: {}", object.object_key);
-            let cid = self.recall_connector.store_object(&object.object_key, &data).await?;
+            let cid = self
+                .recall_connector
+                .store_object(&object.object_key, &data)
+                .await?;
 
             // Mark as synced
-            self.sync_storage.mark_object_synced(&object.object_key, now).await?;
+            self.sync_storage
+                .mark_object_synced(&object.object_key, now)
+                .await?;
 
-            info!("Successfully synced object: {} -> {}", object.object_key, cid);
+            info!(
+                "Successfully synced object: {} -> {}",
+                object.object_key, cid
+            );
             synced_count += 1;
         }
 
         // Update last sync timestamp
         self.sync_storage.update_last_sync_timestamp(now).await?;
 
-        info!("Synchronization completed successfully. Synced {} objects.", synced_count);
+        info!(
+            "Synchronization completed successfully. Synced {} objects.",
+            synced_count
+        );
         Ok(())
     }
 }
@@ -228,9 +282,11 @@ impl<D: Database, S: SyncStorage> Synchronizer<D, S> {
 
         // Parse the since parameter if provided
         let since_time = if let Some(ts) = &since {
-            Some(DateTime::parse_from_rfc3339(ts)
-                .context(format!("Failed to parse provided timestamp: {}", ts))?
-                .with_timezone(&Utc))
+            Some(
+                DateTime::parse_from_rfc3339(ts)
+                    .context(format!("Failed to parse provided timestamp: {}", ts))?
+                    .with_timezone(&Utc),
+            )
         } else {
             // If no since parameter was provided, use the last sync timestamp
             self.sync_storage.get_last_sync_timestamp().await?
@@ -249,7 +305,10 @@ impl<D: Database, S: SyncStorage> Synchronizer<D, S> {
 
         // Get objects to sync
         let batch_size = self.config.sync.batch_size as u32;
-        let objects = self.database.get_objects_to_sync(batch_size, since_time).await?;
+        let objects = self
+            .database
+            .get_objects_to_sync(batch_size, since_time)
+            .await?;
 
         if objects.is_empty() {
             info!("No objects found to synchronize");
@@ -264,7 +323,11 @@ impl<D: Database, S: SyncStorage> Synchronizer<D, S> {
 
         for object in objects {
             // Check if already synced (to handle restarts)
-            if self.sync_storage.is_object_synced(&object.object_key).await? {
+            if self
+                .sync_storage
+                .is_object_synced(&object.object_key)
+                .await?
+            {
                 debug!("Object already synced: {}", object.object_key);
                 continue;
             }
@@ -275,19 +338,30 @@ impl<D: Database, S: SyncStorage> Synchronizer<D, S> {
 
             // Upload to Recall using the trait method
             debug!("Storing object to Recall: {}", object.object_key);
-            let cid = self.recall_connector.store_object(&object.object_key, &data).await?;
+            let cid = self
+                .recall_connector
+                .store_object(&object.object_key, &data)
+                .await?;
 
             // Mark as synced
-            self.sync_storage.mark_object_synced(&object.object_key, now).await?;
+            self.sync_storage
+                .mark_object_synced(&object.object_key, now)
+                .await?;
 
-            info!("Successfully synced object: {} -> {}", object.object_key, cid);
+            info!(
+                "Successfully synced object: {} -> {}",
+                object.object_key, cid
+            );
             synced_count += 1;
         }
 
         // Update last sync timestamp
         self.sync_storage.update_last_sync_timestamp(now).await?;
 
-        info!("Synchronization completed successfully. Synced {} objects.", synced_count);
+        info!(
+            "Synchronization completed successfully. Synced {} objects.",
+            synced_count
+        );
         Ok(())
     }
 }

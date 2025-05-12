@@ -15,9 +15,7 @@ pub mod test_utils {
 
     impl FakeRecallConnector {
         pub fn new(prefix: Option<String>) -> Self {
-            FakeRecallConnector {
-                prefix,
-            }
+            FakeRecallConnector { prefix }
         }
 
         pub async fn store_object(&self, key: &str, _data: &[u8]) -> Result<String> {
@@ -44,6 +42,7 @@ pub mod test_utils {
 // Stub implementation until recall dependencies are re-enabled
 #[derive(Clone)]
 pub struct RecallConnector {
+    #[allow(dead_code)]
     endpoint: String,
     prefix: Option<String>,
 }
@@ -81,6 +80,7 @@ impl RecallConnector {
         Ok(fake_cid)
     }
 
+    #[allow(dead_code)]
     pub async fn ensure_bucket_exists(&self, _bucket_name: &str) -> Result<()> {
         debug!("STUB: Ensuring bucket exists (not actually doing anything)");
         Ok(())

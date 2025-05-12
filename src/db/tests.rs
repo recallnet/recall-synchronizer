@@ -1,12 +1,14 @@
 #[cfg(test)]
+#[allow(clippy::module_inception)]
 mod tests {
     use crate::db::{Database, DatabaseError, FakeDatabase, ObjectIndex, PostgresDatabase};
-    use chrono::{DateTime, Duration, Utc};
-    use uuid::Uuid;
-    use std::sync::Arc;
+    use crate::test_utils::load_test_config;
     use async_trait::async_trait;
-    use std::time::Duration as StdDuration;
+    use chrono::{DateTime, Duration, Utc};
     use std::sync::atomic::{AtomicBool, Ordering};
+    use std::sync::Arc;
+    use std::time::Duration as StdDuration;
+    use uuid::Uuid;
 
     // Static flag to skip PostgreSQL tests if we've already determined the connection fails
     static SKIP_PG_TESTS: AtomicBool = AtomicBool::new(false);
@@ -17,6 +19,7 @@ mod tests {
     // 2. We use a mutex-like mechanism (AtomicBool) to ensure no race conditions
     // 3. It's only written to once during initialization
     // 4. After initialization, it's only read and never written to again
+    #[allow(static_mut_refs)]
     static mut PG_DATABASE: Option<Arc<PostgresDatabase>> = None;
 
     /// Creates or returns a cached PostgreSQL database connection
@@ -27,17 +30,19 @@ mod tests {
     fn get_or_create_postgres_connection() -> Result<Arc<PostgresDatabase>, String> {
         // Check if we need to initialize the connection
         // This is safe because we've checked SKIP_PG_TESTS first, which acts as a mutex
+        #[allow(static_mut_refs)]
         let pg_database_initialized = unsafe { PG_DATABASE.is_some() };
 
         if pg_database_initialized {
             // Return the cached connection
             // SAFETY: We've already checked that it's initialized and it's only read after initialization
+            #[allow(static_mut_refs)]
             return Ok(unsafe { PG_DATABASE.as_ref().unwrap().clone() });
         }
 
-        // Get database URL from environment
-        let db_url = std::env::var("TEST_DATABASE_URL")
-            .map_err(|_| "TEST_DATABASE_URL not set".to_string())?;
+        // Get database URL from test config
+        let test_config = load_test_config();
+        let db_url = test_config.database.url;
 
         // Create a new database connection
         // We use block_on to avoid nested runtime issues
@@ -65,13 +70,15 @@ mod tests {
     // Add trait implementation for Arc<T> where T implements Database
     #[async_trait]
     impl<T: Database + Send + Sync + 'static> Database for Arc<T> {
-        async fn get_objects_to_sync(&self, limit: u32, since: Option<DateTime<Utc>>) 
-            -> Result<Vec<ObjectIndex>, DatabaseError> {
+        async fn get_objects_to_sync(
+            &self,
+            limit: u32,
+            since: Option<DateTime<Utc>>,
+        ) -> Result<Vec<ObjectIndex>, DatabaseError> {
             (**self).get_objects_to_sync(limit, since).await
         }
 
-        async fn get_object_by_key(&self, object_key: &str) 
-            -> Result<ObjectIndex, DatabaseError> {
+        async fn get_object_by_key(&self, object_key: &str) -> Result<ObjectIndex, DatabaseError> {
             (**self).get_object_by_key(object_key).await
         }
     }
@@ -81,8 +88,9 @@ mod tests {
         let mut databases: Vec<Box<dyn Fn() -> Box<dyn Database + Send + Sync>>> = vec![
             // Always include the FakeDatabase
             Box::new(|| {
+                println!("🛢 Using FakeDatabase implementation");
                 let db = FakeDatabase::new();
-                
+
                 // Add test objects with different timestamps
                 let now = Utc::now();
                 let object1 = ObjectIndex {
@@ -100,7 +108,7 @@ mod tests {
                     created_at: now,
                     updated_at: now,
                 };
-                
+
                 let object2 = ObjectIndex {
                     id: Uuid::new_v4(),
                     object_key: "test/object2.jsonl".to_string(),
@@ -119,19 +127,24 @@ mod tests {
 
                 db.fake_add_object(object1);
                 db.fake_add_object(object2);
-                
+
                 Box::new(db)
             }),
         ];
 
+        // Load test configuration
+        let test_config = load_test_config();
+
         // Conditionally add the real PostgreSQL implementation when enabled
-        if std::env::var("ENABLE_DB_TESTS").is_ok() && !SKIP_PG_TESTS.load(Ordering::SeqCst) {
+        if test_config.database.enabled && !SKIP_PG_TESTS.load(Ordering::SeqCst) {
             databases.push(Box::new(|| match get_or_create_postgres_connection() {
-                Ok(db) => Box::new(db),
+                Ok(db) => {
+                    println!("🛢 Using PostgresDatabase implementation");
+                    Box::new(db)
+                },
                 Err(e) => {
-                    println!("PostgreSQL tests skipped: {}", e);
                     SKIP_PG_TESTS.store(true, Ordering::SeqCst);
-                    panic!("Failed to connect to PostgreSQL: {}. Set ENABLE_DB_TESTS=false to skip these tests.", e);
+                    panic!("Failed to connect to PostgreSQL: {}. Set database.enabled=false in test_config.toml to skip these tests.", e);
                 }
             }));
         }
@@ -143,19 +156,27 @@ mod tests {
     async fn test_get_objects_to_sync() {
         for db_factory in get_test_databases() {
             let db = db_factory();
-            
+
             // Test query with no timestamp restriction
             let objects = db.get_objects_to_sync(10, None).await.unwrap();
             assert!(!objects.is_empty(), "Should return objects");
-            
+
             // Test query with timestamp restriction (future)
             let future = Utc::now() + Duration::days(1);
             let objects = db.get_objects_to_sync(10, Some(future)).await.unwrap();
-            assert_eq!(objects.len(), 0, "Should not return objects modified before the timestamp");
-            
+            assert_eq!(
+                objects.len(),
+                0,
+                "Should not return objects modified before the timestamp"
+            );
+
             // Test with limit
             let objects = db.get_objects_to_sync(1, None).await.unwrap();
-            assert_eq!(objects.len(), 1, "Should only return one object with limit=1");
+            assert_eq!(
+                objects.len(),
+                1,
+                "Should only return one object with limit=1"
+            );
         }
     }
 
@@ -163,37 +184,47 @@ mod tests {
     async fn test_get_object_by_key() {
         for db_factory in get_test_databases() {
             let db = db_factory();
-            
-            // Test getting an existing object
+
             let object = db.get_object_by_key("test/object1.jsonl").await;
-            
+
             if let Ok(obj) = &object {
                 assert_eq!(obj.object_key, "test/object1.jsonl");
             } else {
                 // For PostgreSQL, we may not have test data, so this is acceptable
-                if std::env::var("ENABLE_DB_TESTS").is_ok() && !SKIP_PG_TESTS.load(Ordering::SeqCst) {
-                    println!("Note: Object not found in PostgreSQL, which may be expected for tests");
+                if std::env::var("ENABLE_DB_TESTS").is_ok() && !SKIP_PG_TESTS.load(Ordering::SeqCst)
+                {
+                    println!(
+                        "Note: Object not found in PostgreSQL, which may be expected for tests"
+                    );
                 } else {
                     panic!("Expected object in fake database, got: {:?}", object);
                 }
             }
-            
+
             // Test getting a non-existent object
             let result = db.get_object_by_key("nonexistent").await;
-            assert!(result.is_err(), "Should return error for non-existent object");
-            
+            assert!(
+                result.is_err(),
+                "Should return error for non-existent object"
+            );
+
             if let Err(err) = result {
                 match err {
                     DatabaseError::ObjectNotFound(key) => {
                         assert_eq!(key, "nonexistent");
-                    },
+                    }
                     _ => {
-                        if std::env::var("ENABLE_DB_TESTS").is_ok() && !SKIP_PG_TESTS.load(Ordering::SeqCst) {
-                            println!("Note: Got a different error type from PostgreSQL: {:?}", err);
+                        if std::env::var("ENABLE_DB_TESTS").is_ok()
+                            && !SKIP_PG_TESTS.load(Ordering::SeqCst)
+                        {
+                            println!(
+                                "Note: Got a different error type from PostgreSQL: {:?}",
+                                err
+                            );
                         } else {
                             panic!("Expected ObjectNotFound error, got: {:?}", err);
                         }
-                    },
+                    }
                 }
             }
         }

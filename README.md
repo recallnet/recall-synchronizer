@@ -27,11 +27,11 @@ The primary goal of the Recall Data Synchronizer is to:
 
 The Recall Data Synchronizer operates as an independent service with the following workflow:
 
-1.  **Query `object_index`:** Periodically, the synchronizer queries the `object_index` table in the central PostgreSQL database. This table contains metadata about all data objects stored in S3 that are candidates for synchronization. The key piece of information used is the `object_last_modified_at` timestamp (or a similar field indicating updates).
-2.  **Identify New/Updated Objects:** The synchronizer compares the `object_last_modified_at` timestamps with its own record of the last successful synchronization timestamp. This allows it to identify new or updated objects that need to be processed.
-3.  **Fetch from S3:** For each new or updated object identified, the synchronizer uses the `object_key` and `bucket_name` (from the `object_index` record) to retrieve the actual data object from the S3-compatible storage.
-4.  **Write to Recall Testnet:** The retrieved object data is then written to the Recall Testnet. The path/key structure on Recall is designed to mirror the S3 object key structure for consistency.
-5.  **State Management:** The synchronizer maintains its own internal state (e.g., the timestamp of the last object successfully processed and written to Recall). This state is persisted to ensure that if the synchronizer restarts, it can resume from where it left off, preventing data loss or unnecessary re-processing.
+1. **Query `object_index`:** Periodically, the synchronizer queries the `object_index` table in the central PostgreSQL database. This table contains metadata about all data objects stored in S3 that are candidates for synchronization. The key piece of information used is the `object_last_modified_at` timestamp (or a similar field indicating updates).
+2. **Identify New/Updated Objects:** The synchronizer compares the `object_last_modified_at` timestamps with its own record of the last successful synchronization timestamp. This allows it to identify new or updated objects that need to be processed.
+3. **Fetch from S3:** For each new or updated object identified, the synchronizer uses the `object_key` and `bucket_name` (from the `object_index` record) to retrieve the actual data object from the S3-compatible storage.
+4. **Write to Recall Testnet:** The retrieved object data is then written to the Recall Testnet. The path/key structure on Recall is designed to mirror the S3 object key structure for consistency.
+5. **State Management:** The synchronizer maintains its own internal state (e.g., the timestamp of the last object successfully processed and written to Recall). This state is persisted to ensure that if the synchronizer restarts, it can resume from where it left off, preventing data loss or unnecessary re-processing.
 
 This design ensures that the synchronizer is decoupled from the main application logic and can be scaled or managed independently.
 
@@ -119,22 +119,26 @@ Refer to `src/config.rs` (or equivalent) for the definitive list and detailed co
 ### Getting Started
 
 1. Clone the repository:
+
    ```bash
    git clone <repository-url>
    cd recall-synchronizer
    ```
 
 2. Copy the example configuration:
+
    ```bash
    cp config.example.toml config.toml
    ```
 
 3. Start the development environment:
+
    ```bash
    docker-compose up -d
    ```
 
 4. Build the project:
+
    ```bash
    cargo build
    ```
@@ -155,6 +159,7 @@ cargo run -- --config config.toml
 ```
 
 Additional options:
+
 - `--reset` - Reset synchronization state
 - `--competition-id <ID>` - Filter by competition ID
 - `--since <TIMESTAMP>` - Synchronize data since timestamp (RFC3339 format)
@@ -183,6 +188,7 @@ For running tests against real implementations:
 - `ENABLE_RECALL_TESTS=true` - Run tests with real Recall network
 
 Example:
+
 ```bash
 ENABLE_DB_TESTS=true TEST_DATABASE_URL="postgresql://recall:recall_password@localhost:5432/recall_competitions" cargo test
 ```
@@ -205,6 +211,7 @@ This project follows these testing principles:
 ### Project Structure
 
 - `src/db/` - Database abstraction for reading object metadata
+
   - `database.rs` - Database trait definition
   - `models.rs` - Data models
   - `fake.rs` - In-memory implementation for testing

@@ -5,12 +5,13 @@ use thiserror::Error;
 use tracing::{debug, error, info};
 use uuid::Uuid;
 
-use crate::db::Database;
 use crate::db::models::ObjectIndex;
+use crate::db::Database;
 use crate::recall::RecallConnector;
 use crate::s3::S3Connector;
 use crate::sync::storage::SyncStorage;
 
+#[allow(clippy::enum_variant_names, dead_code)]
 #[derive(Debug, Error)]
 pub enum JobError {
     #[error("Failed to fetch object from S3: {0}")]
@@ -26,12 +27,14 @@ pub enum JobError {
     DatabaseError(String),
 }
 
+#[allow(dead_code)]
 pub struct SyncJob {
     pub id: String,
     pub object: ObjectIndex,
     pub attempts: u32,
 }
 
+#[allow(dead_code)]
 impl SyncJob {
     pub fn new(object: ObjectIndex) -> Self {
         Self {
@@ -43,7 +46,7 @@ impl SyncJob {
 
     pub async fn execute<D: Database, S: SyncStorage>(
         &mut self,
-        database: &Arc<D>,
+        _database: &Arc<D>,
         s3: &Arc<S3Connector>,
         recall: &Arc<RecallConnector>,
         storage: &Arc<S>,
@@ -107,10 +110,7 @@ impl SyncJob {
                 Ok(())
             }
             Err(e) => {
-                error!(
-                    "[Job {}] Failed to mark object as synced: {}",
-                    self.id, e
-                );
+                error!("[Job {}] Failed to mark object as synced: {}", self.id, e);
                 Err(JobError::StorageError(e.to_string()))
             }
         }
@@ -127,10 +127,7 @@ impl SyncJob {
             .await
             .map_err(|e| JobError::DatabaseError(e.to_string()))?;
 
-        let jobs = objects
-            .into_iter()
-            .map(|object| Self::new(object))
-            .collect();
+        let jobs = objects.into_iter().map(Self::new).collect();
 
         Ok(jobs)
     }

@@ -21,12 +21,14 @@ impl FakeSyncStorage {
     }
 
     /// Clear all synced objects
+    #[allow(dead_code)]
     pub fn fake_clear_synced_objects(&self) {
         let mut synced = self.synced_objects.write().unwrap();
         synced.clear();
     }
 
     /// Set the last sync timestamp directly (for testing)
+    #[allow(dead_code)]
     pub fn fake_set_last_sync_timestamp(&self, timestamp: Option<DateTime<Utc>>) {
         let mut last_sync = self.last_sync_timestamp.write().unwrap();
         *last_sync = timestamp;
@@ -35,8 +37,11 @@ impl FakeSyncStorage {
 
 #[async_trait]
 impl SyncStorage for FakeSyncStorage {
-    async fn mark_object_synced(&self, object_key: &str, sync_timestamp: DateTime<Utc>) 
-        -> Result<(), SyncStorageError> {
+    async fn mark_object_synced(
+        &self,
+        object_key: &str,
+        sync_timestamp: DateTime<Utc>,
+    ) -> Result<(), SyncStorageError> {
         let mut synced = self.synced_objects.write().unwrap();
         synced.insert(object_key.to_string(), sync_timestamp);
         Ok(())
@@ -47,8 +52,10 @@ impl SyncStorage for FakeSyncStorage {
         Ok(synced.contains_key(object_key))
     }
 
-    async fn update_last_sync_timestamp(&self, timestamp: DateTime<Utc>) 
-        -> Result<(), SyncStorageError> {
+    async fn update_last_sync_timestamp(
+        &self,
+        timestamp: DateTime<Utc>,
+    ) -> Result<(), SyncStorageError> {
         let mut last_sync = self.last_sync_timestamp.write().unwrap();
         *last_sync = Some(timestamp);
         Ok(())

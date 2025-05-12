@@ -7,6 +7,7 @@ pub mod postgres;
 mod tests;
 
 pub use database::Database;
+#[allow(unused_imports)]
 pub use error::DatabaseError;
 pub use fake::FakeDatabase;
 pub use models::ObjectIndex;

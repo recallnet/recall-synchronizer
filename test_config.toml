@@ -1,0 +1,20 @@
+[database]
+enabled = false
+url = "postgresql://recall:recall_password@localhost:5432/recall_competitions"
+
+[sqlite]
+enabled = true
+# Path will be automatically generated for tests
+path = ""
+
+[s3]
+enabled = false
+endpoint = "http://localhost:9000"
+region = "us-east-1"
+bucket = "test-bucket"
+access_key_id = "minioadmin"
+secret_access_key = "minioadmin"
+
+[recall]
+enabled = false
+endpoint = "http://localhost:8080"

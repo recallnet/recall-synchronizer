@@ -2,7 +2,6 @@
 use anyhow::{Context, Result};
 use clap::Parser;
 use std::process;
-use std::sync::Arc;
 use tracing::{error, info, Level};
 
 mod config;
@@ -10,6 +9,8 @@ mod db;
 mod recall;
 mod s3;
 mod sync;
+#[cfg(test)]
+mod test_utils;
 
 #[derive(Parser, Debug)]
 #[command(author, version, about, long_about = None)]

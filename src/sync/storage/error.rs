@@ -10,6 +10,7 @@ pub enum SyncStorageError {
     OperationError(String),
 
     #[error("Object with key {0} not found")]
+    #[allow(dead_code)]
     ObjectNotFound(String),
 
     #[error("Storage is locked")]

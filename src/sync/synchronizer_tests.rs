@@ -1,15 +1,13 @@
 #[cfg(test)]
 mod tests {
+    use crate::config::{Config, DatabaseConfig, RecallConfig, S3Config, SyncConfig};
     use crate::db::{FakeDatabase, ObjectIndex};
+    use crate::recall::test_utils::FakeRecallConnector;
+    use crate::s3::test_utils::FakeS3Connector;
     use crate::sync::storage::{FakeSyncStorage, SyncStorage};
     use crate::sync::Synchronizer;
-    use crate::config::{
-        Config, DatabaseConfig, S3Config, RecallConfig, SyncConfig
-    };
-    use crate::s3::test_utils::FakeS3Connector;
-    use crate::recall::test_utils::FakeRecallConnector;
     use bytes::Bytes;
-    use chrono::{DateTime, Duration, Utc};
+    use chrono::{Duration, Utc};
     use std::sync::Arc;
     use uuid::Uuid;
 
@@ -104,27 +102,31 @@ mod tests {
         let s3_connector = Arc::new(FakeS3Connector::new(&config.s3.bucket));
 
         // Setup test data in S3
-        s3_connector.fake_add_object(
-            "test/object1.jsonl",
-            Bytes::from("Test data for object1")
-        ).await;
+        s3_connector
+            .fake_add_object("test/object1.jsonl", Bytes::from("Test data for object1"))
+            .await;
 
-        s3_connector.fake_add_object(
-            "test/object2.jsonl",
-            Bytes::from("Test data for object2")
-        ).await;
+        s3_connector
+            .fake_add_object("test/object2.jsonl", Bytes::from("Test data for object2"))
+            .await;
 
         // Create fake Recall connector
         let recall_connector = Arc::new(FakeRecallConnector::new(config.recall.prefix.clone()));
 
-        (database, sync_storage, s3_connector, recall_connector, config)
+        (
+            database,
+            sync_storage,
+            s3_connector,
+            recall_connector,
+            config,
+        )
     }
-    
+
     #[tokio::test]
     async fn test_synchronizer_run_with_fake_implementations() {
         let (database, sync_storage, s3_connector, recall_connector, config) =
             setup_test_env().await;
-        
+
         // Create synchronizer with fake implementations
         let synchronizer = Synchronizer::with_storage(
             database,
@@ -134,35 +136,41 @@ mod tests {
             config,
             false,
         );
-        
+
         // Run synchronization
         let result = synchronizer.run(None, None).await;
-        
+
         // Check that the run completed successfully
         assert!(result.is_ok(), "Synchronizer run should succeed");
-        
+
         // Check that objects were synced
         let sync_storage = synchronizer.get_sync_storage();
-        let is_synced1 = SyncStorage::is_object_synced(&**sync_storage, "test/object1.jsonl").await.unwrap();
-        let is_synced2 = SyncStorage::is_object_synced(&**sync_storage, "test/object2.jsonl").await.unwrap();
+        let is_synced1 = SyncStorage::is_object_synced(&**sync_storage, "test/object1.jsonl")
+            .await
+            .unwrap();
+        let is_synced2 = SyncStorage::is_object_synced(&**sync_storage, "test/object2.jsonl")
+            .await
+            .unwrap();
 
         assert!(is_synced1, "Object 1 should be synced");
         assert!(is_synced2, "Object 2 should be synced");
 
         // Check that the last sync timestamp was updated
-        let last_sync = SyncStorage::get_last_sync_timestamp(&**sync_storage).await.unwrap();
+        let last_sync = SyncStorage::get_last_sync_timestamp(&**sync_storage)
+            .await
+            .unwrap();
         assert!(last_sync.is_some(), "Last sync timestamp should be set");
     }
-    
+
     #[tokio::test]
     async fn test_synchronizer_with_timestamp_filter() {
         let (database, sync_storage, s3_connector, recall_connector, config) =
             setup_test_env().await;
-        
+
         // Update the last sync timestamp to filter out all objects
         let future_time = Utc::now() + Duration::days(1);
         sync_storage.fake_set_last_sync_timestamp(Some(future_time));
-        
+
         // Create synchronizer with fake implementations
         let synchronizer = Synchronizer::with_storage(
             database,
@@ -172,31 +180,41 @@ mod tests {
             config,
             false,
         );
-        
+
         // Run synchronization
         let result = synchronizer.run(None, None).await;
-        
+
         // Check that the run completed successfully
         assert!(result.is_ok(), "Synchronizer run should succeed");
-        
+
         // Check that no objects were synced (since they're all older than our timestamp)
         let sync_storage = synchronizer.get_sync_storage();
-        let is_synced1 = SyncStorage::is_object_synced(&**sync_storage, "test/object1.jsonl").await.unwrap();
-        let is_synced2 = SyncStorage::is_object_synced(&**sync_storage, "test/object2.jsonl").await.unwrap();
-        
-        assert!(!is_synced1, "Object 1 should not be synced due to timestamp filter");
-        assert!(!is_synced2, "Object 2 should not be synced due to timestamp filter");
+        let is_synced1 = SyncStorage::is_object_synced(&**sync_storage, "test/object1.jsonl")
+            .await
+            .unwrap();
+        let is_synced2 = SyncStorage::is_object_synced(&**sync_storage, "test/object2.jsonl")
+            .await
+            .unwrap();
+
+        assert!(
+            !is_synced1,
+            "Object 1 should not be synced due to timestamp filter"
+        );
+        assert!(
+            !is_synced2,
+            "Object 2 should not be synced due to timestamp filter"
+        );
     }
-    
+
     #[tokio::test]
     async fn test_synchronizer_with_competition_id_filter() {
         // This test is a placeholder since filtering by competition_id is not fully
         // implemented in the current version of the synchronizer.
         // When that functionality is implemented, this test should be expanded.
-        
+
         let (database, sync_storage, s3_connector, recall_connector, config) =
             setup_test_env().await;
-        
+
         // Create synchronizer with fake implementations
         let synchronizer = Synchronizer::with_storage(
             database,
@@ -206,11 +224,16 @@ mod tests {
             config,
             false,
         );
-        
+
         // Run synchronization with a competition_id filter
-        let result = synchronizer.run(Some("test-competition-id".to_string()), None).await;
-        
+        let result = synchronizer
+            .run(Some("test-competition-id".to_string()), None)
+            .await;
+
         // Check that the run completed successfully
-        assert!(result.is_ok(), "Synchronizer run should succeed even with unimplemented filter");
+        assert!(
+            result.is_ok(),
+            "Synchronizer run should succeed even with unimplemented filter"
+        );
     }
 }

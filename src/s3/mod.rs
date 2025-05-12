@@ -3,6 +3,7 @@ use anyhow::{Context, Result};
 use aws_credential_types::Credentials;
 use aws_sdk_s3::{config::Region, Client};
 use bytes::Bytes;
+#[cfg(test)]
 use std::collections::HashMap;
 use std::num::NonZeroUsize;
 use std::sync::Arc;
@@ -17,6 +18,7 @@ pub mod test_utils {
 
     #[derive(Clone)]
     pub struct FakeS3Connector {
+        #[allow(dead_code)]
         bucket: String,
         objects: Arc<Mutex<HashMap<String, Bytes>>>,
     }
@@ -79,8 +81,7 @@ impl S3Connector {
                 "StaticCredentialsProvider",
             );
 
-            let config = config_loader.credentials_provider(credentials).load().await;
-            config
+            config_loader.credentials_provider(credentials).load().await
         } else {
             config_loader.load().await
         };

@@ -2,17 +2,21 @@ use anyhow::{Context, Result};
 use chrono::{DateTime, Utc};
 use std::path::Path;
 use std::sync::Arc;
-use tracing::{debug, info, warn};
+use tracing::{debug, info};
 
-use crate::sync::storage::{SyncStorage, SqliteSyncStorage, FakeSyncStorage};
+#[cfg(test)]
+use crate::sync::storage::FakeSyncStorage;
+use crate::sync::storage::{SqliteSyncStorage, SyncStorage};
 
 /// SyncState provides a wrapper for the SyncStorage trait with additional functionality
 /// specifically for the synchronizer. This maintains backward compatibility while
 /// delegating to the SyncStorage trait for core operations.
+#[allow(dead_code)]
 pub struct SyncState {
     storage: Arc<dyn SyncStorage>,
 }
 
+#[allow(dead_code)]
 impl SyncState {
     /// Create a new SyncState using the SqliteSyncStorage implementation
     pub fn new(path: &str, reset: bool) -> Result<Self> {
@@ -24,8 +28,10 @@ impl SyncState {
             info!("Reset state database at {}", path.display());
         }
 
-        let storage = SqliteSyncStorage::new(path.to_str().unwrap())
-            .context(format!("Failed to initialize sync storage at {}", path.display()))?;
+        let storage = SqliteSyncStorage::new(path.to_str().unwrap()).context(format!(
+            "Failed to initialize sync storage at {}",
+            path.display()
+        ))?;
 
         info!("Initialized state database at {}", path.display());
         Ok(Self {

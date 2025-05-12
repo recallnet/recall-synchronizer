@@ -24,21 +24,19 @@ impl FakeDatabase {
         let mut objects = self.objects.write().unwrap();
         objects.insert(object.object_key.clone(), object);
     }
-
-    /// Clear all objects from the database
-    pub fn fake_clear_objects(&self) {
-        let mut objects = self.objects.write().unwrap();
-        objects.clear();
-    }
 }
 
 #[async_trait]
 impl Database for FakeDatabase {
-    async fn get_objects_to_sync(&self, limit: u32, since: Option<DateTime<Utc>>) 
-        -> Result<Vec<ObjectIndex>, DatabaseError> {
+    async fn get_objects_to_sync(
+        &self,
+        limit: u32,
+        since: Option<DateTime<Utc>>,
+    ) -> Result<Vec<ObjectIndex>, DatabaseError> {
         let objects = self.objects.read().unwrap();
-        
-        let mut filtered: Vec<ObjectIndex> = objects.values()
+
+        let mut filtered: Vec<ObjectIndex> = objects
+            .values()
             .filter(|obj| match since {
                 Some(ts) => obj.object_last_modified_at > ts,
                 None => true,
@@ -46,18 +44,18 @@ impl Database for FakeDatabase {
             .take(limit as usize)
             .cloned()
             .collect();
-        
+
         // Sort by last_modified_at to ensure consistent results
         filtered.sort_by(|a, b| a.object_last_modified_at.cmp(&b.object_last_modified_at));
-            
+
         Ok(filtered)
     }
 
-    async fn get_object_by_key(&self, object_key: &str) 
-        -> Result<ObjectIndex, DatabaseError> {
+    async fn get_object_by_key(&self, object_key: &str) -> Result<ObjectIndex, DatabaseError> {
         let objects = self.objects.read().unwrap();
-        
-        objects.get(object_key)
+
+        objects
+            .get(object_key)
             .cloned()
             .ok_or_else(|| DatabaseError::ObjectNotFound(object_key.to_string()))
     }

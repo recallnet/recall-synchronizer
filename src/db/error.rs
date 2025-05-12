@@ -15,9 +15,6 @@ pub enum DatabaseError {
     #[error("Failed to deserialize database row: {0}")]
     DeserializationError(String),
 
-    #[error("Database operation timed out")]
-    Timeout,
-
     #[error("Other database error: {0}")]
     Other(#[from] anyhow::Error),
 }
