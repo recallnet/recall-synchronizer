@@ -113,21 +113,78 @@ Refer to `src/config.rs` (or equivalent) for the definitive list and detailed co
 ### Prerequisites
 
 - Rust toolchain (latest stable version recommended)
-- Access to a PostgreSQL instance
-- Access to an S3-compatible object store
-- Access to a Recall Testnet node
+- Docker and Docker Compose (for local development environment)
+- Git
 
-### Building the Project
+### Getting Started
+
+1. Clone the repository:
+   ```bash
+   git clone <repository-url>
+   cd recall-synchronizer
+   ```
+
+2. Copy the example configuration:
+   ```bash
+   cp config.example.toml config.toml
+   ```
+
+3. Start the development environment:
+   ```bash
+   docker-compose up -d
+   ```
+
+4. Build the project:
+   ```bash
+   cargo build
+   ```
+
+### Development Environment
+
+The Docker Compose setup provides:
+
+- PostgreSQL database for object metadata storage, accessible at `localhost:5432`
+  - Username: `recall`
+  - Password: `recall_password`
+  - Database: `recall_competitions`
+
+### Running the Synchronizer
 
 ```bash
-cargo build
-cargo build --release # For optimized release builds
+cargo run -- --config config.toml
 ```
+
+Additional options:
+- `--reset` - Reset synchronization state
+- `--competition-id <ID>` - Filter by competition ID
+- `--since <TIMESTAMP>` - Synchronize data since timestamp (RFC3339 format)
+- `--verbose` - Show verbose output
+
+### Docker Compose Commands
+
+- Start services: `docker-compose up -d`
+- Stop services: `docker-compose down`
+- View logs: `docker-compose logs -f postgres`
+- Reset database: `docker-compose down -v && docker-compose up -d`
 
 ### Running Tests
 
 ```bash
 cargo test --all-targets --all-features
+```
+
+#### Test Environment Variables
+
+For running tests against real implementations:
+
+- `ENABLE_DB_TESTS=true` - Enable tests with real PostgreSQL database
+- `TEST_DATABASE_URL` - PostgreSQL connection URL for tests (defaults to local Docker instance)
+- `ENABLE_S3_TESTS=true` - Run tests with real S3
+- `ENABLE_RECALL_TESTS=true` - Run tests with real Recall network
+
+Example:
+```bash
+ENABLE_DB_TESTS=true TEST_DATABASE_URL="postgresql://recall:recall_password@localhost:5432/recall_competitions" cargo test
 ```
 
 #### Testing Philosophy
@@ -145,16 +202,19 @@ This project follows these testing principles:
 
 4. **Special Testing Methods**: Fake implementations have special methods with the `fake_` prefix for simulating edge cases and failure scenarios.
 
-5. **Environment Variable Control**: Enable tests with real services by setting environment variables:
-   - `ENABLE_S3_TESTS=true` - Run tests with real S3
-   - `ENABLE_DB_TESTS=true` - Run tests with real database
-   - `ENABLE_RECALL_TESTS=true` - Run tests with real Recall network
+### Project Structure
 
-Example to run everything:
+- `src/db/` - Database abstraction for reading object metadata
+  - `database.rs` - Database trait definition
+  - `models.rs` - Data models
+  - `fake.rs` - In-memory implementation for testing
+  - `postgres.rs` - PostgreSQL implementation
 
-```bash
-ENABLE_S3_TESTS=true ENABLE_DB_TESTS=true ENABLE_RECALL_TESTS=true cargo test
-```
+- `src/sync/storage/` - Storage abstraction for synchronization state
+  - `sync_storage.rs` - SyncStorage trait definition
+  - `models.rs` - Data models
+  - `fake.rs` - In-memory implementation for testing
+  - `sqlite.rs` - SQLite implementation
 
 ### Code Quality & Formatting
 

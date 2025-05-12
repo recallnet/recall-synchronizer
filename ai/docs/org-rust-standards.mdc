@@ -17,6 +17,7 @@ alwaysApply: true
   - Provide examples for non-obvious usage with `# Examples` blocks.
   - Place comments on their own line, not at the end of code lines.
   - Aim for near-complete documentation coverage (>90%).
+  - **Comments Must Add Value:** Only add comments that explain the "why" behind code, not just "what" the code does. Avoid redundant or obvious comments like `// Run synchronization` before `let result = synchronizer.run(None, None).await;`. Comments should focus on reasoning, edge cases, or non-obvious implications that aren't immediately clear from the code itself.
 - **Type Safety:** Leverage Rust's type system effectively. Create specific types rather than using generic types where appropriate.
 - **Error Handling:** Use Result and Option types consistently. Avoid unwrap() and expect() in production code except where a panic is the intended behavior. Each module should define its own Error enum using thiserror to properly represent its specific error cases. See `rust-snippet-error.mdc` for detailed guidelines.
 - **Memory Safety:** Follow Rust's ownership model strictly. Avoid unsafe blocks where possible; when used, document thoroughly with safety justifications.
@@ -52,6 +53,11 @@ alwaysApply: true
 - **Benchmarks:** Use criterion or similar for performance-critical code benchmarking.
 - **Scenario Coverage:** Ensure tests cover common use cases, edge cases, and error scenarios.
 - **Testing Dependencies:** Create lightweight in-memory fake implementations of traits for testing rather than using mocking frameworks. Each trait representing an external dependency should have both a real implementation and a test double. See `rust-snippet-fake.mds` for detailed examples and guidance.
+- **Test Function Naming:** Name test functions using the pattern `{condition_or_prerequisite}_{result_or_expectation}` instead of starting with `test_`. For example, use `if_db_fail_to_provide_data_synchronizer_should_return_error` instead of `test_synchronizer_error_handling`. This naming pattern:
+  - Makes the test's purpose immediately clear
+  - Documents expected behavior in the function name
+  - Helps identify what's being tested when tests fail
+  - Acts as living documentation of system behavior
 
 ## Performance
 - **Optimization:** Be mindful of performance implications. Profile and optimize critical code paths.

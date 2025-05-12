@@ -1,11 +1,15 @@
-# Context Prime 
-> Follow the instructions to understand the project 
+# Context Prime
 
-## Run these commands 
-- eza --tree --git-ignore 
+> Follow the instructions to understand the project
 
-## Read these files exclusively 
-> Do not read any other files 
+## Run these commands
+
+- eza --tree --git-ignore
+
+## Read these files exclusively
+
+> Do not read any other files
+
 - Cargo.toml
-- README.md 
-- ai_docs/*
+- README.md
+- ai/docs/*
