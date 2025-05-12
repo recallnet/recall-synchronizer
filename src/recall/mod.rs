@@ -1,14 +1,48 @@
 use anyhow::Result;
-use recall_provider::json_rpc::JsonRpcProvider;
-use recall_sdk::{
-    machine::{bucket::Bucket, Machine},
-    network::Network,
-};
+use recall_sdk::network::Network;
 use tracing::{debug, info};
 
 use crate::config::RecallConfig;
 
+#[cfg(test)]
+pub mod test_utils {
+    use super::*;
+
+    #[derive(Clone)]
+    pub struct FakeRecallConnector {
+        prefix: Option<String>,
+    }
+
+    impl FakeRecallConnector {
+        pub fn new(prefix: Option<String>) -> Self {
+            FakeRecallConnector {
+                prefix,
+            }
+        }
+
+        pub async fn store_object(&self, key: &str, _data: &[u8]) -> Result<String> {
+            let full_key = if let Some(prefix) = &self.prefix {
+                format!("{}/{}", prefix, key)
+            } else {
+                key.to_string()
+            };
+
+            debug!("[FAKE] Storing object to Recall: {}", full_key);
+
+            // Return a fake CID
+            let fake_cid = format!("bafybeifake{}", key.len());
+
+            debug!(
+                "[FAKE] Successfully stored fake object {} with CID: {}",
+                full_key, fake_cid
+            );
+            Ok(fake_cid)
+        }
+    }
+}
+
 // Stub implementation until recall dependencies are re-enabled
+#[derive(Clone)]
 pub struct RecallConnector {
     endpoint: String,
     prefix: Option<String>,
@@ -16,7 +50,7 @@ pub struct RecallConnector {
 
 impl RecallConnector {
     pub async fn new(config: &RecallConfig) -> Result<Self> {
-        let network = Network::Testnet.init();
+        let _network = Network::Testnet.init();
         info!(
             "Creating stub Recall connector with endpoint {}",
             &config.endpoint

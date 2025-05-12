@@ -3,6 +3,7 @@ use anyhow::{Context, Result};
 use aws_credential_types::Credentials;
 use aws_sdk_s3::{config::Region, Client};
 use bytes::Bytes;
+use std::collections::HashMap;
 use std::num::NonZeroUsize;
 use std::sync::Arc;
 use tokio::sync::Mutex;
@@ -10,6 +11,51 @@ use tracing::{debug, info};
 
 use crate::config::S3Config;
 
+#[cfg(test)]
+pub mod test_utils {
+    use super::*;
+
+    #[derive(Clone)]
+    pub struct FakeS3Connector {
+        bucket: String,
+        objects: Arc<Mutex<HashMap<String, Bytes>>>,
+    }
+
+    impl FakeS3Connector {
+        pub fn new(bucket: &str) -> Self {
+            FakeS3Connector {
+                bucket: bucket.to_string(),
+                objects: Arc::new(Mutex::new(HashMap::new())),
+            }
+        }
+
+        pub async fn fake_add_object(&self, key: &str, data: Bytes) {
+            let mut objects = self.objects.lock().await;
+            objects.insert(key.to_string(), data);
+        }
+    }
+
+    impl FakeS3Connector {
+        pub async fn get_object(&self, key: &str) -> Result<Bytes> {
+            debug!("[FAKE] Fetching object from S3: {}", key);
+
+            let objects = self.objects.lock().await;
+            match objects.get(key) {
+                Some(data) => {
+                    debug!("[FAKE] Found object in fake storage: {}", key);
+                    Ok(data.clone())
+                }
+                None => {
+                    let data = Bytes::from(format!("Fake data for {}", key));
+                    debug!("[FAKE] Generated fake data for: {}", key);
+                    Ok(data)
+                }
+            }
+        }
+    }
+}
+
+#[derive(Clone)]
 pub struct S3Connector {
     client: Client,
     bucket: String,

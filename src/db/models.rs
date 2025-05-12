@@ -1,11 +1,21 @@
+use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
-use sqlx::types::chrono::{DateTime, Utc};
+use uuid::Uuid;
 
-#[derive(Debug, Serialize, Deserialize, Clone)]
-pub struct ObjectInfo {
-    pub key: String,
-    pub updated_at: DateTime<Utc>,
-    pub competition_id: Option<String>,
-    pub metadata: Option<serde_json::Value>,
+/// Represents an object in the object_index table
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ObjectIndex {
+    pub id: Uuid,
+    pub object_key: String,
+    pub bucket_name: String,
+    pub competition_id: Option<Uuid>,
+    pub agent_id: Option<Uuid>,
+    pub data_type: String,
     pub size_bytes: Option<i64>,
+    pub content_hash: Option<String>,
+    pub metadata: Option<serde_json::Value>,
+    pub event_timestamp: Option<DateTime<Utc>>,
+    pub object_last_modified_at: DateTime<Utc>,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
 }
