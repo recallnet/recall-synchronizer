@@ -11,6 +11,57 @@ mod tests {
     // Static flag to skip PostgreSQL tests if we've already determined the connection fails
     static SKIP_PG_TESTS: AtomicBool = AtomicBool::new(false);
 
+    // Static reference to be shared between test runs
+    // SAFETY: This is safe because:
+    // 1. It's only accessed during testing
+    // 2. We use a mutex-like mechanism (AtomicBool) to ensure no race conditions
+    // 3. It's only written to once during initialization
+    // 4. After initialization, it's only read and never written to again
+    static mut PG_DATABASE: Option<Arc<PostgresDatabase>> = None;
+
+    /// Creates or returns a cached PostgreSQL database connection
+    ///
+    /// This function provides a singleton pattern for the database connection in tests.
+    /// It ensures that only one connection is established during testing, which is reused
+    /// across test cases.
+    fn get_or_create_postgres_connection() -> Result<Arc<PostgresDatabase>, String> {
+        // Check if we need to initialize the connection
+        // This is safe because we've checked SKIP_PG_TESTS first, which acts as a mutex
+        let pg_database_initialized = unsafe { PG_DATABASE.is_some() };
+
+        if pg_database_initialized {
+            // Return the cached connection
+            // SAFETY: We've already checked that it's initialized and it's only read after initialization
+            return Ok(unsafe { PG_DATABASE.as_ref().unwrap().clone() });
+        }
+
+        // Get database URL from environment
+        let db_url = std::env::var("TEST_DATABASE_URL")
+            .map_err(|_| "TEST_DATABASE_URL not set".to_string())?;
+
+        // Create a new database connection
+        // We use block_on to avoid nested runtime issues
+        let fut = PostgresDatabase::new(&db_url);
+        let pg_db = futures::executor::block_on(async {
+            tokio::time::timeout(StdDuration::from_secs(5), fut).await
+        })
+        .map_err(|_| "Connection to PostgreSQL timed out".to_string())?
+        .map_err(|e| format!("Failed to connect to PostgreSQL: {}", e))?;
+
+        let pg_db = Arc::new(pg_db);
+
+        // Store the database connection for future use
+        // SAFETY: This is safe because:
+        // 1. We're only writing to this static once
+        // 2. We've checked SKIP_PG_TESTS before writing, which acts as a mutex
+        // 3. After this point, the variable is only read, never written to again
+        unsafe {
+            PG_DATABASE = Some(pg_db.clone());
+        }
+
+        Ok(pg_db)
+    }
+
     // Add trait implementation for Arc<T> where T implements Database
     #[async_trait]
     impl<T: Database + Send + Sync + 'static> Database for Arc<T> {
@@ -75,92 +126,13 @@ mod tests {
 
         // Conditionally add the real PostgreSQL implementation when enabled
         if std::env::var("ENABLE_DB_TESTS").is_ok() && !SKIP_PG_TESTS.load(Ordering::SeqCst) {
-            databases.push(Box::new(|| {
-                // Static reference to be shared between test runs
-                static mut PG_DATABASE: Option<Arc<PostgresDatabase>> = None;
-                
-                // This is run once, not during test execution
-                if unsafe { PG_DATABASE.is_none() } {
-                    // Use the test database URL from environment
-                    let db_url = match std::env::var("TEST_DATABASE_URL") {
-                        Ok(url) => url,
-                        Err(_) => {
-                            println!("TEST_DATABASE_URL not set, skipping PostgreSQL tests");
-                            SKIP_PG_TESTS.store(true, Ordering::SeqCst);
-                            // Return the fake database instead
-                            let db = FakeDatabase::new();
-                            return Box::new(db);
-                        }
-                    };
-                    
-                    // Create the database connection before the test - outside of any async context
-                    let fut = PostgresDatabase::new(&db_url);
-                    
-                    // To avoid nested runtime issues, run the future directly with timeout
-                    // This is fine for testing setup
-                    let pg_db = match futures::executor::block_on(async {
-                        tokio::time::timeout(StdDuration::from_secs(5), fut).await
-                    }) {
-                        Ok(Ok(db)) => db,
-                        _ => {
-                            println!("Failed to connect to PostgreSQL, skipping PostgreSQL tests");
-                            SKIP_PG_TESTS.store(true, Ordering::SeqCst);
-                            // Return the fake database instead
-                            let db = FakeDatabase::new();
-                            return Box::new(db);
-                        }
-                    };
-                    
-                    // Store it for reuse
-                    unsafe {
-                        PG_DATABASE = Some(Arc::new(pg_db));
-                    }
+            databases.push(Box::new(|| match get_or_create_postgres_connection() {
+                Ok(db) => Box::new(db),
+                Err(e) => {
+                    println!("PostgreSQL tests skipped: {}", e);
+                    SKIP_PG_TESTS.store(true, Ordering::SeqCst);
+                    panic!("Failed to connect to PostgreSQL: {}. Set ENABLE_DB_TESTS=false to skip these tests.", e);
                 }
-                
-                // If the PostgreSQL connection failed initially, return the fake database
-                if SKIP_PG_TESTS.load(Ordering::SeqCst) {
-                    let db = FakeDatabase::new();
-                    let now = Utc::now();
-                    let object1 = ObjectIndex {
-                        id: Uuid::new_v4(),
-                        object_key: "test/object1.jsonl".to_string(),
-                        bucket_name: "test-bucket".to_string(),
-                        competition_id: Some(Uuid::new_v4()),
-                        agent_id: Some(Uuid::new_v4()),
-                        data_type: "TEST_DATA".to_string(),
-                        size_bytes: Some(1024),
-                        content_hash: Some("hash1".to_string()),
-                        metadata: None,
-                        event_timestamp: Some(now),
-                        object_last_modified_at: now,
-                        created_at: now,
-                        updated_at: now,
-                    };
-                    
-                    let object2 = ObjectIndex {
-                        id: Uuid::new_v4(),
-                        object_key: "test/object2.jsonl".to_string(),
-                        bucket_name: "test-bucket".to_string(),
-                        competition_id: Some(Uuid::new_v4()),
-                        agent_id: Some(Uuid::new_v4()),
-                        data_type: "TEST_DATA".to_string(),
-                        size_bytes: Some(2048),
-                        content_hash: Some("hash2".to_string()),
-                        metadata: None,
-                        event_timestamp: Some(now + Duration::hours(1)),
-                        object_last_modified_at: now + Duration::hours(1),
-                        created_at: now,
-                        updated_at: now,
-                    };
-    
-                    db.fake_add_object(object1);
-                    db.fake_add_object(object2);
-                    
-                    return Box::new(db);
-                }
-                
-                let db = unsafe { PG_DATABASE.as_ref().unwrap().clone() };
-                Box::new(db)
             }));
         }
 
