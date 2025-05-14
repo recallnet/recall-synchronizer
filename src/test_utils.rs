@@ -50,32 +50,51 @@ pub struct RecallTestConfig {
 }
 
 /// Load test configuration from test_config.toml
+/// Environment variables will override config file settings
 pub fn load_test_config() -> TestConfig {
     let config_path = Path::new("test_config.toml");
+    
+    // Start with file-based config or default
+    let mut config = if !config_path.exists() {
+        default_test_config()
+    } else {
+        // Read the config file
+        let config_content = match fs::read_to_string(config_path) {
+            Ok(content) => content,
+            Err(_) => {
+                println!("Warning: Failed to read test_config.toml, using default config");
+                return default_test_config();
+            }
+        };
 
-    // Check if test_config.toml exists
-    if !config_path.exists() {
-        // If not, use default config
-        return default_test_config();
-    }
-
-    // Read the config file
-    let config_content = match fs::read_to_string(config_path) {
-        Ok(content) => content,
-        Err(_) => {
-            println!("Warning: Failed to read test_config.toml, using default config");
-            return default_test_config();
+        // Parse the config file
+        match toml::from_str(&config_content) {
+            Ok(config) => config,
+            Err(e) => {
+                println!("Warning: Failed to parse test_config.toml: {}", e);
+                default_test_config()
+            }
         }
     };
-
-    // Parse the config file
-    match toml::from_str(&config_content) {
-        Ok(config) => config,
-        Err(e) => {
-            println!("Warning: Failed to parse test_config.toml: {}", e);
-            default_test_config()
-        }
+    
+    // Override with environment variables if present
+    if let Ok(val) = std::env::var("ENABLE_DB_TESTS") {
+        config.database.enabled = val.to_lowercase() == "true";
     }
+    
+    if let Ok(val) = std::env::var("ENABLE_SQLITE_TESTS") {
+        config.sqlite.enabled = val.to_lowercase() == "true";
+    }
+    
+    if let Ok(val) = std::env::var("ENABLE_S3_TESTS") {
+        config.s3.enabled = val.to_lowercase() == "true";
+    }
+    
+    if let Ok(val) = std::env::var("ENABLE_RECALL_TESTS") {
+        config.recall.enabled = val.to_lowercase() == "true";
+    }
+    
+    config
 }
 
 /// Default test configuration when file is missing or invalid

@@ -1,4 +1,4 @@
-.PHONY: all build test test-integration test-coverage clean docker-up docker-down init-db fmt lint
+.PHONY: all build test test-fast test-integration test-coverage clean docker-up docker-down init-db fmt lint
 
 # Default target
 all: build
@@ -8,17 +8,22 @@ build:
 	cargo build
 
 # Run unit tests (fake implementations only)
-test:
+test-fast:
 	cargo test
+#	 ENABLE_DB_TESTS=false ENABLE_SQLITE_TESTS=false ENABLE_S3_TESTS=false ENABLE_RECALL_TESTS=false cargo test
 
 # Run integration tests with real implementations
+test: docker-up init-db
+	@ENABLE_DB_TESTS=true ENABLE_SQLITE_TESTS=true RUST_BACKTRACE=1 cargo test -- --nocapture
+
+# Run tests with custom configuration
 test-integration: docker-up init-db
 	@RUST_BACKTRACE=1 cargo test -- --nocapture
 
 # Run all tests with coverage
 test-coverage: docker-up init-db
 	@which cargo-tarpaulin > /dev/null || cargo install cargo-tarpaulin
-	@cargo tarpaulin --out html
+	@ENABLE_DB_TESTS=true ENABLE_SQLITE_TESTS=true RUST_BACKTRACE=1 cargo tarpaulin --out html
 
 # Format code
 fmt:
