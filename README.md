@@ -174,23 +174,38 @@ Additional options:
 
 ### Running Tests
 
+The project provides several test targets with different configurations:
+
+#### Test Targets
+
+- `make test-fast` - Run tests with fake implementations only (no Docker required)
+- `make test` - Run tests with real PostgreSQL and SQLite implementations
+- `make test-integration` - Run tests with custom configuration (respects env vars)
+- `make test-coverage` - Run tests with coverage reporting
+
+#### Test Configuration
+
+Tests can be configured via environment variables that override `test_config.toml`:
+
+- `ENABLE_DB_TESTS=true/false` - Enable tests with real PostgreSQL database
+- `ENABLE_SQLITE_TESTS=true/false` - Enable tests with real SQLite storage
+- `ENABLE_S3_TESTS=true/false` - Enable tests with real S3 (not yet implemented)
+- `ENABLE_RECALL_TESTS=true/false` - Enable tests with real Recall network (not yet implemented)
+
+Example usage:
+
 ```bash
-cargo test --all-targets --all-features
-```
+# Run only with fake implementations
+make test-fast
 
-#### Test Environment Variables
+# Run with real PostgreSQL and SQLite
+make test
 
-For running tests against real implementations:
+# Run with only PostgreSQL enabled
+ENABLE_DB_TESTS=true ENABLE_SQLITE_TESTS=false make test-integration
 
-- `ENABLE_DB_TESTS=true` - Enable tests with real PostgreSQL database
-- `TEST_DATABASE_URL` - PostgreSQL connection URL for tests (defaults to local Docker instance)
-- `ENABLE_S3_TESTS=true` - Run tests with real S3
-- `ENABLE_RECALL_TESTS=true` - Run tests with real Recall network
-
-Example:
-
-```bash
-ENABLE_DB_TESTS=true TEST_DATABASE_URL="postgresql://recall:recall_password@localhost:5432/recall_competitions" cargo test
+# Run with custom configuration
+ENABLE_DB_TESTS=true cargo test
 ```
 
 #### Testing Philosophy
