@@ -1,9 +1,8 @@
-use crate::db::{Database, DatabaseError, FakeDatabase, ObjectIndex, PostgresDatabase};
-use crate::test_utils::load_test_config;
+use crate::db::{Database, DatabaseError, FakeDatabase, PostgresDatabase};
+use crate::test_utils::{create_test_object_index, load_test_config};
 use chrono::{Duration, Utc};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
-use uuid::Uuid;
 
 // Type alias to simplify the complex type for database factory functions
 type DatabaseFactory =
@@ -122,37 +121,11 @@ async fn test_get_objects_to_sync() {
 
         // Add test objects with different timestamps
         let now = Utc::now();
-        let object1 = ObjectIndex {
-            id: Uuid::new_v4(),
-            object_key: "test/object1.jsonl".to_string(),
-            bucket_name: "test-bucket".to_string(),
-            competition_id: Some(Uuid::new_v4()),
-            agent_id: Some(Uuid::new_v4()),
-            data_type: "TEST_DATA".to_string(),
-            size_bytes: Some(1024),
-            content_hash: Some("hash1".to_string()),
-            metadata: None,
-            event_timestamp: Some(now),
-            object_last_modified_at: now,
-            created_at: now,
-            updated_at: now,
-        };
+        let object1 = create_test_object_index("test/object1.jsonl", now);
 
-        let object2 = ObjectIndex {
-            id: Uuid::new_v4(),
-            object_key: "test/object2.jsonl".to_string(),
-            bucket_name: "test-bucket".to_string(),
-            competition_id: Some(Uuid::new_v4()),
-            agent_id: Some(Uuid::new_v4()),
-            data_type: "TEST_DATA".to_string(),
-            size_bytes: Some(2048),
-            content_hash: Some("hash2".to_string()),
-            metadata: None,
-            event_timestamp: Some(now + Duration::hours(1)),
-            object_last_modified_at: now + Duration::hours(1),
-            created_at: now,
-            updated_at: now,
-        };
+        // Create object2 with modified timestamp
+        let mut object2 = create_test_object_index("test/object2.jsonl", now + Duration::hours(1));
+        object2.size_bytes = Some(2048); // Customize size if needed
 
         db.add_object(object1).await.unwrap();
         db.add_object(object2).await.unwrap();
@@ -187,21 +160,7 @@ async fn test_get_object_by_key() {
 
         // Add a test object
         let now = Utc::now();
-        let object1 = ObjectIndex {
-            id: Uuid::new_v4(),
-            object_key: "test/object1.jsonl".to_string(),
-            bucket_name: "test-bucket".to_string(),
-            competition_id: Some(Uuid::new_v4()),
-            agent_id: Some(Uuid::new_v4()),
-            data_type: "TEST_DATA".to_string(),
-            size_bytes: Some(1024),
-            content_hash: Some("hash1".to_string()),
-            metadata: None,
-            event_timestamp: Some(now),
-            object_last_modified_at: now,
-            created_at: now,
-            updated_at: now,
-        };
+        let object1 = create_test_object_index("test/object1.jsonl", now);
 
         db.add_object(object1).await.unwrap();
 

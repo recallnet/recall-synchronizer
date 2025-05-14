@@ -1,13 +1,13 @@
 use crate::config::{Config, DatabaseConfig, RecallConfig, S3Config, SyncConfig};
-use crate::db::{FakeDatabase, ObjectIndex};
+use crate::db::FakeDatabase;
 use crate::recall::test_utils::FakeRecallConnector;
 use crate::s3::test_utils::FakeS3Connector;
 use crate::sync::storage::{FakeSyncStorage, SyncStorage};
 use crate::sync::Synchronizer;
+use crate::test_utils::create_test_object_index;
 use bytes::Bytes;
 use chrono::{Duration, Utc};
 use std::sync::Arc;
-use uuid::Uuid;
 
 // Removed unused imports
 // use mockall::predicate::*;
@@ -55,37 +55,9 @@ async fn setup_test_env() -> (
     let database = FakeDatabase::new();
     let now = Utc::now();
 
-    let object1 = ObjectIndex {
-        id: Uuid::new_v4(),
-        object_key: "test/object1.jsonl".to_string(),
-        bucket_name: "test-bucket".to_string(),
-        competition_id: Some(Uuid::new_v4()),
-        agent_id: Some(Uuid::new_v4()),
-        data_type: "TEST_DATA".to_string(),
-        size_bytes: Some(1024),
-        content_hash: Some("hash1".to_string()),
-        metadata: None,
-        event_timestamp: Some(now),
-        object_last_modified_at: now,
-        created_at: now,
-        updated_at: now,
-    };
-
-    let object2 = ObjectIndex {
-        id: Uuid::new_v4(),
-        object_key: "test/object2.jsonl".to_string(),
-        bucket_name: "test-bucket".to_string(),
-        competition_id: Some(Uuid::new_v4()),
-        agent_id: Some(Uuid::new_v4()),
-        data_type: "TEST_DATA".to_string(),
-        size_bytes: Some(2048),
-        content_hash: Some("hash2".to_string()),
-        metadata: None,
-        event_timestamp: Some(now + Duration::hours(1)),
-        object_last_modified_at: now + Duration::hours(1),
-        created_at: now,
-        updated_at: now,
-    };
+    let object1 = create_test_object_index("test/object1.jsonl", now);
+    let mut object2 = create_test_object_index("test/object2.jsonl", now + Duration::hours(1));
+    object2.size_bytes = Some(2048); // Customize size if needed
 
     database.fake_add_object(object1);
     database.fake_add_object(object2);
