@@ -1,4 +1,5 @@
 pub mod error;
+#[cfg(test)]
 pub mod fake;
 pub mod models;
 pub mod sqlite;
@@ -8,6 +9,7 @@ mod tests;
 
 #[allow(unused_imports)]
 pub use error::SyncStorageError;
+#[cfg(test)]
 pub use fake::FakeSyncStorage;
 pub use sqlite::SqliteSyncStorage;
 pub use sync_storage::SyncStorage;

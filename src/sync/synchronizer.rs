@@ -107,28 +107,6 @@ pub struct Synchronizer<D: Database, S: SyncStorage> {
     reset: bool,
 }
 
-#[cfg(not(test))]
-impl<D: Database, S: SyncStorage> Synchronizer<D, S> {
-    /// Creates a new synchronizer instance with the provided database and sync storage
-    pub fn with_storage(
-        database: D,
-        sync_storage: S,
-        s3_connector: S3Connector,
-        recall_connector: RecallConnector,
-        config: Config,
-        reset: bool,
-    ) -> Self {
-        Synchronizer {
-            database: Arc::new(database),
-            sync_storage: Arc::new(sync_storage),
-            s3_connector: Arc::new(s3_connector),
-            recall_connector: Arc::new(recall_connector),
-            config,
-            reset,
-        }
-    }
-}
-
 #[cfg(test)]
 impl<D: Database, S: SyncStorage> Synchronizer<D, S> {
     /// Test version that works with dynamic trait objects
