@@ -38,7 +38,9 @@ impl<T: SyncStorage + ?Sized> SyncStorage for Arc<T> {
         object_key: &str,
         sync_timestamp: DateTime<Utc>,
     ) -> Result<(), SyncStorageError> {
-        (**self).mark_object_synced(object_key, sync_timestamp).await
+        (**self)
+            .mark_object_synced(object_key, sync_timestamp)
+            .await
     }
 
     async fn is_object_synced(&self, object_key: &str) -> Result<bool, SyncStorageError> {

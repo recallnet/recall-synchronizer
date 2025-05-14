@@ -75,7 +75,6 @@ async fn get_or_create_postgres_connection() -> Result<Arc<PostgresDatabase>, St
     Ok(pg_db)
 }
 
-
 // Helper function to create test databases
 fn get_test_databases() -> Vec<DatabaseFactory> {
     // Reset any previous skip flags when configuration changes

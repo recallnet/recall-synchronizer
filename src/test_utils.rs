@@ -53,7 +53,7 @@ pub struct RecallTestConfig {
 /// Environment variables will override config file settings
 pub fn load_test_config() -> TestConfig {
     let config_path = Path::new("test_config.toml");
-    
+
     // Start with file-based config or default
     let mut config = if !config_path.exists() {
         default_test_config()
@@ -76,24 +76,24 @@ pub fn load_test_config() -> TestConfig {
             }
         }
     };
-    
+
     // Override with environment variables if present
     if let Ok(val) = std::env::var("ENABLE_DB_TESTS") {
         config.database.enabled = val.to_lowercase() == "true";
     }
-    
+
     if let Ok(val) = std::env::var("ENABLE_SQLITE_TESTS") {
         config.sqlite.enabled = val.to_lowercase() == "true";
     }
-    
+
     if let Ok(val) = std::env::var("ENABLE_S3_TESTS") {
         config.s3.enabled = val.to_lowercase() == "true";
     }
-    
+
     if let Ok(val) = std::env::var("ENABLE_RECALL_TESTS") {
         config.recall.enabled = val.to_lowercase() == "true";
     }
-    
+
     config
 }
 
