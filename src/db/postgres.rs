@@ -16,8 +16,8 @@ impl PostgresDatabase {
     /// Create a new PostgresDatabase with the given connection URL
     pub async fn new(database_url: &str) -> Result<Self, DatabaseError> {
         let pool = PgPoolOptions::new()
-            .max_connections(5)
-            .acquire_timeout(Duration::from_secs(3))
+            .max_connections(10)
+            .acquire_timeout(Duration::from_secs(10))
             .idle_timeout(Duration::from_secs(60))
             .connect_lazy(database_url)
             .map_err(|e| DatabaseError::ConnectionError(e.to_string()))?;
@@ -30,6 +30,27 @@ impl PostgresDatabase {
         };
 
         Ok(PostgresDatabase { pool })
+    }
+
+    /// Clear all test data (only use in tests)
+    #[cfg(test)]
+    pub async fn clear_test_data(&self) -> Result<(), DatabaseError> {
+        // Clear all data from object_index where the key starts with 'test/'
+        // This will handle all test data including those from parallel tests
+        sqlx::query("DELETE FROM object_index WHERE object_key LIKE 'test/%'")
+            .execute(&self.pool)
+            .await
+            .map_err(|e| {
+                if e.to_string()
+                    .contains("relation \"object_index\" does not exist")
+                {
+                    // Table doesn't exist yet, which is fine for tests
+                    return DatabaseError::Other(anyhow::anyhow!("Table not initialized"));
+                }
+                DatabaseError::Other(e.into())
+            })?;
+
+        Ok(())
     }
 
     /// Helper function to create an ObjectIndex from a database row
@@ -98,7 +119,7 @@ impl Database for PostgresDatabase {
 
         let objects = if let Some(ts) = since {
             // With timestamp filter
-            let query = format!("{} WHERE object_last_modified_at > $1 ORDER BY object_last_modified_at ASC LIMIT $2", query_base);
+            let query = format!("{} WHERE object_last_modified_at > $1 ORDER BY object_last_modified_at DESC LIMIT $2", query_base);
             match sqlx::query(&query)
                 .bind(ts)
                 .bind(i64::from(limit))
@@ -119,7 +140,7 @@ impl Database for PostgresDatabase {
         } else {
             // Without timestamp filter
             let query = format!(
-                "{} ORDER BY object_last_modified_at ASC LIMIT $1",
+                "{} ORDER BY object_last_modified_at DESC LIMIT $1",
                 query_base
             );
             match sqlx::query(&query)

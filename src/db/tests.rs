@@ -1,4 +1,4 @@
-use crate::db::{Database, DatabaseError, FakeDatabase, PostgresDatabase};
+use crate::db::{Database, DatabaseError, FakeDatabase, ObjectIndex, PostgresDatabase};
 use crate::test_utils::{create_test_object_index, load_test_config};
 use chrono::{Duration, Utc};
 use std::sync::Arc;
@@ -27,7 +27,6 @@ async fn get_or_create_postgres_connection() -> Result<Arc<PostgresDatabase>, St
     let pg_database_initialized = unsafe { PG_DATABASE.is_some() };
 
     if pg_database_initialized {
-        println!("- Using cached PostgreSQL connection");
         // Return the cached connection
         // SAFETY: We've already checked that it's initialized and it's only read after initialization
         #[allow(static_mut_refs)]
@@ -55,17 +54,38 @@ async fn get_or_create_postgres_connection() -> Result<Arc<PostgresDatabase>, St
     Ok(pg_db)
 }
 
+/// Setup a test database with a specific prefix for test isolation
+async fn setup_test_database(db: &(dyn Database + Send + Sync)) -> Vec<ObjectIndex> {
+    let base_time = Utc::now() - Duration::hours(10);
+    let mut objects = Vec::new();
+
+    // Create 15 objects with different timestamps for comprehensive testing
+    for i in 0..15 {
+        let modified_at = base_time + Duration::minutes(i * 30);
+        let mut object =
+            create_test_object_index(&format!("test/object_{:02}.jsonl", i), modified_at);
+
+        // Vary other attributes for realistic testing
+        object.size_bytes = Some(1024 * (i + 1));
+        object.data_type = match i % 3 {
+            0 => "LOGS".to_string(),
+            1 => "METRICS".to_string(),
+            _ => "EVENTS".to_string(),
+        };
+
+        db.add_object(object.clone()).await.unwrap();
+        objects.push(object);
+    }
+
+    objects
+}
+
 // Helper function to create test databases
 fn get_test_databases() -> Vec<DatabaseFactory> {
     let mut databases: Vec<DatabaseFactory> = vec![
         // Always include the FakeDatabase
         Box::new(|| {
-            let future = async {
-                println!("- Using FakeDatabase implementation");
-                Box::new(FakeDatabase::new()) as Box<dyn Database + Send + Sync>
-            };
-
-            Box::pin(future)
+            Box::pin(async { Box::new(FakeDatabase::new()) as Box<dyn Database + Send + Sync> })
         }),
     ];
 
@@ -77,7 +97,9 @@ fn get_test_databases() -> Vec<DatabaseFactory> {
             Box::pin(async {
                 match get_or_create_postgres_connection().await {
                     Ok(db) => {
-                        println!("- Using PostgresDatabase implementation");
+                        // Clear test data before returning
+                        // Ignore errors as the table might not exist yet
+                        let _ = db.clear_test_data().await;
                         Box::new(db) as Box<dyn Database + Send + Sync>
                     }
                     Err(e) => {
@@ -95,71 +117,183 @@ fn get_test_databases() -> Vec<DatabaseFactory> {
 }
 
 #[tokio::test]
-async fn test_get_objects_to_sync() {
+async fn get_objects_with_no_timestamp_filter_returns_all_objects() {
     for db_factory in get_test_databases() {
         let db = db_factory().await;
+        let test_objects = setup_test_database(db.as_ref()).await;
 
-        // Add test objects with different timestamps
-        let now = Utc::now();
-        let object1 = create_test_object_index("test/object1.jsonl", now);
+        let objects = db.get_objects_to_sync(20, None).await.unwrap();
 
-        // Create object2 with modified timestamp
-        let mut object2 = create_test_object_index("test/object2.jsonl", now + Duration::hours(1));
-        object2.size_bytes = Some(2048); // Customize size if needed
-
-        db.add_object(object1).await.unwrap();
-        db.add_object(object2).await.unwrap();
-
-        // Test query with no timestamp restriction
-        let objects = db.get_objects_to_sync(10, None).await.unwrap();
-        assert!(!objects.is_empty(), "Should return objects");
-
-        // Test query with timestamp restriction (future)
-        let future = Utc::now() + Duration::days(1);
-        let objects = db.get_objects_to_sync(10, Some(future)).await.unwrap();
         assert_eq!(
             objects.len(),
-            0,
-            "Should not return objects modified before the timestamp"
-        );
-
-        // Test with limit
-        let objects = db.get_objects_to_sync(1, None).await.unwrap();
-        assert_eq!(
+            test_objects.len(),
+            "Should return all objects when no timestamp filter is provided. Got {} objects, expected {}",
             objects.len(),
-            1,
-            "Should only return one object with limit=1"
+            test_objects.len()
         );
     }
 }
 
 #[tokio::test]
-async fn test_get_object_by_key() {
+async fn get_objects_with_future_timestamp_returns_empty() {
     for db_factory in get_test_databases() {
         let db = db_factory().await;
+        let _ = setup_test_database(db.as_ref()).await;
 
-        // Add a test object
-        let now = Utc::now();
-        let object1 = create_test_object_index("test/object1.jsonl", now);
+        let future_time = Utc::now() + Duration::days(1);
+        let objects = db.get_objects_to_sync(20, Some(future_time)).await.unwrap();
 
-        db.add_object(object1).await.unwrap();
-
-        // Test retrieving the object
-        let object = db.get_object_by_key("test/object1.jsonl").await.unwrap();
-        assert_eq!(object.object_key, "test/object1.jsonl");
-
-        // Test getting a non-existent object
-        let result = db.get_object_by_key("nonexistent").await;
-        assert!(
-            result.is_err(),
-            "Should return error for non-existent object"
+        assert_eq!(
+            objects.len(),
+            0,
+            "Should return no objects when timestamp filter is in the future"
         );
+    }
+}
+
+#[tokio::test]
+async fn get_objects_with_past_timestamp_returns_recent_objects() {
+    for db_factory in get_test_databases() {
+        let db = db_factory().await;
+        let test_objects = setup_test_database(db.as_ref()).await;
+
+        // Use a timestamp that's 5 hours ago (halfway through our test data)
+        let midpoint_time = Utc::now() - Duration::hours(5);
+        let objects = db
+            .get_objects_to_sync(20, Some(midpoint_time))
+            .await
+            .unwrap();
+
+        // Count objects that should be returned based on our test data
+        let expected_count = test_objects
+            .iter()
+            .filter(|o| o.object_last_modified_at > midpoint_time)
+            .count();
+
+        assert_eq!(
+            objects.len(),
+            expected_count,
+            "Should return exactly {} objects modified after the midpoint timestamp",
+            expected_count
+        );
+
+        // Verify all returned objects are newer than the timestamp
+        for obj in &objects {
+            assert!(
+                obj.object_last_modified_at > midpoint_time,
+                "Object {} should be newer than the filter timestamp",
+                obj.object_key
+            );
+        }
+    }
+}
+
+#[tokio::test]
+async fn get_objects_with_limit_at_beginning_of_range_returns_objects() {
+    for db_factory in get_test_databases() {
+        let db = db_factory().await;
+        let _ = setup_test_database(db.as_ref()).await;
+
+        let objects = db.get_objects_to_sync(3, None).await.unwrap();
+
+        assert_eq!(
+            objects.len(),
+            3,
+            "Should return exactly 3 objects when limit is 3"
+        );
+    }
+}
+
+#[tokio::test]
+async fn get_objects_with_limit_in_middle_of_range_returns_objects() {
+    for db_factory in get_test_databases() {
+        let db = db_factory().await;
+        let test_objects = setup_test_database(db.as_ref()).await;
+
+        let limit = 8;
+        let objects = db
+            // Use the second object as a cutoff point
+            // This should return the 8 most recent objects after the second one
+            .get_objects_to_sync(limit, Some(test_objects[1].object_last_modified_at))
+            .await
+            .unwrap();
+
+        assert_eq!(
+            objects.len(),
+            limit as usize,
+            "Should return exactly {} objects when limit is {}",
+            limit,
+            limit
+        );
+
+        // Verify we got the most recent objects
+        let sorted_test_objects = {
+            let mut objs = test_objects[2..].to_vec();
+            objs.sort_by(|a, b| b.object_last_modified_at.cmp(&a.object_last_modified_at));
+            objs
+        };
+
+        for i in 0..limit as usize {
+            assert_eq!(
+                objects[i].object_key, sorted_test_objects[i].object_key,
+                "Objects should be returned in order of most recent first"
+            );
+        }
+    }
+}
+
+#[tokio::test]
+async fn get_objects_with_limit_beyond_available_records_returns_objects_up_to_last_one() {
+    for db_factory in get_test_databases() {
+        let db = db_factory().await;
+        let test_objects = setup_test_database(db.as_ref()).await;
+
+        let objects = db.get_objects_to_sync(100, None).await.unwrap();
+
+        assert_eq!(
+            objects.len(),
+            test_objects.len(),
+            "Should return all available objects when limit exceeds total count"
+        );
+    }
+}
+
+#[tokio::test]
+async fn get_object_by_existing_key_returns_object() {
+    for db_factory in get_test_databases() {
+        let db = db_factory().await;
+        let test_objects = setup_test_database(db.as_ref()).await;
+
+        // Test retrieving an object from the middle of the dataset
+        let target_key = "test/object_07.jsonl";
+        let object = db.get_object_by_key(target_key).await.unwrap();
+
+        assert_eq!(object.object_key, target_key);
+
+        // Verify it matches our test data
+        let expected_object = test_objects
+            .iter()
+            .find(|o| o.object_key == target_key)
+            .unwrap();
+        assert_eq!(object.size_bytes, expected_object.size_bytes);
+        assert_eq!(object.data_type, expected_object.data_type);
+    }
+}
+
+#[tokio::test]
+async fn get_object_by_nonexistent_key_returns_error() {
+    for db_factory in get_test_databases() {
+        let db = db_factory().await;
+        let _ = setup_test_database(db.as_ref()).await;
+
+        let result = db.get_object_by_key("nonexistent/object.jsonl").await;
+
         assert!(
             matches!(
                 result,
-                Err(DatabaseError::ObjectNotFound(ref key)) if key == "nonexistent"
+                Err(DatabaseError::ObjectNotFound(ref key)) if key == "nonexistent/object.jsonl"
             ),
-            "Expected ObjectNotFound error with key 'nonexistent', got: {:?}",
+            "Expected ObjectNotFound error for nonexistent key, got: {:?}",
             result
         );
     }

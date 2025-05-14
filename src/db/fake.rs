@@ -41,12 +41,14 @@ impl Database for FakeDatabase {
                 Some(ts) => obj.object_last_modified_at > ts,
                 None => true,
             })
-            .take(limit as usize)
             .cloned()
             .collect();
 
-        // Sort by last_modified_at to ensure consistent results
-        filtered.sort_by(|a, b| a.object_last_modified_at.cmp(&b.object_last_modified_at));
+        // Sort by last_modified_at in descending order (most recent first)
+        filtered.sort_by(|a, b| b.object_last_modified_at.cmp(&a.object_last_modified_at));
+
+        // Apply limit after sorting
+        filtered.truncate(limit as usize);
 
         Ok(filtered)
     }

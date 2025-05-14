@@ -9,11 +9,7 @@ use tempfile::tempdir;
 fn get_test_storages() -> Vec<Box<dyn Fn() -> Box<dyn SyncStorage + Send + Sync>>> {
     let mut storages: Vec<Box<dyn Fn() -> Box<dyn SyncStorage + Send + Sync>>> = vec![
         // Always include the FakeSyncStorage
-        Box::new(|| {
-            println!("- Using FakeSyncStorage implementation");
-            let storage = FakeSyncStorage::new();
-            Box::new(storage)
-        }),
+        Box::new(|| Box::new(FakeSyncStorage::new())),
     ];
 
     // Load test configuration
@@ -27,7 +23,6 @@ fn get_test_storages() -> Vec<Box<dyn Fn() -> Box<dyn SyncStorage + Send + Sync>
         let db_path_str = db_path.to_str().unwrap().to_string();
 
         storages.push(Box::new(move || {
-            println!("- Using SqliteSyncStorage implementation");
             // Using a similar pattern as in the database tests, but with a safer approach.
             // We're avoiding double-nested unsafe blocks by using better encapsulation.
             Box::new(get_or_create_sqlite_storage(&db_path_str))
