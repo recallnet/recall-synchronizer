@@ -19,9 +19,15 @@ impl PostgresDatabase {
             .max_connections(5)
             .acquire_timeout(Duration::from_secs(3))
             .idle_timeout(Duration::from_secs(60))
-            .connect(database_url)
-            .await
+            .connect_lazy(database_url)
             .map_err(|e| DatabaseError::ConnectionError(e.to_string()))?;
+
+        if let Err(e) = sqlx::query("SELECT 1").execute(&pool).await {
+            return Err(DatabaseError::ConnectionError(format!(
+                "Database is not accessible: {}",
+                e
+            )));
+        };
 
         Ok(PostgresDatabase { pool })
     }

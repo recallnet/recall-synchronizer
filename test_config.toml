@@ -1,10 +1,9 @@
 [database]
-enabled = false
+enabled = true
 url = "postgresql://recall:recall_password@localhost:5432/recall_competitions"
 
 [sqlite]
 enabled = true
-# Path will be automatically generated for tests
 path = ""
 
 [s3]

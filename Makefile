@@ -1,4 +1,4 @@
-.PHONY: all build test test-integration clean docker-up docker-down fmt lint
+.PHONY: all build test test-integration test-coverage clean docker-up docker-down init-db fmt lint
 
 # Default target
 all: build
@@ -12,19 +12,13 @@ test:
 	cargo test
 
 # Run integration tests with real implementations
-test-integration: docker-up
-	@echo "Running integration tests with real implementations..."
-	@# Give PostgreSQL some time to start up
-	@sleep 2
-	RUST_BACKTRACE=1 cargo test
+test-integration: docker-up init-db
+	@RUST_BACKTRACE=1 cargo test -- --nocapture
 
 # Run all tests with coverage
-test-coverage: docker-up
-	@echo "Running tests with coverage..."
-	@# Install cargo-tarpaulin if not installed
+test-coverage: docker-up init-db
 	@which cargo-tarpaulin > /dev/null || cargo install cargo-tarpaulin
-	@sleep 2
-	cargo tarpaulin --out html
+	@cargo tarpaulin --out html
 
 # Format code
 fmt:
@@ -36,21 +30,20 @@ lint:
 
 # Start Docker containers for integration tests
 docker-up:
-	@echo "Starting Docker containers for integration tests..."
-	docker-compose up -d
-	@echo "Waiting for containers to be ready..."
+	@docker-compose up -d
+	@docker-compose exec -T postgres pg_isready -U recall -q || sleep 5
+	@docker-compose exec -T postgres pg_isready -U recall -q || sleep 5
+	@docker-compose exec -T postgres pg_isready -U recall -q || (echo "Error: PostgreSQL failed to start" && exit 1)
+
+# Initialize test database
+init-db:
+	@docker-compose exec -T postgres psql -U recall -d recall_competitions -c "DROP TABLE IF EXISTS object_index CASCADE;" >/dev/null 2>&1 || true
+	@docker-compose exec -T postgres psql -U recall -d recall_competitions -f /docker-entrypoint-initdb.d/init.sql >/dev/null 2>&1
 
 # Stop Docker containers
 docker-down:
-	@echo "Stopping Docker containers..."
-	docker-compose down
+	@docker-compose down
 
 # Clean the project
 clean: docker-down
-	cargo clean
-
-# Init schema
-init-schema: docker-up
-	@echo "Initializing database schema..."
-	@sleep 2
-	docker-compose exec postgres psql -U recall -d recall_competitions -f /docker-entrypoint-initdb.d/init.sql
+	@cargo clean
