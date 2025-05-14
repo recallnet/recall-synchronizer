@@ -1,49 +1,10 @@
-use crate::sync::storage::{FakeSyncStorage, SqliteSyncStorage, SyncStorage, SyncStorageError};
+use crate::sync::storage::{FakeSyncStorage, SqliteSyncStorage, SyncStorage};
 use crate::test_utils::load_test_config;
-use async_trait::async_trait;
-use chrono::{DateTime, Duration, Utc};
+use chrono::{Duration, Utc};
 use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
 use tempfile::tempdir;
 
-// We implement SyncStorage for Arc<T> to simplify sharing of storage implementations
-// across test cases while still maintaining proper ownership semantics.
-// This allows our test_storages() function to return Box<dyn SyncStorage>
-// where the storage might be an Arc<SqliteSyncStorage> or any other wrapped implementation.
-//
-// Without this, we would need to:
-// 1. Either recreate the storage for each test (expensive), OR
-// 2. Manually implement each function to unwrap, call, and then re-wrap
-//
-// This delegation pattern is cleaner and follows standard Rust conventions.
-#[async_trait]
-impl<T: SyncStorage + Send + Sync + 'static> SyncStorage for Arc<T> {
-    async fn mark_object_synced(
-        &self,
-        object_key: &str,
-        sync_timestamp: DateTime<Utc>,
-    ) -> Result<(), SyncStorageError> {
-        // Deref coercion to call the implementation on the inner type
-        (**self)
-            .mark_object_synced(object_key, sync_timestamp)
-            .await
-    }
-
-    async fn is_object_synced(&self, object_key: &str) -> Result<bool, SyncStorageError> {
-        (**self).is_object_synced(object_key).await
-    }
-
-    async fn update_last_sync_timestamp(
-        &self,
-        timestamp: DateTime<Utc>,
-    ) -> Result<(), SyncStorageError> {
-        (**self).update_last_sync_timestamp(timestamp).await
-    }
-
-    async fn get_last_sync_timestamp(&self) -> Result<Option<DateTime<Utc>>, SyncStorageError> {
-        (**self).get_last_sync_timestamp().await
-    }
-}
 
 // Helper function to create test storage implementations
 fn get_test_storages() -> Vec<Box<dyn Fn() -> Box<dyn SyncStorage + Send + Sync>>> {

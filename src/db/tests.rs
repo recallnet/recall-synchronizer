@@ -1,7 +1,6 @@
 use crate::db::{Database, DatabaseError, FakeDatabase, ObjectIndex, PostgresDatabase};
 use crate::test_utils::load_test_config;
-use async_trait::async_trait;
-use chrono::{DateTime, Duration, Utc};
+use chrono::{Duration, Utc};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use uuid::Uuid;
@@ -76,25 +75,6 @@ async fn get_or_create_postgres_connection() -> Result<Arc<PostgresDatabase>, St
     Ok(pg_db)
 }
 
-// Add trait implementation for Arc<T> where T implements Database
-#[async_trait]
-impl<T: Database + Send + Sync + 'static> Database for Arc<T> {
-    async fn get_objects_to_sync(
-        &self,
-        limit: u32,
-        since: Option<DateTime<Utc>>,
-    ) -> Result<Vec<ObjectIndex>, DatabaseError> {
-        (**self).get_objects_to_sync(limit, since).await
-    }
-
-    async fn get_object_by_key(&self, object_key: &str) -> Result<ObjectIndex, DatabaseError> {
-        (**self).get_object_by_key(object_key).await
-    }
-
-    async fn add_object(&self, object: ObjectIndex) -> Result<(), DatabaseError> {
-        (**self).add_object(object).await
-    }
-}
 
 // Helper function to create test databases
 fn get_test_databases() -> Vec<DatabaseFactory> {
