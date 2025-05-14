@@ -59,4 +59,10 @@ impl Database for FakeDatabase {
             .cloned()
             .ok_or_else(|| DatabaseError::ObjectNotFound(object_key.to_string()))
     }
+
+    #[cfg(test)]
+    async fn add_object(&self, object: ObjectIndex) -> Result<(), DatabaseError> {
+        self.fake_add_object(object);
+        Ok(())
+    }
 }

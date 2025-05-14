@@ -180,4 +180,46 @@ impl Database for PostgresDatabase {
         let row = row.ok_or_else(|| DatabaseError::ObjectNotFound(object_key.to_string()))?;
         self.row_to_object_index(row)
     }
+
+    #[cfg(test)]
+    async fn add_object(&self, object: ObjectIndex) -> Result<(), DatabaseError> {
+        let query = r#"
+            INSERT INTO object_index (
+                id, object_key, bucket_name, competition_id, agent_id,
+                data_type, size_bytes, content_hash, metadata,
+                event_timestamp, object_last_modified_at, created_at, updated_at
+            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+            ON CONFLICT (object_key) DO UPDATE SET
+                bucket_name = EXCLUDED.bucket_name,
+                competition_id = EXCLUDED.competition_id,
+                agent_id = EXCLUDED.agent_id,
+                data_type = EXCLUDED.data_type,
+                size_bytes = EXCLUDED.size_bytes,
+                content_hash = EXCLUDED.content_hash,
+                metadata = EXCLUDED.metadata,
+                event_timestamp = EXCLUDED.event_timestamp,
+                object_last_modified_at = EXCLUDED.object_last_modified_at,
+                updated_at = EXCLUDED.updated_at
+        "#;
+
+        sqlx::query(query)
+            .bind(object.id)
+            .bind(&object.object_key)
+            .bind(&object.bucket_name)
+            .bind(object.competition_id)
+            .bind(object.agent_id)
+            .bind(&object.data_type)
+            .bind(object.size_bytes)
+            .bind(&object.content_hash)
+            .bind(&object.metadata)
+            .bind(object.event_timestamp)
+            .bind(object.object_last_modified_at)
+            .bind(object.created_at)
+            .bind(object.updated_at)
+            .execute(&self.pool)
+            .await
+            .map_err(|e| DatabaseError::QueryError(e.to_string()))?;
+
+        Ok(())
+    }
 }

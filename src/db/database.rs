@@ -19,4 +19,8 @@ pub trait Database: Send + Sync + 'static {
     /// Get a specific object by its key
     #[allow(dead_code)]
     async fn get_object_by_key(&self, object_key: &str) -> Result<ObjectIndex, DatabaseError>;
+
+    /// Add an object to the database (test-only)
+    #[cfg(test)]
+    async fn add_object(&self, object: ObjectIndex) -> Result<(), DatabaseError>;
 }

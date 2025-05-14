@@ -1,4 +1,3 @@
-#[allow(clippy::module_inception)]
 use crate::sync::storage::{FakeSyncStorage, SqliteSyncStorage, SyncStorage, SyncStorageError};
 use crate::test_utils::load_test_config;
 use async_trait::async_trait;

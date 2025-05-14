@@ -1,4 +1,3 @@
-#[allow(clippy::module_inception)]
 use crate::db::{Database, DatabaseError, FakeDatabase, ObjectIndex, PostgresDatabase};
 use crate::test_utils::load_test_config;
 use async_trait::async_trait;
@@ -6,6 +5,10 @@ use chrono::{DateTime, Duration, Utc};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use uuid::Uuid;
+
+// Type alias to simplify the complex type for database factory functions
+type DatabaseFactory =
+    Box<dyn Fn() -> futures::future::BoxFuture<'static, Box<dyn Database + Send + Sync>>>;
 
 // Static flag to skip PostgreSQL tests if we've already determined the connection fails
 static SKIP_PG_TESTS: AtomicBool = AtomicBool::new(false);
@@ -87,61 +90,23 @@ impl<T: Database + Send + Sync + 'static> Database for Arc<T> {
     async fn get_object_by_key(&self, object_key: &str) -> Result<ObjectIndex, DatabaseError> {
         (**self).get_object_by_key(object_key).await
     }
+
+    async fn add_object(&self, object: ObjectIndex) -> Result<(), DatabaseError> {
+        (**self).add_object(object).await
+    }
 }
 
 // Helper function to create test databases
-fn get_test_databases(
-) -> Vec<Box<dyn Fn() -> futures::future::BoxFuture<'static, Box<dyn Database + Send + Sync>>>> {
+fn get_test_databases() -> Vec<DatabaseFactory> {
     // Reset any previous skip flags when configuration changes
     check_and_reset_pg_tests_skip_flag();
 
-    let mut databases: Vec<
-        Box<dyn Fn() -> futures::future::BoxFuture<'static, Box<dyn Database + Send + Sync>>>,
-    > = vec![
+    let mut databases: Vec<DatabaseFactory> = vec![
         // Always include the FakeDatabase
         Box::new(|| {
             let future = async {
                 println!("- Using FakeDatabase implementation");
-                let db = FakeDatabase::new();
-
-                // Add test objects with different timestamps
-                let now = Utc::now();
-                let object1 = ObjectIndex {
-                    id: Uuid::new_v4(),
-                    object_key: "test/object1.jsonl".to_string(),
-                    bucket_name: "test-bucket".to_string(),
-                    competition_id: Some(Uuid::new_v4()),
-                    agent_id: Some(Uuid::new_v4()),
-                    data_type: "TEST_DATA".to_string(),
-                    size_bytes: Some(1024),
-                    content_hash: Some("hash1".to_string()),
-                    metadata: None,
-                    event_timestamp: Some(now),
-                    object_last_modified_at: now,
-                    created_at: now,
-                    updated_at: now,
-                };
-
-                let object2 = ObjectIndex {
-                    id: Uuid::new_v4(),
-                    object_key: "test/object2.jsonl".to_string(),
-                    bucket_name: "test-bucket".to_string(),
-                    competition_id: Some(Uuid::new_v4()),
-                    agent_id: Some(Uuid::new_v4()),
-                    data_type: "TEST_DATA".to_string(),
-                    size_bytes: Some(2048),
-                    content_hash: Some("hash2".to_string()),
-                    metadata: None,
-                    event_timestamp: Some(now + Duration::hours(1)),
-                    object_last_modified_at: now + Duration::hours(1),
-                    created_at: now,
-                    updated_at: now,
-                };
-
-                db.fake_add_object(object1);
-                db.fake_add_object(object2);
-
-                Box::new(db) as Box<dyn Database + Send + Sync>
+                Box::new(FakeDatabase::new()) as Box<dyn Database + Send + Sync>
             };
 
             Box::pin(future)
@@ -176,6 +141,43 @@ async fn test_get_objects_to_sync() {
     for db_factory in get_test_databases() {
         let db = db_factory().await;
 
+        // Add test objects with different timestamps
+        let now = Utc::now();
+        let object1 = ObjectIndex {
+            id: Uuid::new_v4(),
+            object_key: "test/object1.jsonl".to_string(),
+            bucket_name: "test-bucket".to_string(),
+            competition_id: Some(Uuid::new_v4()),
+            agent_id: Some(Uuid::new_v4()),
+            data_type: "TEST_DATA".to_string(),
+            size_bytes: Some(1024),
+            content_hash: Some("hash1".to_string()),
+            metadata: None,
+            event_timestamp: Some(now),
+            object_last_modified_at: now,
+            created_at: now,
+            updated_at: now,
+        };
+
+        let object2 = ObjectIndex {
+            id: Uuid::new_v4(),
+            object_key: "test/object2.jsonl".to_string(),
+            bucket_name: "test-bucket".to_string(),
+            competition_id: Some(Uuid::new_v4()),
+            agent_id: Some(Uuid::new_v4()),
+            data_type: "TEST_DATA".to_string(),
+            size_bytes: Some(2048),
+            content_hash: Some("hash2".to_string()),
+            metadata: None,
+            event_timestamp: Some(now + Duration::hours(1)),
+            object_last_modified_at: now + Duration::hours(1),
+            created_at: now,
+            updated_at: now,
+        };
+
+        db.add_object(object1).await.unwrap();
+        db.add_object(object2).await.unwrap();
+
         // Test query with no timestamp restriction
         let objects = db.get_objects_to_sync(10, None).await.unwrap();
         assert!(!objects.is_empty(), "Should return objects");
@@ -204,19 +206,29 @@ async fn test_get_object_by_key() {
     for db_factory in get_test_databases() {
         let db = db_factory().await;
 
-        let object = db.get_object_by_key("test/object1.jsonl").await;
+        // Add a test object
+        let now = Utc::now();
+        let object1 = ObjectIndex {
+            id: Uuid::new_v4(),
+            object_key: "test/object1.jsonl".to_string(),
+            bucket_name: "test-bucket".to_string(),
+            competition_id: Some(Uuid::new_v4()),
+            agent_id: Some(Uuid::new_v4()),
+            data_type: "TEST_DATA".to_string(),
+            size_bytes: Some(1024),
+            content_hash: Some("hash1".to_string()),
+            metadata: None,
+            event_timestamp: Some(now),
+            object_last_modified_at: now,
+            created_at: now,
+            updated_at: now,
+        };
 
-        if let Ok(obj) = &object {
-            assert_eq!(obj.object_key, "test/object1.jsonl");
-        } else {
-            // For PostgreSQL, we may not have test data, so this is acceptable
-            let test_config = load_test_config();
-            if test_config.database.enabled && !SKIP_PG_TESTS.load(Ordering::SeqCst) {
-                println!("Note: Object not found in PostgreSQL, which may be expected for tests");
-            } else {
-                panic!("Expected object in fake database, got: {:?}", object);
-            }
-        }
+        db.add_object(object1).await.unwrap();
+
+        // Test retrieving the object
+        let object = db.get_object_by_key("test/object1.jsonl").await.unwrap();
+        assert_eq!(object.object_key, "test/object1.jsonl");
 
         // Test getting a non-existent object
         let result = db.get_object_by_key("nonexistent").await;
@@ -230,17 +242,7 @@ async fn test_get_object_by_key() {
                 DatabaseError::ObjectNotFound(key) => {
                     assert_eq!(key, "nonexistent");
                 }
-                _ => {
-                    let test_config = load_test_config();
-                    if test_config.database.enabled && !SKIP_PG_TESTS.load(Ordering::SeqCst) {
-                        println!(
-                            "Note: Got a different error type from PostgreSQL: {:?}",
-                            err
-                        );
-                    } else {
-                        panic!("Expected ObjectNotFound error, got: {:?}", err);
-                    }
-                }
+                _ => panic!("Expected ObjectNotFound error, got: {:?}", err),
             }
         }
     }
