@@ -32,27 +32,6 @@ impl PostgresDatabase {
         Ok(PostgresDatabase { pool })
     }
 
-    /// Clear all test data (only use in tests)
-    #[cfg(test)]
-    pub async fn clear_test_data(&self) -> Result<(), DatabaseError> {
-        // Clear all data from object_index where the key starts with 'test/'
-        // This will handle all test data including those from parallel tests
-        sqlx::query("DELETE FROM object_index WHERE object_key LIKE 'test/%'")
-            .execute(&self.pool)
-            .await
-            .map_err(|e| {
-                if e.to_string()
-                    .contains("relation \"object_index\" does not exist")
-                {
-                    // Table doesn't exist yet, which is fine for tests
-                    return DatabaseError::Other(anyhow::anyhow!("Table not initialized"));
-                }
-                DatabaseError::Other(e.into())
-            })?;
-
-        Ok(())
-    }
-
     /// Helper function to create an ObjectIndex from a database row
     fn row_to_object_index(
         &self,
@@ -240,6 +219,24 @@ impl Database for PostgresDatabase {
             .execute(&self.pool)
             .await
             .map_err(|e| DatabaseError::QueryError(e.to_string()))?;
+
+        Ok(())
+    }
+
+    #[cfg(test)]
+    async fn clear_data(&self) -> Result<(), DatabaseError> {
+        sqlx::query("DELETE FROM object_index")
+            .execute(&self.pool)
+            .await
+            .map_err(|e| {
+                if e.to_string()
+                    .contains("relation \"object_index\" does not exist")
+                {
+                    // Table doesn't exist yet, which is fine for tests
+                    return DatabaseError::Other(anyhow::anyhow!("Table not initialized"));
+                }
+                DatabaseError::Other(e.into())
+            })?;
 
         Ok(())
     }

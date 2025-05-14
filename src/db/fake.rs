@@ -67,4 +67,11 @@ impl Database for FakeDatabase {
         self.fake_add_object(object);
         Ok(())
     }
+
+    #[cfg(test)]
+    async fn clear_data(&self) -> Result<(), DatabaseError> {
+        let mut objects = self.objects.write().unwrap();
+        objects.clear();
+        Ok(())
+    }
 }

@@ -99,7 +99,7 @@ fn get_test_databases() -> Vec<DatabaseFactory> {
                     Ok(db) => {
                         // Clear test data before returning
                         // Ignore errors as the table might not exist yet
-                        let _ = db.clear_test_data().await;
+                        let _ = db.clear_data().await;
                         Box::new(db) as Box<dyn Database + Send + Sync>
                     }
                     Err(e) => {

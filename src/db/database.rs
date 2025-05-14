@@ -24,6 +24,10 @@ pub trait Database: Send + Sync + 'static {
     /// Add an object to the database (test-only)
     #[cfg(test)]
     async fn add_object(&self, object: ObjectIndex) -> Result<(), DatabaseError>;
+
+    /// Clear all test data from the database (test-only)
+    #[cfg(test)]
+    async fn clear_data(&self) -> Result<(), DatabaseError>;
 }
 
 /// Implementation of Database trait for Arc<T> where T implements Database
@@ -48,5 +52,10 @@ impl<T: Database + ?Sized> Database for Arc<T> {
     #[cfg(test)]
     async fn add_object(&self, object: ObjectIndex) -> Result<(), DatabaseError> {
         (**self).add_object(object).await
+    }
+
+    #[cfg(test)]
+    async fn clear_data(&self) -> Result<(), DatabaseError> {
+        (**self).clear_data().await
     }
 }
