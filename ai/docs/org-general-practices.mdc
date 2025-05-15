@@ -23,7 +23,7 @@ alwaysApply: true
 - **Non-Interactive Execution:** When using command-line tools or scripts, ensure they run in non-interactive mode to prevent hangs (e.g., append `| cat` to commands like `git log` if needed, use appropriate flags).
 
 ## Documentation
-- **Inline Documentation:** Maintain excellent, thorough inline documentation (e.g., commentsr functions, methods, types, classes, and complex logic.
+- **Inline Documentation:** Maintain excellent, thorough inline documentation (e.g., comments for functions, methods, types, classes, and complex logic).
 - **READMEs:** When editing README files, conform to the [standard-readme](mdc:https:/github.com/RichardLitt/standard-readme) specification.
 
 ## Security

@@ -1,5 +1,5 @@
 use crate::config::{Config, DatabaseConfig, RecallConfig, S3Config, SyncConfig};
-use crate::db::FakeDatabase;
+use crate::db::{Database, FakeDatabase};
 use crate::recall::test_utils::FakeRecallConnector;
 use crate::s3::test_utils::FakeS3Connector;
 use crate::sync::storage::{FakeSyncStorage, SyncStorage};
@@ -96,6 +96,19 @@ async fn setup_test_env() -> (
 async fn test_synchronizer_run_with_fake_implementations() {
     let (database, sync_storage, s3_connector, recall_connector, config) = setup_test_env().await;
 
+    // Get the objects before creating the synchronizer
+    let objects = database.get_objects_to_sync(10, None).await.unwrap();
+    let object1 = objects
+        .iter()
+        .find(|o| o.object_key == "test/object1.jsonl")
+        .unwrap()
+        .clone();
+    let object2 = objects
+        .iter()
+        .find(|o| o.object_key == "test/object2.jsonl")
+        .unwrap()
+        .clone();
+
     // Create synchronizer with fake implementations
     let synchronizer = Synchronizer::with_storage(
         database,
@@ -114,30 +127,36 @@ async fn test_synchronizer_run_with_fake_implementations() {
 
     // Check that objects were synced
     let sync_storage = synchronizer.get_sync_storage();
-    let is_synced1 = SyncStorage::is_object_synced(&**sync_storage, "test/object1.jsonl")
+
+    let status1 = SyncStorage::get_object_status(&**sync_storage, object1.id)
         .await
         .unwrap();
-    let is_synced2 = SyncStorage::is_object_synced(&**sync_storage, "test/object2.jsonl")
+    let status2 = SyncStorage::get_object_status(&**sync_storage, object2.id)
         .await
         .unwrap();
 
-    assert!(is_synced1, "Object 1 should be synced");
-    assert!(is_synced2, "Object 2 should be synced");
+    assert_eq!(
+        status1,
+        Some(crate::sync::storage::SyncStatus::Complete),
+        "Object 1 should be synced"
+    );
+    assert_eq!(
+        status2,
+        Some(crate::sync::storage::SyncStatus::Complete),
+        "Object 2 should be synced"
+    );
 
-    // Check that the last sync timestamp was updated
-    let last_sync = SyncStorage::get_last_sync_timestamp(&**sync_storage)
-        .await
-        .unwrap();
-    assert!(last_sync.is_some(), "Last sync timestamp should be set");
+    // Check that we have synced objects
+    let last_object = SyncStorage::get_last_object(&**sync_storage).await.unwrap();
+    assert!(
+        last_object.is_some(),
+        "Should have at least one synced object"
+    );
 }
 
 #[tokio::test]
 async fn test_synchronizer_with_timestamp_filter() {
     let (database, sync_storage, s3_connector, recall_connector, config) = setup_test_env().await;
-
-    // Update the last sync timestamp to filter out all objects
-    let future_time = Utc::now() + Duration::days(1);
-    sync_storage.fake_set_last_sync_timestamp(Some(future_time));
 
     // Create synchronizer with fake implementations
     let synchronizer = Synchronizer::with_storage(
@@ -149,28 +168,25 @@ async fn test_synchronizer_with_timestamp_filter() {
         false,
     );
 
-    // Run synchronization
-    let result = synchronizer.run(None, None).await;
+    // Run synchronization with a future timestamp to filter out all objects
+    let future_time = (Utc::now() + Duration::days(1)).to_rfc3339();
+    let result = synchronizer.run(None, Some(future_time)).await;
 
     // Check that the run completed successfully
     assert!(result.is_ok(), "Synchronizer run should succeed");
 
-    // Check that no objects were synced (since they're all older than our timestamp)
+    // Check that no objects were synced by looking at the completed status
     let sync_storage = synchronizer.get_sync_storage();
-    let is_synced1 = SyncStorage::is_object_synced(&**sync_storage, "test/object1.jsonl")
-        .await
-        .unwrap();
-    let is_synced2 = SyncStorage::is_object_synced(&**sync_storage, "test/object2.jsonl")
-        .await
-        .unwrap();
+    let synced_objects = SyncStorage::get_objects_with_status(
+        &**sync_storage,
+        crate::sync::storage::SyncStatus::Complete,
+    )
+    .await
+    .unwrap();
 
     assert!(
-        !is_synced1,
-        "Object 1 should not be synced due to timestamp filter"
-    );
-    assert!(
-        !is_synced2,
-        "Object 2 should not be synced due to timestamp filter"
+        synced_objects.is_empty(),
+        "No objects should be synced due to timestamp filter"
     );
 }
 

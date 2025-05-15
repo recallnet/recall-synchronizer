@@ -1,68 +1,94 @@
 use crate::sync::storage::error::SyncStorageError;
+use crate::sync::storage::models::{SyncRecord, SyncStatus};
 use crate::sync::storage::sync_storage::SyncStorage;
 use async_trait::async_trait;
-use chrono::{DateTime, Utc};
 use std::collections::HashMap;
 use std::sync::{Arc, RwLock};
+use uuid::Uuid;
 
 /// A fake in-memory implementation of the SyncStorage trait for testing
 pub struct FakeSyncStorage {
-    synced_objects: Arc<RwLock<HashMap<String, DateTime<Utc>>>>,
-    last_sync_timestamp: Arc<RwLock<Option<DateTime<Utc>>>>,
+    records: Arc<RwLock<HashMap<Uuid, SyncRecord>>>,
 }
 
 impl FakeSyncStorage {
     /// Create a new empty FakeSyncStorage
     pub fn new() -> Self {
         FakeSyncStorage {
-            synced_objects: Arc::new(RwLock::new(HashMap::new())),
-            last_sync_timestamp: Arc::new(RwLock::new(None)),
+            records: Arc::new(RwLock::new(HashMap::new())),
         }
     }
 
-    /// Clear all synced objects
+    /// Clear all records (for testing)
     #[allow(dead_code)]
-    pub fn fake_clear_synced_objects(&self) {
-        let mut synced = self.synced_objects.write().unwrap();
-        synced.clear();
+    pub fn fake_clear_records(&self) {
+        let mut records = self.records.write().unwrap();
+        records.clear();
     }
 
-    /// Set the last sync timestamp directly (for testing)
+    /// Get a record by ID (for testing)
     #[allow(dead_code)]
-    pub fn fake_set_last_sync_timestamp(&self, timestamp: Option<DateTime<Utc>>) {
-        let mut last_sync = self.last_sync_timestamp.write().unwrap();
-        *last_sync = timestamp;
+    pub fn fake_get_record(&self, id: Uuid) -> Option<SyncRecord> {
+        let records = self.records.read().unwrap();
+        records.get(&id).cloned()
     }
 }
 
 #[async_trait]
 impl SyncStorage for FakeSyncStorage {
-    async fn mark_object_synced(
-        &self,
-        object_key: &str,
-        sync_timestamp: DateTime<Utc>,
-    ) -> Result<(), SyncStorageError> {
-        let mut synced = self.synced_objects.write().unwrap();
-        synced.insert(object_key.to_string(), sync_timestamp);
+    async fn add_object(&self, record: SyncRecord) -> Result<(), SyncStorageError> {
+        let mut records = self.records.write().unwrap();
+        records.insert(record.id, record);
         Ok(())
     }
 
-    async fn is_object_synced(&self, object_key: &str) -> Result<bool, SyncStorageError> {
-        let synced = self.synced_objects.read().unwrap();
-        Ok(synced.contains_key(object_key))
-    }
-
-    async fn update_last_sync_timestamp(
+    async fn set_object_status(
         &self,
-        timestamp: DateTime<Utc>,
+        id: Uuid,
+        status: SyncStatus,
     ) -> Result<(), SyncStorageError> {
-        let mut last_sync = self.last_sync_timestamp.write().unwrap();
-        *last_sync = Some(timestamp);
-        Ok(())
+        let mut records = self.records.write().unwrap();
+        if let Some(record) = records.get_mut(&id) {
+            record.status = status;
+            Ok(())
+        } else {
+            Err(SyncStorageError::ObjectNotFound(id.to_string()))
+        }
     }
 
-    async fn get_last_sync_timestamp(&self) -> Result<Option<DateTime<Utc>>, SyncStorageError> {
-        let last_sync = self.last_sync_timestamp.read().unwrap();
-        Ok(*last_sync)
+    async fn get_object_status(&self, id: Uuid) -> Result<Option<SyncStatus>, SyncStorageError> {
+        let records = self.records.read().unwrap();
+        Ok(records.get(&id).map(|record| record.status))
+    }
+
+    async fn get_objects_with_status(
+        &self,
+        status: SyncStatus,
+    ) -> Result<Vec<SyncRecord>, SyncStorageError> {
+        let records = self.records.read().unwrap();
+        let mut matching_records: Vec<SyncRecord> = records
+            .values()
+            .filter(|record| record.status == status)
+            .cloned()
+            .collect();
+        // Sort by timestamp to match SQLite behavior
+        matching_records.sort_by_key(|record| record.timestamp);
+        Ok(matching_records)
+    }
+
+    async fn get_last_object(&self) -> Result<Option<SyncRecord>, SyncStorageError> {
+        let records = self.records.read().unwrap();
+        // Find the record with the most recent timestamp
+        Ok(records
+            .values()
+            .max_by_key(|record| record.timestamp)
+            .cloned())
+    }
+
+    #[cfg(test)]
+    async fn clear_data(&self) -> Result<(), SyncStorageError> {
+        let mut records = self.records.write().unwrap();
+        records.clear();
+        Ok(())
     }
 }

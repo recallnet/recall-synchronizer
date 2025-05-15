@@ -9,7 +9,7 @@ use crate::db::models::ObjectIndex;
 use crate::db::Database;
 use crate::recall::RecallConnector;
 use crate::s3::S3Connector;
-use crate::sync::storage::SyncStorage;
+use crate::sync::storage::{SyncRecord, SyncStatus, SyncStorage};
 
 #[allow(clippy::enum_variant_names, dead_code)]
 #[derive(Debug, Error)]
@@ -54,17 +54,38 @@ impl SyncJob {
         self.attempts += 1;
 
         // Check if already synced
-        if storage
-            .is_object_synced(&self.object.object_key)
+        if let Some(status) = storage
+            .get_object_status(self.object.id)
             .await
             .map_err(|e| JobError::StorageError(e.to_string()))?
         {
-            debug!(
-                "[Job {}] Object already synced: {}",
-                self.id, self.object.object_key
-            );
-            return Ok(());
+            if status == SyncStatus::Complete {
+                debug!(
+                    "[Job {}] Object already synced: {}",
+                    self.id, self.object.object_key
+                );
+                return Ok(());
+            }
+        } else {
+            // Add object as pending if not already in storage
+            let record = SyncRecord {
+                id: self.object.id,
+                object_key: self.object.object_key.clone(),
+                bucket_name: self.object.bucket_name.clone(),
+                timestamp: self.object.object_last_modified_at,
+                status: SyncStatus::PendingSync,
+            };
+            storage
+                .add_object(record)
+                .await
+                .map_err(|e| JobError::StorageError(e.to_string()))?;
         }
+
+        // Mark as processing
+        storage
+            .set_object_status(self.object.id, SyncStatus::Processing)
+            .await
+            .map_err(|e| JobError::StorageError(e.to_string()))?;
 
         // Get object data from S3
         debug!(
@@ -92,14 +113,13 @@ impl SyncJob {
             }
         };
 
-        // Mark as synced
-        let now = Utc::now();
+        // Mark as complete
         debug!(
-            "[Job {}] Marking object as synced: {}",
+            "[Job {}] Marking object as complete: {}",
             self.id, self.object.object_key
         );
         match storage
-            .mark_object_synced(&self.object.object_key, now)
+            .set_object_status(self.object.id, SyncStatus::Complete)
             .await
         {
             Ok(_) => {
@@ -110,7 +130,7 @@ impl SyncJob {
                 Ok(())
             }
             Err(e) => {
-                error!("[Job {}] Failed to mark object as synced: {}", self.id, e);
+                error!("[Job {}] Failed to mark object as complete: {}", self.id, e);
                 Err(JobError::StorageError(e.to_string()))
             }
         }

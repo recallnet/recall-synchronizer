@@ -1,194 +1,416 @@
+use crate::sync::storage::models::{SyncRecord, SyncStatus};
 use crate::sync::storage::{FakeSyncStorage, SqliteSyncStorage, SyncStorage};
 use crate::test_utils::load_test_config;
 use chrono::{Duration, Utc};
-use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
 use tempfile::tempdir;
+use uuid::Uuid;
 
-// Helper function to create test storage implementations
-fn get_test_storages() -> Vec<Box<dyn Fn() -> Box<dyn SyncStorage + Send + Sync>>> {
-    let mut storages: Vec<Box<dyn Fn() -> Box<dyn SyncStorage + Send + Sync>>> = vec![
-        // Always include the FakeSyncStorage
-        Box::new(|| Box::new(FakeSyncStorage::new())),
-    ];
+// Type alias to simplify the complex type for storage factory functions
+type StorageFactory =
+    Box<dyn Fn() -> futures::future::BoxFuture<'static, Box<dyn SyncStorage + Send + Sync>>>;
 
-    // Load test configuration
-    let test_config = load_test_config();
+/// Creates a test SyncRecord with default values
+fn create_test_record(object_key: &str, timestamp: chrono::DateTime<Utc>) -> SyncRecord {
+    SyncRecord::new(
+        Uuid::new_v4(),
+        object_key.to_string(),
+        "test-bucket".to_string(),
+        timestamp,
+    )
+}
 
-    // Add the SQLite implementation when enabled
-    if test_config.sqlite.enabled {
-        // Create a temporary file for tests
+/// Sets up test data with multiple records at different timestamps
+async fn setup_test_data(storage: &dyn SyncStorage) -> Vec<SyncRecord> {
+    let base_time = Utc::now() - Duration::hours(10);
+    let mut test_data = Vec::new();
+
+    // Clear any existing data
+    storage.clear_data().await.unwrap();
+
+    // Create 15 records with different timestamps
+    for i in 0..15 {
+        let object_key = format!("test/object_{:02}.jsonl", i);
+        let timestamp = base_time + Duration::minutes(i * 30);
+        let record = create_test_record(&object_key, timestamp);
+
+        storage.add_object(record.clone()).await.unwrap();
+        test_data.push(record);
+    }
+
+    test_data
+}
+
+/// Creates a new SQLite storage for testing
+fn create_sqlite_storage(db_path: &str) -> Arc<SqliteSyncStorage> {
+    Arc::new(SqliteSyncStorage::new(db_path).expect("Failed to create SQLite storage"))
+}
+
+/// Wrapper to hold temp directory and storage together
+struct SqliteStorageWrapper {
+    _temp_dir: tempfile::TempDir,
+    storage: Arc<SqliteSyncStorage>,
+}
+
+impl SqliteStorageWrapper {
+    fn new() -> Self {
         let temp_dir = tempdir().expect("Failed to create temp directory");
         let db_path = temp_dir.path().join("sync_test.db");
-        let db_path_str = db_path.to_str().unwrap().to_string();
+        let storage = create_sqlite_storage(db_path.to_str().unwrap());
+        Self {
+            _temp_dir: temp_dir,
+            storage,
+        }
+    }
+}
 
-        storages.push(Box::new(move || {
-            // Using a similar pattern as in the database tests, but with a safer approach.
-            // We're avoiding double-nested unsafe blocks by using better encapsulation.
-            Box::new(get_or_create_sqlite_storage(&db_path_str))
+#[async_trait::async_trait]
+impl SyncStorage for SqliteStorageWrapper {
+    async fn add_object(
+        &self,
+        record: SyncRecord,
+    ) -> Result<(), crate::sync::storage::error::SyncStorageError> {
+        self.storage.add_object(record).await
+    }
+
+    async fn set_object_status(
+        &self,
+        id: Uuid,
+        status: SyncStatus,
+    ) -> Result<(), crate::sync::storage::error::SyncStorageError> {
+        self.storage.set_object_status(id, status).await
+    }
+
+    async fn get_object_status(
+        &self,
+        id: Uuid,
+    ) -> Result<Option<SyncStatus>, crate::sync::storage::error::SyncStorageError> {
+        self.storage.get_object_status(id).await
+    }
+
+    async fn get_objects_with_status(
+        &self,
+        status: SyncStatus,
+    ) -> Result<Vec<SyncRecord>, crate::sync::storage::error::SyncStorageError> {
+        self.storage.get_objects_with_status(status).await
+    }
+
+    async fn get_last_object(
+        &self,
+    ) -> Result<Option<SyncRecord>, crate::sync::storage::error::SyncStorageError> {
+        self.storage.get_last_object().await
+    }
+
+    #[cfg(test)]
+    async fn clear_data(&self) -> Result<(), crate::sync::storage::error::SyncStorageError> {
+        self.storage.clear_data().await
+    }
+}
+
+/// Helper function to create test storage implementations
+fn get_test_storages() -> Vec<StorageFactory> {
+    let mut storages: Vec<StorageFactory> = vec![
+        // Always include the FakeSyncStorage
+        Box::new(|| {
+            Box::pin(async {
+                Box::new(FakeSyncStorage::new()) as Box<dyn SyncStorage + Send + Sync>
+            })
+        }),
+    ];
+
+    let test_config = load_test_config();
+
+    if test_config.sqlite.enabled {
+        storages.push(Box::new(|| {
+            Box::pin(async move {
+                // Create a wrapped SQLite storage with temp directory kept alive
+                Box::new(SqliteStorageWrapper::new()) as Box<dyn SyncStorage + Send + Sync>
+            })
         }));
     }
 
     storages
 }
 
-// Static reference to be shared between test runs
-// SAFETY: This is only used during testing and follows a singleton pattern
-// with write-once, read-many semantics.
-#[allow(static_mut_refs)]
-static mut SQLITE_STORAGE: Option<Arc<SqliteSyncStorage>> = None;
-static INIT_DONE: AtomicBool = AtomicBool::new(false);
+#[tokio::test]
+async fn add_object_creates_new_record() {
+    for storage_factory in get_test_storages() {
+        let storage = storage_factory().await;
+        storage.clear_data().await.unwrap();
 
-/// Creates or returns a cached SQLite database connection for testing
-///
-/// This function provides a singleton pattern that ensures we use the same
-/// SQLite connection across test cases, avoiding expensive recreation.
-fn get_or_create_sqlite_storage(db_path: &str) -> Arc<SqliteSyncStorage> {
-    // Check if already initialized via atomic flag
-    if INIT_DONE.load(std::sync::atomic::Ordering::SeqCst) {
-        // SAFETY: Safe because we only read after initialization, and initialization
-        // happens exactly once due to the INIT_DONE atomic flag.
-        #[allow(static_mut_refs)]
-        return unsafe { SQLITE_STORAGE.as_ref().unwrap().clone() };
+        let record = create_test_record("test/object.jsonl", Utc::now());
+        let id = record.id;
+
+        storage.add_object(record).await.unwrap();
+
+        // Check that the object exists with PendingSync status
+        let status = storage.get_object_status(id).await.unwrap();
+        assert_eq!(status, Some(SyncStatus::PendingSync));
     }
-
-    // Create new storage
-    let storage = SqliteSyncStorage::new(db_path).expect("Failed to create SQLite storage");
-    let storage = Arc::new(storage);
-
-    // Store it for future use
-    // SAFETY: We're writing to this exactly once, and all future access is read-only.
-    // The INIT_DONE atomic flag ensures this.
-    unsafe {
-        SQLITE_STORAGE = Some(storage.clone());
-    }
-
-    // Mark as initialized
-    INIT_DONE.store(true, std::sync::atomic::Ordering::SeqCst);
-
-    storage
 }
 
 #[tokio::test]
-async fn test_mark_and_check_object_synced() {
+async fn set_object_status_updates_existing_record() {
     for storage_factory in get_test_storages() {
-        let storage = storage_factory();
+        let storage = storage_factory().await;
+        storage.clear_data().await.unwrap();
 
-        // Test object synced status before marking
-        let is_synced = storage.is_object_synced("test/object.jsonl").await.unwrap();
-        assert!(!is_synced, "Object should not be synced initially");
+        let record = create_test_record("test/object.jsonl", Utc::now());
+        let id = record.id;
 
-        // Mark object as synced
-        let now = Utc::now();
+        storage.add_object(record).await.unwrap();
+
+        // Update status to Processing
         storage
-            .mark_object_synced("test/object.jsonl", now)
+            .set_object_status(id, SyncStatus::Processing)
+            .await
+            .unwrap();
+        let status = storage.get_object_status(id).await.unwrap();
+        assert_eq!(status, Some(SyncStatus::Processing));
+
+        // Update status to Complete
+        storage
+            .set_object_status(id, SyncStatus::Complete)
+            .await
+            .unwrap();
+        let status = storage.get_object_status(id).await.unwrap();
+        assert_eq!(status, Some(SyncStatus::Complete));
+    }
+}
+
+#[tokio::test]
+async fn set_object_status_fails_for_nonexistent_record() {
+    for storage_factory in get_test_storages() {
+        let storage = storage_factory().await;
+        storage.clear_data().await.unwrap();
+
+        let nonexistent_id = Uuid::new_v4();
+        let result = storage
+            .set_object_status(nonexistent_id, SyncStatus::Complete)
+            .await;
+
+        assert!(result.is_err());
+        assert!(matches!(
+            result.unwrap_err(),
+            crate::sync::storage::error::SyncStorageError::ObjectNotFound(ref id) if id == &nonexistent_id.to_string()
+        ));
+    }
+}
+
+#[tokio::test]
+async fn get_object_status_returns_none_for_nonexistent_record() {
+    for storage_factory in get_test_storages() {
+        let storage = storage_factory().await;
+        storage.clear_data().await.unwrap();
+
+        let nonexistent_id = Uuid::new_v4();
+        let status = storage.get_object_status(nonexistent_id).await.unwrap();
+
+        assert_eq!(status, None);
+    }
+}
+
+#[tokio::test]
+async fn get_objects_with_status_returns_matching_records() {
+    for storage_factory in get_test_storages() {
+        let storage = storage_factory().await;
+        let test_data = setup_test_data(storage.as_ref()).await;
+
+        // Set different statuses for different records
+        storage
+            .set_object_status(test_data[0].id, SyncStatus::Processing)
+            .await
+            .unwrap();
+        storage
+            .set_object_status(test_data[1].id, SyncStatus::Processing)
+            .await
+            .unwrap();
+        storage
+            .set_object_status(test_data[2].id, SyncStatus::Complete)
+            .await
+            .unwrap();
+        storage
+            .set_object_status(test_data[3].id, SyncStatus::Complete)
+            .await
+            .unwrap();
+        storage
+            .set_object_status(test_data[4].id, SyncStatus::Complete)
             .await
             .unwrap();
 
-        // Check object synced status after marking
-        let is_synced = storage.is_object_synced("test/object.jsonl").await.unwrap();
-        assert!(is_synced, "Object should be synced after marking");
+        // Get records by status
+        let pending_records = storage
+            .get_objects_with_status(SyncStatus::PendingSync)
+            .await
+            .unwrap();
+        let processing_records = storage
+            .get_objects_with_status(SyncStatus::Processing)
+            .await
+            .unwrap();
+        let complete_records = storage
+            .get_objects_with_status(SyncStatus::Complete)
+            .await
+            .unwrap();
+
+        assert_eq!(pending_records.len(), 10); // 15 - 5 with other statuses
+        assert_eq!(processing_records.len(), 2);
+        assert_eq!(complete_records.len(), 3);
+
+        // Verify the correct records are returned
+        assert!(processing_records.iter().any(|r| r.id == test_data[0].id));
+        assert!(processing_records.iter().any(|r| r.id == test_data[1].id));
+        assert!(complete_records.iter().any(|r| r.id == test_data[2].id));
+        assert!(complete_records.iter().any(|r| r.id == test_data[3].id));
+        assert!(complete_records.iter().any(|r| r.id == test_data[4].id));
     }
 }
 
 #[tokio::test]
-async fn test_last_sync_timestamp() {
+async fn get_last_object_returns_most_recent_by_timestamp() {
     for storage_factory in get_test_storages() {
-        let storage = storage_factory();
+        let storage = storage_factory().await;
+        storage.clear_data().await.unwrap();
 
-        // Initially, last sync timestamp should be None
-        let timestamp = storage.get_last_sync_timestamp().await.unwrap();
-        assert!(
-            timestamp.is_none(),
-            "Initial last sync timestamp should be None"
-        );
+        let base_time = Utc::now() - Duration::hours(5);
 
-        // Update last sync timestamp
-        let now = Utc::now();
-        storage.update_last_sync_timestamp(now).await.unwrap();
+        // Add records with different timestamps
+        let record1 = create_test_record("test/object1.jsonl", base_time);
+        let record2 = create_test_record("test/object2.jsonl", base_time + Duration::hours(1));
+        let record3 = create_test_record("test/object3.jsonl", base_time + Duration::hours(2));
 
-        // Check last sync timestamp after first update
-        let timestamp = storage.get_last_sync_timestamp().await.unwrap();
-        assert!(
-            timestamp.is_some(),
-            "Last sync timestamp should be set after update"
-        );
+        storage.add_object(record1).await.unwrap();
+        storage.add_object(record2.clone()).await.unwrap();
+        storage.add_object(record3.clone()).await.unwrap();
 
-        // Compare timestamps with some tolerance for precision differences
-        if let Some(ts) = timestamp {
-            let diff = (ts - now).num_milliseconds().abs();
+        let last_object = storage.get_last_object().await.unwrap();
+        assert!(last_object.is_some());
+
+        let last = last_object.unwrap();
+        assert_eq!(last.id, record3.id);
+        assert_eq!(last.object_key, record3.object_key);
+    }
+}
+
+#[tokio::test]
+async fn get_last_object_returns_none_when_empty() {
+    for storage_factory in get_test_storages() {
+        let storage = storage_factory().await;
+        storage.clear_data().await.unwrap();
+
+        let last_object = storage.get_last_object().await.unwrap();
+        assert!(last_object.is_none());
+    }
+}
+
+#[tokio::test]
+async fn clear_data_removes_all_records() {
+    for storage_factory in get_test_storages() {
+        let storage = storage_factory().await;
+        let test_data = setup_test_data(storage.as_ref()).await;
+
+        // Verify some data exists
+        let status = storage.get_object_status(test_data[0].id).await.unwrap();
+        assert!(status.is_some());
+
+        // Clear all data
+        storage.clear_data().await.unwrap();
+
+        // Verify all data is gone
+        for record in &test_data {
+            let status = storage.get_object_status(record.id).await.unwrap();
+            assert_eq!(status, None);
+        }
+
+        // Verify get_last_object returns None
+        let last_object = storage.get_last_object().await.unwrap();
+        assert!(last_object.is_none());
+    }
+}
+
+#[tokio::test]
+async fn concurrent_status_updates() {
+    use tokio::task::JoinSet;
+
+    for storage_factory in get_test_storages() {
+        let storage = Arc::new(storage_factory().await);
+        storage.clear_data().await.unwrap();
+
+        // Create a single record
+        let record = create_test_record("test/concurrent.jsonl", Utc::now());
+        let id = record.id;
+        storage.add_object(record).await.unwrap();
+
+        let mut tasks = JoinSet::new();
+
+        // Spawn multiple concurrent status updates
+        for i in 0..10 {
+            let storage = storage.clone();
+            let status = if i % 2 == 0 {
+                SyncStatus::Processing
+            } else {
+                SyncStatus::Complete
+            };
+
+            tasks.spawn(async move {
+                storage.set_object_status(id, status).await.unwrap();
+            });
+        }
+
+        // Wait for all tasks to complete
+        while let Some(result) = tasks.join_next().await {
+            result.unwrap();
+        }
+
+        // Verify the object still exists with a valid status
+        let final_status = storage.get_object_status(id).await.unwrap();
+        assert!(final_status.is_some());
+        assert!(matches!(
+            final_status.unwrap(),
+            SyncStatus::Processing | SyncStatus::Complete
+        ));
+    }
+}
+
+#[tokio::test]
+async fn ordering_of_records_by_timestamp() {
+    for storage_factory in get_test_storages() {
+        let storage = storage_factory().await;
+        storage.clear_data().await.unwrap();
+
+        let base_time = Utc::now() - Duration::hours(10);
+        let mut records = Vec::new();
+
+        // Add records in random order
+        let timestamps = [
+            base_time + Duration::hours(2),
+            base_time,
+            base_time + Duration::hours(5),
+            base_time + Duration::hours(1),
+            base_time + Duration::hours(3),
+        ];
+
+        for (i, timestamp) in timestamps.iter().enumerate() {
+            let record = create_test_record(&format!("test/object_{}.jsonl", i), *timestamp);
+            records.push(record.clone());
+            storage.add_object(record).await.unwrap();
+        }
+
+        // Get records ordered by status (which orders by timestamp)
+        let pending_records = storage
+            .get_objects_with_status(SyncStatus::PendingSync)
+            .await
+            .unwrap();
+
+        // Verify they are ordered by timestamp (ascending)
+        for i in 1..pending_records.len() {
             assert!(
-                diff < 5,
-                "Timestamp difference should be very small, was {}ms",
-                diff
+                pending_records[i].timestamp >= pending_records[i - 1].timestamp,
+                "Records should be ordered by timestamp"
             );
         }
 
-        // Update again with a newer timestamp (simulate a second sync cycle)
-        let newer_now = Utc::now() + Duration::seconds(60);
-        storage.update_last_sync_timestamp(newer_now).await.unwrap();
-
-        // Verify the timestamp was updated to the newer time
-        let updated_timestamp = storage.get_last_sync_timestamp().await.unwrap();
-        assert!(
-            updated_timestamp.is_some(),
-            "Last sync timestamp should still be set after second update"
-        );
-
-        // Check that the timestamp was actually updated to the newer value
-        if let Some(ts) = updated_timestamp {
-            // Check it's close to the newer timestamp
-            let diff = (ts - newer_now).num_milliseconds().abs();
-            assert!(
-                diff < 5,
-                "Timestamp difference should be very small, was {}ms",
-                diff
-            );
-
-            // Check it's substantially different from the first timestamp
-            if let Some(first_ts) = timestamp {
-                let diff_between_updates = (ts - first_ts).num_seconds();
-                assert!(diff_between_updates >= 59,
-                        "Second timestamp should be significantly newer than first (expected ~60s difference, got {}s)",
-                        diff_between_updates);
-            }
-        }
-    }
-}
-
-#[tokio::test]
-async fn test_multiple_objects() {
-    for storage_factory in get_test_storages() {
-        let storage = storage_factory();
-
-        // Mark multiple objects as synced
-        let now = Utc::now();
-        storage
-            .mark_object_synced("test/object1.jsonl", now)
-            .await
-            .unwrap();
-        storage
-            .mark_object_synced("test/object2.jsonl", now + Duration::seconds(1))
-            .await
-            .unwrap();
-
-        // Check both objects are synced
-        let is_synced1 = storage
-            .is_object_synced("test/object1.jsonl")
-            .await
-            .unwrap();
-        let is_synced2 = storage
-            .is_object_synced("test/object2.jsonl")
-            .await
-            .unwrap();
-        assert!(is_synced1, "Object 1 should be synced");
-        assert!(is_synced2, "Object 2 should be synced");
-
-        // Check non-existent object is not synced
-        let is_synced3 = storage
-            .is_object_synced("test/object3.jsonl")
-            .await
-            .unwrap();
-        assert!(!is_synced3, "Non-existent object should not be synced");
+        // Verify get_last_object returns the newest
+        let last_object = storage.get_last_object().await.unwrap().unwrap();
+        assert_eq!(last_object.timestamp, base_time + Duration::hours(5));
     }
 }

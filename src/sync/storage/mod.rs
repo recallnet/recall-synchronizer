@@ -11,5 +11,6 @@ mod tests;
 pub use error::SyncStorageError;
 #[cfg(test)]
 pub use fake::FakeSyncStorage;
+pub use models::{SyncRecord, SyncStatus};
 pub use sqlite::SqliteSyncStorage;
 pub use sync_storage::SyncStorage;

@@ -9,7 +9,7 @@ use crate::db::PostgresDatabase;
 use crate::recall::RecallConnector;
 use crate::s3::S3Connector;
 use crate::sync::storage::SqliteSyncStorage;
-use crate::sync::storage::SyncStorage;
+use crate::sync::storage::{SyncRecord, SyncStatus, SyncStorage};
 
 #[cfg(test)]
 use crate::recall::test_utils::FakeRecallConnector;
@@ -169,8 +169,12 @@ impl<D: Database, S: SyncStorage> Synchronizer<D, S> {
                     .with_timezone(&Utc),
             )
         } else {
-            // If no since parameter was provided, use the last sync timestamp
-            self.sync_storage.get_last_sync_timestamp().await?
+            // If no since parameter was provided, use the last synced object's timestamp
+            if let Some(last_record) = self.sync_storage.get_last_object().await? {
+                Some(last_record.timestamp)
+            } else {
+                None
+            }
         };
 
         if let Some(ts) = &since_time {
@@ -200,18 +204,30 @@ impl<D: Database, S: SyncStorage> Synchronizer<D, S> {
 
         // Process each object
         let mut synced_count = 0;
-        let now = Utc::now();
 
         for object in objects {
             // Check if already synced (to handle restarts)
-            if self
-                .sync_storage
-                .is_object_synced(&object.object_key)
-                .await?
-            {
-                debug!("Object already synced: {}", object.object_key);
-                continue;
+            if let Some(status) = self.sync_storage.get_object_status(object.id).await? {
+                if status == SyncStatus::Complete {
+                    debug!("Object already synced: {}", object.object_key);
+                    continue;
+                }
+            } else {
+                // Add object as pending if not already in storage
+                let record = SyncRecord {
+                    id: object.id,
+                    object_key: object.object_key.clone(),
+                    bucket_name: object.bucket_name.clone(),
+                    timestamp: object.object_last_modified_at,
+                    status: SyncStatus::PendingSync,
+                };
+                self.sync_storage.add_object(record).await?;
             }
+
+            // Mark as processing
+            self.sync_storage
+                .set_object_status(object.id, SyncStatus::Processing)
+                .await?;
 
             // Download from S3
             debug!("Fetching object from S3: {}", object.object_key);
@@ -224,9 +240,9 @@ impl<D: Database, S: SyncStorage> Synchronizer<D, S> {
                 .store_object(&object.object_key, &data)
                 .await?;
 
-            // Mark as synced
+            // Mark as complete
             self.sync_storage
-                .mark_object_synced(&object.object_key, now)
+                .set_object_status(object.id, SyncStatus::Complete)
                 .await?;
 
             info!(
@@ -235,9 +251,6 @@ impl<D: Database, S: SyncStorage> Synchronizer<D, S> {
             );
             synced_count += 1;
         }
-
-        // Update last sync timestamp
-        self.sync_storage.update_last_sync_timestamp(now).await?;
 
         info!(
             "Synchronization completed successfully. Synced {} objects.",
@@ -266,8 +279,12 @@ impl<D: Database, S: SyncStorage> Synchronizer<D, S> {
                     .with_timezone(&Utc),
             )
         } else {
-            // If no since parameter was provided, use the last sync timestamp
-            self.sync_storage.get_last_sync_timestamp().await?
+            // If no since parameter was provided, use the last synced object's timestamp
+            if let Some(last_record) = self.sync_storage.get_last_object().await? {
+                Some(last_record.timestamp)
+            } else {
+                None
+            }
         };
 
         if let Some(ts) = &since_time {
@@ -297,18 +314,30 @@ impl<D: Database, S: SyncStorage> Synchronizer<D, S> {
 
         // Process each object
         let mut synced_count = 0;
-        let now = Utc::now();
 
         for object in objects {
             // Check if already synced (to handle restarts)
-            if self
-                .sync_storage
-                .is_object_synced(&object.object_key)
-                .await?
-            {
-                debug!("Object already synced: {}", object.object_key);
-                continue;
+            if let Some(status) = self.sync_storage.get_object_status(object.id).await? {
+                if status == SyncStatus::Complete {
+                    debug!("Object already synced: {}", object.object_key);
+                    continue;
+                }
+            } else {
+                // Add object as pending if not already in storage
+                let record = SyncRecord {
+                    id: object.id,
+                    object_key: object.object_key.clone(),
+                    bucket_name: object.bucket_name.clone(),
+                    timestamp: object.object_last_modified_at,
+                    status: SyncStatus::PendingSync,
+                };
+                self.sync_storage.add_object(record).await?;
             }
+
+            // Mark as processing
+            self.sync_storage
+                .set_object_status(object.id, SyncStatus::Processing)
+                .await?;
 
             // Download from S3 using the trait method
             debug!("Fetching object from S3: {}", object.object_key);
@@ -321,9 +350,9 @@ impl<D: Database, S: SyncStorage> Synchronizer<D, S> {
                 .store_object(&object.object_key, &data)
                 .await?;
 
-            // Mark as synced
+            // Mark as complete
             self.sync_storage
-                .mark_object_synced(&object.object_key, now)
+                .set_object_status(object.id, SyncStatus::Complete)
                 .await?;
 
             info!(
@@ -332,9 +361,6 @@ impl<D: Database, S: SyncStorage> Synchronizer<D, S> {
             );
             synced_count += 1;
         }
-
-        // Update last sync timestamp
-        self.sync_storage.update_last_sync_timestamp(now).await?;
 
         info!(
             "Synchronization completed successfully. Synced {} objects.",
