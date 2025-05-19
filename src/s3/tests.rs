@@ -1,7 +1,7 @@
 #[cfg(test)]
 use crate::s3::error::StorageError;
 use crate::s3::fake::FakeStorage;
-use crate::s3::real_s3::S3Storage;
+use crate::s3::s3::S3Storage;
 use crate::s3::storage::Storage;
 use crate::test_utils;
 use bytes::Bytes;
@@ -67,7 +67,6 @@ fn get_test_storages() -> Vec<(&'static str, StorageFactory)> {
                                 .add_object("test_key", Bytes::from("test data"))
                                 .await
                                 .unwrap();
-                            println!("<<S3>>");
                             real_storage as Arc<dyn Storage + Send + Sync>
                         }
                         Err(e) => {
@@ -168,4 +167,49 @@ async fn fake_fail_object_causes_object_specific_failures() {
     // Not existing object should still fail
     let result = storage.get_object("nonexistent_key").await;
     assert!(matches!(result, Err(StorageError::ObjectNotFound(_))));
+}
+
+#[tokio::test]
+async fn has_bucket_and_create_bucket_work_correctly() {
+    for (name, storage_factory) in get_test_storages() {
+        let storage = storage_factory().await;
+        // Use unique bucket names to avoid conflicts
+        let bucket_name = format!("test-bucket-{}-{}", name, uuid::Uuid::new_v4().simple());
+
+        // Initially bucket should not exist
+        let exists = storage.has_bucket(&bucket_name).await.unwrap();
+        assert!(
+            !exists,
+            "Bucket {} should not exist initially for {}",
+            bucket_name, name
+        );
+
+        // Create the bucket
+        storage.create_bucket(&bucket_name).await.expect(&format!(
+            "Failed to create bucket {} for {}",
+            bucket_name, name
+        ));
+
+        // Now bucket should exist
+        let exists = storage.has_bucket(&bucket_name).await.unwrap();
+        assert!(
+            exists,
+            "Bucket {} should exist after creation for {}",
+            bucket_name, name
+        );
+
+        // Creating bucket again should succeed (idempotent)
+        storage.create_bucket(&bucket_name).await.expect(&format!(
+            "Creating bucket {} again should succeed for {}",
+            bucket_name, name
+        ));
+
+        // Verify bucket still exists
+        let exists = storage.has_bucket(&bucket_name).await.unwrap();
+        assert!(
+            exists,
+            "Bucket {} should still exist for {}",
+            bucket_name, name
+        );
+    }
 }

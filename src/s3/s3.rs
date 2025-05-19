@@ -244,14 +244,28 @@ impl Storage for S3Storage {
                 Ok(true)
             }
             Err(e) => {
+                // Check if this is a service error
+                if let aws_sdk_s3::error::SdkError::ServiceError(ref service_err) = e {
+                    let err = service_err.err();
+                    let metadata = err.meta();
+
+                    // Check the error code
+                    if let Some(code) = metadata.code() {
+                        debug!("has_bucket error for '{}': code={}", bucket, code);
+
+                        if code == "NoSuchBucket" || code == "NotFound" {
+                            info!("Bucket '{}' does not exist", bucket);
+                            return Ok(false);
+                        }
+                    }
+                }
+
+                // Default error handling
                 let error_str = e.to_string();
-
-                // Check if it's a 404 (bucket doesn't exist)
-                let is_not_found = error_str.contains("404")
-                    || error_str.contains("NoSuchBucket")
-                    || error_str.contains("Not Found");
-
-                if is_not_found {
+                if error_str.contains("NoSuchBucket")
+                    || error_str.contains("404")
+                    || error_str.contains("NotFound")
+                {
                     info!("Bucket '{}' does not exist", bucket);
                     Ok(false)
                 } else {
@@ -275,16 +289,33 @@ impl Storage for S3Storage {
                 Ok(())
             }
             Err(create_err) => {
-                let error_str = create_err.to_string();
+                // Check if this is a service error
+                if let aws_sdk_s3::error::SdkError::ServiceError(ref service_err) = create_err {
+                    let err = service_err.err();
+                    let metadata = err.meta();
 
-                // If it's a BucketAlreadyExists error, that's OK
+                    // Check the error code
+                    if let Some(code) = metadata.code() {
+                        match code {
+                            "BucketAlreadyExists" | "BucketAlreadyOwnedByYou" => {
+                                info!("Bucket '{}' already exists", bucket);
+                                return Ok(());
+                            }
+                            _ => {}
+                        }
+                    }
+                }
+
+                // Fallback to string matching
+                let error_str = create_err.to_string();
                 if error_str.contains("BucketAlreadyExists")
                     || error_str.contains("BucketAlreadyOwnedByYou")
+                    || error_str.contains("already exists")
                 {
-                    info!("Bucket '{}' already exists (owned by you)", bucket);
+                    info!("Bucket '{}' already exists", bucket);
                     Ok(())
                 } else {
-                    eprintln!("Failed to create bucket '{}': {}", bucket, error_str);
+                    eprintln!("Failed to create bucket '{}': {:?}", bucket, create_err);
                     Err(StorageError::Other(anyhow::anyhow!(
                         "Failed to create bucket '{}': {}",
                         bucket,
