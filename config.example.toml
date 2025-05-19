@@ -12,15 +12,15 @@ path = "data/sync_state.db"
 
 # S3 configuration
 [s3]
-endpoint_url = "https://s3.amazonaws.com"
+endpoint_url = "https://s3.amazonaws.com"    # For local testing: "http://localhost:9000"
 region = "us-east-1"
-access_key_id = "YOUR_ACCESS_KEY"
-secret_access_key = "YOUR_SECRET_KEY"
+access_key_id = "YOUR_ACCESS_KEY"            # For local testing: "minioadmin"
+secret_access_key = "YOUR_SECRET_KEY"        # For local testing: "minioadmin"
 bucket_name = "competition-data"
 
 # Recall network configuration
 [recall]
-node_url = "https://node.example.com"
+node_url = "https://node.example.com"        # For local testing: "http://localhost:8080"
 signer_key = "YOUR_PRIVATE_KEY"
 
 # Synchronization settings

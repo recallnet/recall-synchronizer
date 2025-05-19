@@ -17,7 +17,6 @@ services:
       timeout: 5s
       retries: 5
 
-  # MinIO service (S3-compatible object storage) for future tests
   minio:
     image: minio/minio
     ports:
@@ -35,6 +34,20 @@ services:
       timeout: 5s
       retries: 5
 
+  recall:
+    image: textile/recall-localnet:latest
+    ports:
+      - "8545:8545"  # Ethereum RPC port
+      - "8080:8080"  # Recall API port 
+    volumes:
+      - recall_data:/data
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8545"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
 volumes:
   postgres_data:
   minio_data:
+  recall_data:
