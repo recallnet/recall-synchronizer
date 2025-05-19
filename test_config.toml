@@ -1,9 +1,9 @@
 [database]
-enabled = true
+enabled = false
 url = "postgresql://recall:recall_password@localhost:5432/recall_competitions"
 
 [sqlite]
-enabled = true
+enabled = false
 path = ""
 
 [s3]

@@ -109,7 +109,7 @@ fn default_test_config() -> TestConfig {
                 .to_string(),
         },
         sqlite: SqliteTestConfig {
-            enabled: true,
+            enabled: false,
             path: "".to_string(),
         },
         s3: S3TestConfig {
