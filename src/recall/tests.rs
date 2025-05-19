@@ -6,7 +6,6 @@ use crate::test_utils::load_test_config;
 use std::sync::Arc;
 use uuid::Uuid;
 
-
 type StorageFactory =
     Box<dyn Fn() -> futures::future::BoxFuture<'static, Box<dyn RecallStorage + Send + Sync>>>;
 
@@ -31,6 +30,7 @@ fn get_test_storages() -> Vec<(&'static str, StorageFactory)> {
             Box::new(|| {
                 Box::pin(async {
                     let config = load_test_config();
+                    let endpoint = config.recall.endpoint.clone();
                     let recall_config = RecallConfig {
                         endpoint: config.recall.endpoint,
                         prefix: None,
@@ -41,9 +41,7 @@ fn get_test_storages() -> Vec<(&'static str, StorageFactory)> {
                     match RecallBlockchain::new(&recall_config).await {
                         Ok(blockchain) => Box::new(Arc::new(blockchain)) as Box<dyn RecallStorage + Send + Sync>,
                         Err(e) => {
-                            eprintln!("Warning: Using fake storage for real_recall tests due to connection error: {}", e);
-                            // Fallback to fake storage so tests can continue
-                            Box::new(FakeRecallStorage::new()) as Box<dyn RecallStorage + Send + Sync>
+                            panic!("Failed to connect to real Recall storage: {}\n\nMake sure the Recall container is running and accessible at {}", e, endpoint);
                         }
                     }
                 })
