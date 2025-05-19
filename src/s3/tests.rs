@@ -1,5 +1,4 @@
 #[cfg(test)]
-#[allow(clippy::module_inception)]
 use crate::s3::error::StorageError;
 use crate::s3::fake::FakeStorage;
 use crate::s3::real_s3::S3Storage;
@@ -68,6 +67,7 @@ fn get_test_storages() -> Vec<(&'static str, StorageFactory)> {
                                 .add_object("test_key", Bytes::from("test data"))
                                 .await
                                 .unwrap();
+                            println!("<<S3>>");
                             real_storage as Arc<dyn Storage + Send + Sync>
                         }
                         Err(e) => {

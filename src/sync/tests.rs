@@ -4,7 +4,7 @@ use crate::recall::test_utils::FakeRecallConnector;
 use crate::s3::FakeStorage;
 use crate::s3::Storage;
 use crate::sync::storage::{FakeSyncStorage, SyncStorage};
-use crate::sync::Synchronizer;
+use crate::sync::synchronizer::Synchronizer;
 use crate::test_utils::create_test_object_index;
 use bytes::Bytes;
 use chrono::{Duration, Utc};
@@ -81,23 +81,16 @@ async fn setup_test_env() -> (
     // Create fake Recall connector
     let recall_connector = FakeRecallConnector::new(config.recall.prefix.clone());
 
-    (
-        database,
-        sync_storage,
-        s3_storage,
-        recall_connector,
-        config,
-    )
+    (database, sync_storage, s3_storage, recall_connector, config)
 }
 
 #[tokio::test]
 async fn test_synchronizer_run_with_fake_implementations() {
     let (database, sync_storage, s3_storage, recall_connector, config) = setup_test_env().await;
-    
+
     // Get the objects before creating the synchronizer
     let objects = database.get_objects_to_sync(100, None).await.unwrap();
     let num_objects = objects.len();
-
 
     let synchronizer = Synchronizer::with_storage(
         database,

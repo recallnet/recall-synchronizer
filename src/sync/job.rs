@@ -73,10 +73,9 @@ impl SyncJob {
             .map_err(|e| JobError::StorageError(e.to_string()))?;
 
         // Download the object from S3
-        let object_data = s3_storage
-            .get_object(object_key)
-            .await
-            .map_err(|e| JobError::S3Error(anyhow::anyhow!("Failed to get object from S3: {}", e)))?;
+        let object_data = s3_storage.get_object(object_key).await.map_err(|e| {
+            JobError::S3Error(anyhow::anyhow!("Failed to get object from S3: {}", e))
+        })?;
 
         debug!(
             "Downloaded object from S3: {} (size: {} bytes)",
@@ -114,7 +113,10 @@ impl SyncJob {
         let max_retries = 3;
 
         for attempt in 0..max_retries {
-            match self.execute(s3_storage, recall_connector, sync_storage).await {
+            match self
+                .execute(s3_storage, recall_connector, sync_storage)
+                .await
+            {
                 Ok(()) => return Ok(()),
                 Err(e) => {
                     error!(
@@ -192,9 +194,14 @@ impl<D: Database, ST: Storage, SS: SyncStorage> JobScheduler<D, ST, SS> {
 
         for object in objects {
             let job = SyncJob::new(object);
-            
+
             match job
-                .retry(&self.s3_storage, &self.recall_connector, &self.sync_storage, 3)
+                .retry(
+                    &self.s3_storage,
+                    &self.recall_connector,
+                    &self.sync_storage,
+                    3,
+                )
                 .await
             {
                 Ok(()) => successful_count += 1,

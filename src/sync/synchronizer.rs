@@ -73,9 +73,7 @@ pub struct Synchronizer<D: Database, S: SyncStorage, ST: Storage> {
 #[cfg(test)]
 impl<D: Database, S: SyncStorage, ST: Storage> Synchronizer<D, S, ST> {
     /// Test version that works with dynamic trait objects
-    pub fn with_storage<
-        T2: RecallAccess + Send + Sync + 'static,
-    >(
+    pub fn with_storage<T2: RecallAccess + Send + Sync + 'static>(
         database: D,
         sync_storage: S,
         s3_storage: ST,
@@ -181,11 +179,17 @@ impl<D: Database, S: SyncStorage, ST: Storage> Synchronizer<D, S, ST> {
             // Check if the object has already been synced
             match self.sync_storage.get_object_status(object.id).await? {
                 Some(SyncStatus::Complete) => {
-                    debug!("Object {} already synchronized, skipping", object.object_key);
+                    debug!(
+                        "Object {} already synchronized, skipping",
+                        object.object_key
+                    );
                     continue;
                 }
                 Some(SyncStatus::Processing) => {
-                    debug!("Object {} is already being processed, skipping", object.object_key);
+                    debug!(
+                        "Object {} is already being processed, skipping",
+                        object.object_key
+                    );
                     continue;
                 }
                 _ => {}
@@ -228,10 +232,7 @@ impl<D: Database, S: SyncStorage, ST: Storage> Synchronizer<D, S, ST> {
                                 .await?;
                         }
                         Err(e) => {
-                            eprintln!(
-                                "Failed to submit {} to Recall: {}",
-                                object.object_key, e
-                            );
+                            eprintln!("Failed to submit {} to Recall: {}", object.object_key, e);
                             // Consider retry logic here
                         }
                     }
@@ -317,11 +318,17 @@ impl<D: Database, S: SyncStorage, ST: Storage> Synchronizer<D, S, ST> {
             // Check if the object has already been synced
             match self.sync_storage.get_object_status(object.id).await? {
                 Some(SyncStatus::Complete) => {
-                    debug!("Object {} already synchronized, skipping", object.object_key);
+                    debug!(
+                        "Object {} already synchronized, skipping",
+                        object.object_key
+                    );
                     continue;
                 }
                 Some(SyncStatus::Processing) => {
-                    debug!("Object {} is already being processed, skipping", object.object_key);
+                    debug!(
+                        "Object {} is already being processed, skipping",
+                        object.object_key
+                    );
                     continue;
                 }
                 _ => {}
@@ -364,10 +371,7 @@ impl<D: Database, S: SyncStorage, ST: Storage> Synchronizer<D, S, ST> {
                                 .await?;
                         }
                         Err(e) => {
-                            eprintln!(
-                                "Failed to submit {} to Recall: {}",
-                                object.object_key, e
-                            );
+                            eprintln!("Failed to submit {} to Recall: {}", object.object_key, e);
                             // Consider retry logic here
                         }
                     }
@@ -385,12 +389,16 @@ impl<D: Database, S: SyncStorage, ST: Storage> Synchronizer<D, S, ST> {
 }
 
 #[cfg(not(test))]
-impl<D: Database, S: SyncStorage, ST: Storage> Synchronizer<D, S, ST> {
-    /// Creates a new Synchronizer instance
-    pub async fn new(database: D, config: Config, reset: bool) -> Result<Self> {
-        let sync_storage = SqliteSyncStorage::new(&config.sync.state_db_path).await?;
+impl Synchronizer<crate::db::postgres::PostgresDatabase, SqliteSyncStorage, crate::s3::S3Storage> {
+    /// Creates a new Synchronizer instance with real implementations
+    pub async fn new(
+        database: crate::db::postgres::PostgresDatabase,
+        config: Config,
+        reset: bool,
+    ) -> Result<Self> {
+        let sync_storage = SqliteSyncStorage::new(&config.sync.state_db_path)?;
         let s3_storage = crate::s3::S3Storage::new(&config.s3).await?;
-        let recall_connector = RecallConnector::new(&config.recall)?;
+        let recall_connector = RecallConnector::new(&config.recall).await?;
 
         Ok(Synchronizer {
             database: Arc::new(database),
@@ -412,7 +420,8 @@ impl<D: Database, S: SyncStorage, ST: Storage> Synchronizer<D, S, ST> {
 }
 
 /// Default implementation for PostgreSQL database and SQLite sync storage
-pub type DefaultSynchronizer = Synchronizer<PostgresDatabase, SqliteSyncStorage, crate::s3::S3Storage>;
+pub type DefaultSynchronizer =
+    Synchronizer<PostgresDatabase, SqliteSyncStorage, crate::s3::S3Storage>;
 
 impl DefaultSynchronizer {
     /// Creates a synchronizer with default implementations

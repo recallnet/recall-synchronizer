@@ -13,7 +13,7 @@ test-fast:
 
 # Run integration tests with real implementations
 test: docker-up init-db
-	@ENABLE_DB_TESTS=true ENABLE_SQLITE_TESTS=true RUST_BACKTRACE=1 cargo test -- --nocapture
+	@ENABLE_DB_TESTS=true ENABLE_S3_TESTS=true ENABLE_RECALL_TESTS=false ENABLE_SQLITE_TESTS=true RUST_BACKTRACE=1 cargo test -- --nocapture
 
 # Run all tests with coverage
 test-coverage: docker-up init-db

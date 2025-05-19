@@ -48,6 +48,7 @@ pub struct RecallConnector {
 }
 
 impl RecallConnector {
+    #[allow(dead_code)]
     pub async fn new(config: &RecallConfig) -> Result<Self> {
         let _network = Network::Testnet.init();
         info!(

@@ -21,11 +21,18 @@ pub struct S3Storage {
 impl S3Storage {
     /// Create a new S3Storage instance from configuration
     pub async fn new(config: &S3Config) -> Result<Self, StorageError> {
-        // Set up AWS SDK config
-        let config_loader = aws_config::from_env().region(Region::new(config.region.clone()));
+        info!(
+            "Creating S3Storage with config: endpoint={:?}, region={}, bucket={}, access_key={:?}",
+            config.endpoint, config.region, config.bucket, config.access_key_id
+        );
 
-        // If access key and secret are provided, use them for credentials
-        let aws_config = if let (Some(access_key), Some(secret_key)) =
+        // Create a custom S3 client configuration for MinIO
+        let mut s3_config_builder = aws_sdk_s3::config::Builder::new()
+            .region(Region::new(config.region.clone()))
+            .force_path_style(true); // MinIO requires path-style requests
+
+        // Configure credentials if provided
+        if let (Some(access_key), Some(secret_key)) =
             (&config.access_key_id, &config.secret_access_key)
         {
             let credentials = Credentials::new(
@@ -36,31 +43,129 @@ impl S3Storage {
                 "StaticCredentialsProvider",
             );
 
-            config_loader.credentials_provider(credentials).load().await
-        } else {
-            config_loader.load().await
-        };
-
-        // Create S3 client with endpoint override if provided
-        let mut client_builder = aws_sdk_s3::config::Builder::from(&aws_config);
-        if let Some(endpoint) = &config.endpoint {
-            client_builder = client_builder.endpoint_url(endpoint);
+            s3_config_builder = s3_config_builder.credentials_provider(credentials);
         }
 
-        let s3_config = client_builder.build();
+        // Configure endpoint
+        if let Some(endpoint) = &config.endpoint {
+            info!("Setting custom endpoint: {}", endpoint);
+            s3_config_builder = s3_config_builder.endpoint_url(endpoint);
+        }
+
+        let s3_config = s3_config_builder.build();
         let client = Client::from_conf(s3_config);
 
         // Create LRU cache for objects - default to 100 items
         let cache_size = NonZeroUsize::new(100).unwrap();
         let cache = Arc::new(Mutex::new(lru::LruCache::new(cache_size)));
 
-        info!("Connected to S3 in region {}", config.region);
+        info!("Created S3 client for region {}", config.region);
 
-        Ok(Self {
+        let storage = Self {
             client,
             bucket: config.bucket.clone(),
             cache,
-        })
+        };
+
+        // For testing, ensure bucket exists
+        #[cfg(test)]
+        {
+            storage.ensure_bucket_exists().await?;
+        }
+
+        Ok(storage)
+    }
+
+    #[cfg(test)]
+    async fn ensure_bucket_exists(&self) -> Result<(), StorageError> {
+        // First, try a simple list buckets call to test connectivity
+        info!("Testing S3 connectivity by listing buckets...");
+        match self.client.list_buckets().send().await {
+            Ok(buckets) => {
+                info!(
+                    "Successfully connected to S3. Found {} buckets",
+                    buckets.buckets().map_or(0, |b| b.len())
+                );
+            }
+            Err(e) => {
+                eprintln!("Failed to list buckets. Connectivity error: {}", e);
+                eprintln!("Error details: {:?}", e);
+                return Err(StorageError::Other(anyhow::anyhow!(
+                    "Cannot connect to S3 endpoint. Error: {}",
+                    e
+                )));
+            }
+        }
+
+        // Check if bucket exists
+        let result = self.client.head_bucket().bucket(&self.bucket).send().await;
+
+        match result {
+            Ok(_) => {
+                info!("Bucket '{}' already exists", self.bucket);
+                Ok(())
+            }
+            Err(e) => {
+                let error_str = e.to_string();
+                info!("Bucket '{}' check error: {}", self.bucket, error_str);
+
+                // Check if it's a 404 (bucket doesn't exist)
+                let is_not_found = error_str.contains("404")
+                    || error_str.contains("NoSuchBucket")
+                    || error_str.contains("Not Found");
+
+                if !is_not_found {
+                    eprintln!("Unexpected error checking bucket: {:?}", e);
+                    return Err(StorageError::Other(anyhow::anyhow!(
+                        "Error checking bucket existence: {}",
+                        e
+                    )));
+                }
+
+                // Try to create the bucket
+                info!(
+                    "Bucket '{}' doesn't exist. Creating it for tests...",
+                    self.bucket
+                );
+                match self
+                    .client
+                    .create_bucket()
+                    .bucket(&self.bucket)
+                    .send()
+                    .await
+                {
+                    Ok(_) => {
+                        info!("Successfully created bucket '{}'", self.bucket);
+                        Ok(())
+                    }
+                    Err(create_err) => {
+                        let create_error_str = create_err.to_string();
+                        eprintln!(
+                            "Failed to create bucket '{}': {}",
+                            self.bucket, create_error_str
+                        );
+                        eprintln!("Create error details: {:?}", create_err);
+
+                        // If it's a BucketAlreadyExists error, that's OK
+                        if create_error_str.contains("BucketAlreadyExists")
+                            || create_error_str.contains("BucketAlreadyOwnedByYou")
+                        {
+                            info!(
+                                "Bucket '{}' already exists (owned by you), continuing",
+                                self.bucket
+                            );
+                            Ok(())
+                        } else {
+                            Err(StorageError::Other(anyhow::anyhow!(
+                                "Failed to create bucket '{}': {}",
+                                self.bucket,
+                                create_err
+                            )))
+                        }
+                    }
+                }
+            }
+        }
     }
 }
 
@@ -86,14 +191,40 @@ impl Storage for S3Storage {
             .key(key)
             .send()
             .await
-            .map_err(|e| match e {
-                _ if e.to_string().contains("NoSuchKey") => {
+            .map_err(|e| {
+                // Check if this is a service error and extract the specific error type
+                if let aws_sdk_s3::error::SdkError::ServiceError(ref service_err) = e {
+                    let err = service_err.err();
+                    let metadata = err.meta();
+
+                    // Check the error code
+                    if let Some(code) = metadata.code() {
+                        match code {
+                            "NoSuchKey" | "KeyNotFound" => {
+                                return StorageError::ObjectNotFound(key.to_string());
+                            }
+                            "AccessDenied" => {
+                                return StorageError::AccessDenied(key.to_string(), e.to_string());
+                            }
+                            _ => {}
+                        }
+                    }
+                }
+
+                // Fallback to string matching for other cases
+                let error_str = e.to_string();
+                if error_str.contains("NoSuchKey")
+                    || error_str.contains("KeyNotFound")
+                    || error_str.contains("does not exist")
+                    || error_str.contains("404")
+                    || error_str.contains("Not Found")
+                {
                     StorageError::ObjectNotFound(key.to_string())
+                } else if error_str.contains("AccessDenied") {
+                    StorageError::AccessDenied(key.to_string(), error_str)
+                } else {
+                    StorageError::ReadError(key.to_string(), error_str)
                 }
-                _ if e.to_string().contains("AccessDenied") => {
-                    StorageError::AccessDenied(key.to_string(), e.to_string())
-                }
-                _ => StorageError::ReadError(key.to_string(), e.to_string()),
             })?;
 
         let data = response
@@ -122,7 +253,20 @@ impl Storage for S3Storage {
             .body(data.clone().into())
             .send()
             .await
-            .map_err(|e| StorageError::Other(anyhow::anyhow!("Failed to put object: {}", e)))?;
+            .map_err(|e| {
+                let error_msg = format!(
+                    "Failed to put object '{}' to bucket '{}': {}",
+                    key, self.bucket, e
+                );
+                if e.to_string().contains("NoSuchBucket") {
+                    StorageError::Other(anyhow::anyhow!(
+                        "Bucket '{}' does not exist. Please create it first.",
+                        self.bucket
+                    ))
+                } else {
+                    StorageError::Other(anyhow::anyhow!(error_msg))
+                }
+            })?;
 
         // Also add to cache
         let mut cache = self.cache.lock().await;
@@ -139,12 +283,16 @@ impl Storage for S3Storage {
             .key(key)
             .send()
             .await
-            .map_err(|e| StorageError::Other(anyhow::anyhow!("Failed to delete object: {}", e)))?;
+            .map_err(|e| {
+                eprintln!("Error deleting object '{}': {}", key, e);
+                StorageError::Other(anyhow::anyhow!("Failed to delete object '{}': {}", key, e))
+            })?;
 
         // Also remove from cache
         let mut cache = self.cache.lock().await;
         cache.pop(key);
 
+        debug!("Successfully removed object: {}", key);
         Ok(())
     }
 }
