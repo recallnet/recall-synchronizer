@@ -1,5 +1,6 @@
 pub mod error;
 pub mod fake;
+#[allow(clippy::module_inception)]
 pub mod s3;
 pub mod storage;
 #[cfg(test)]

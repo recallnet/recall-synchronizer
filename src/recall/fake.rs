@@ -39,33 +39,33 @@ impl FakeRecallStorage {
         let mut fail_blobs = self.fail_blobs.lock().unwrap();
         fail_blobs.remove(key);
     }
-    
+
     /// Test-only helper to mark a blob as failed (synchronous version)
     #[cfg(test)]
     pub fn mark_blob_failed(&self, key: &str) {
         self.fake_fail_blob(key);
     }
-    
+
     /// Test-only helper to clear a blob failure (synchronous version)
     #[cfg(test)]
     pub fn clear_blob_failure(&self, key: &str) {
         self.fake_reset_blob(key);
     }
-    
+
     /// Test-only helper to add a prefix
     #[cfg(test)]
     pub fn add_prefix(&self, prefix: &str) {
         let mut prefixes = self.prefixes.lock().unwrap();
         prefixes.insert(prefix.to_string());
     }
-    
+
     /// Test-only helper to check if a prefix exists
     #[cfg(test)]
     pub fn has_prefix(&self, prefix: &str) -> bool {
         let prefixes = self.prefixes.lock().unwrap();
         prefixes.contains(prefix)
     }
-    
+
     /// Test-only helper to clear all prefixes
     #[cfg(test)]
     pub fn clear_prefixes(&self) {
@@ -88,19 +88,19 @@ impl RecallStorage for FakeRecallStorage {
 
         // Generate a fake CID based on key and data length
         let fake_cid = format!("bafybeifake{}len{}", key.len(), data.len());
-        
+
         let mut storage_data = self.data.lock().unwrap();
         let mut cids = self.cids.lock().unwrap();
-        
+
         storage_data.insert(key.to_string(), data);
         cids.insert(key.to_string(), fake_cid.clone());
-        
+
         // Track prefix
         let mut prefixes = self.prefixes.lock().unwrap();
         if let Some(pos) = key.rfind('/') {
             prefixes.insert(key[..=pos].to_string());
         }
-        
+
         Ok(fake_cid)
     }
 
@@ -132,7 +132,7 @@ impl RecallStorage for FakeRecallStorage {
     async fn delete_blob(&self, key: &str) -> Result<(), RecallError> {
         let mut storage_data = self.data.lock().unwrap();
         let mut cids = self.cids.lock().unwrap();
-        
+
         if storage_data.remove(key).is_some() {
             cids.remove(key);
             Ok(())
@@ -145,18 +145,18 @@ impl RecallStorage for FakeRecallStorage {
     async fn clear_prefix(&self, prefix: &str) -> Result<(), RecallError> {
         let mut storage_data = self.data.lock().unwrap();
         let mut cids = self.cids.lock().unwrap();
-        
+
         let keys_to_remove: Vec<String> = storage_data
             .keys()
             .filter(|k| k.starts_with(prefix))
             .cloned()
             .collect();
-        
+
         for key in keys_to_remove {
             storage_data.remove(&key);
             cids.remove(&key);
         }
-        
+
         Ok(())
     }
 }

@@ -176,7 +176,6 @@ async fn has_bucket_and_create_bucket_work_correctly() {
         // Use unique bucket names to avoid conflicts
         let bucket_name = format!("test-bucket-{}-{}", name, uuid::Uuid::new_v4().simple());
 
-        // Initially bucket should not exist
         let exists = storage.has_bucket(&bucket_name).await.unwrap();
         assert!(
             !exists,
@@ -184,13 +183,11 @@ async fn has_bucket_and_create_bucket_work_correctly() {
             bucket_name, name
         );
 
-        // Create the bucket
-        storage.create_bucket(&bucket_name).await.expect(&format!(
-            "Failed to create bucket {} for {}",
-            bucket_name, name
-        ));
+        storage
+            .create_bucket(&bucket_name)
+            .await
+            .unwrap_or_else(|_| panic!("Failed to create bucket {} for {}", bucket_name, name));
 
-        // Now bucket should exist
         let exists = storage.has_bucket(&bucket_name).await.unwrap();
         assert!(
             exists,
@@ -199,10 +196,15 @@ async fn has_bucket_and_create_bucket_work_correctly() {
         );
 
         // Creating bucket again should succeed (idempotent)
-        storage.create_bucket(&bucket_name).await.expect(&format!(
-            "Creating bucket {} again should succeed for {}",
-            bucket_name, name
-        ));
+        storage
+            .create_bucket(&bucket_name)
+            .await
+            .unwrap_or_else(|_| {
+                panic!(
+                    "Creating bucket {} again should succeed for {}",
+                    bucket_name, name
+                )
+            });
 
         // Verify bucket still exists
         let exists = storage.has_bucket(&bucket_name).await.unwrap();

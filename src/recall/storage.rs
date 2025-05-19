@@ -12,11 +12,11 @@ pub trait RecallStorage: Send + Sync + 'static {
     /// Returns the CID (Content Identifier) of the stored blob
     async fn add_blob(&self, key: &str, data: Vec<u8>) -> Result<String, RecallError>;
 
-    /// Check if a blob exists on the Recall network 
+    /// Check if a blob exists on the Recall network
     ///
     /// * `key` - The key/path to check
     async fn has_blob(&self, key: &str) -> Result<bool, RecallError>;
-    
+
     /// List all blobs with a given prefix
     ///
     /// * `prefix` - The prefix to filter by

@@ -113,10 +113,7 @@ impl SyncJob {
         let max_retries = 3;
 
         for attempt in 0..max_retries {
-            match self
-                .execute(s3_storage, recall_storage, sync_storage)
-                .await
-            {
+            match self.execute(s3_storage, recall_storage, sync_storage).await {
                 Ok(()) => return Ok(()),
                 Err(e) => {
                     error!(

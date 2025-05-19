@@ -15,20 +15,25 @@ chrono = { version = "0.4", features = ["serde"] }
 clap = { version = "4.3", features = ["derive"] }
 config = { version = "0.13", features = ["toml"] }
 futures = "0.3"
+hex = "0.4"
 lru = "0.10"
 recall_provider = "0.1.2"
 recall_sdk = "0.1.2"
 recall_signer = "0.1.2"
 rusqlite = { version = "0.29", features = ["bundled", "chrono"] }
+secp256k1 = "0.29"
+libsecp256k1 = "0.7"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 sqlx = { version = "0.7", features = ["runtime-tokio-rustls", "postgres", "chrono", "json", "uuid"] }
+tempfile = "3.8"
 thiserror = "1.0"
 tokio = { version = "1.44.2", features = ["fs", "macros", "rt-multi-thread"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 uuid = { version = "1.4", features = ["v4", "serde"] }
 toml = "0.8.22"
+url = "2.5"
 
 [dev-dependencies]
 mockall = "0.13.1"

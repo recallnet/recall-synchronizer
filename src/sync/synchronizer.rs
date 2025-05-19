@@ -29,6 +29,7 @@ impl<D: Database, S: SyncStorage, ST: Storage, RS: RecallStorage> Synchronizer<D
     }
 
     /// Test version that works with different trait implementations
+    #[allow(dead_code)]
     pub fn with_storage(
         database: D,
         sync_storage: S,
@@ -184,7 +185,14 @@ impl<D: Database, S: SyncStorage, ST: Storage, RS: RecallStorage> Synchronizer<D
     }
 }
 
-impl Synchronizer<crate::db::postgres::PostgresDatabase, SqliteSyncStorage, crate::s3::S3Storage, crate::recall::RecallBlockchain> {
+impl
+    Synchronizer<
+        crate::db::postgres::PostgresDatabase,
+        SqliteSyncStorage,
+        crate::s3::S3Storage,
+        crate::recall::RecallBlockchain,
+    >
+{
     /// Creates a new Synchronizer instance with real implementations
     pub async fn new(
         database: crate::db::postgres::PostgresDatabase,
@@ -207,8 +215,12 @@ impl Synchronizer<crate::db::postgres::PostgresDatabase, SqliteSyncStorage, crat
 }
 
 /// Default implementation for PostgreSQL database and SQLite sync storage
-pub type DefaultSynchronizer =
-    Synchronizer<PostgresDatabase, SqliteSyncStorage, crate::s3::S3Storage, crate::recall::RecallBlockchain>;
+pub type DefaultSynchronizer = Synchronizer<
+    PostgresDatabase,
+    SqliteSyncStorage,
+    crate::s3::S3Storage,
+    crate::recall::RecallBlockchain,
+>;
 
 impl DefaultSynchronizer {
     /// Creates a synchronizer with default implementations

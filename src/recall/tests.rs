@@ -1,76 +1,47 @@
 use crate::config::RecallConfig;
-use crate::recall::{FakeRecallStorage, RecallBlockchain, RecallError, RecallStorage};
+use crate::recall::error::RecallError;
+use crate::recall::fake::FakeRecallStorage;
+use crate::recall::{RecallBlockchain, RecallStorage};
 use crate::test_utils::load_test_config;
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use uuid::Uuid;
 
 #[cfg(test)]
-#[allow(static_mut_refs)]
-static mut REAL_RECALL_INSTANCE: Option<Arc<RecallBlockchain>> = None;
-#[cfg(test)]
-static REAL_RECALL_INIT_DONE: AtomicBool = AtomicBool::new(false);
+async fn get_or_create_real_recall() -> Option<Arc<RecallBlockchain>> {
+    static INIT: tokio::sync::OnceCell<Option<Arc<RecallBlockchain>>> =
+        tokio::sync::OnceCell::const_new();
 
-#[cfg(test)]
-fn get_or_create_real_recall() -> Option<Arc<RecallBlockchain>> {
-    let config = load_test_config();
-    if !config.recall.enabled {
-        return None;
-    }
+    INIT.get_or_init(|| async {
+        let config = load_test_config();
+        if !config.recall.enabled {
+            return None;
+        }
 
-    // Fast path: if already initialized
-    if REAL_RECALL_INIT_DONE.load(Ordering::SeqCst) {
-        #[allow(static_mut_refs)]
-        return unsafe { REAL_RECALL_INSTANCE.as_ref().map(|rc| rc.clone()) };
-    }
+        let recall_config = RecallConfig {
+            endpoint: config.recall.endpoint,
+            prefix: None,
+            private_key: "test_private_key".to_string(),
+        };
 
-    // Load the configuration again in case of race
-    let config = load_test_config();
-    if !config.recall.enabled {
-        // Store None for next time
-        REAL_RECALL_INIT_DONE.store(true, Ordering::SeqCst);
-        return None;
-    }
-
-    let recall_config = RecallConfig {
-        endpoint: config.recall.endpoint,
-        prefix: None,
-        private_key: "test_private_key".to_string(),
-    };
-
-    let blockchain = tokio::runtime::Runtime::new()
-        .unwrap()
-        .block_on(async { RecallBlockchain::new(&recall_config).await })
-        .unwrap();
-
-    let arc_blockchain = Arc::new(blockchain);
-
-    unsafe {
-        REAL_RECALL_INSTANCE = Some(arc_blockchain.clone());
-    }
-
-    REAL_RECALL_INIT_DONE.store(true, Ordering::SeqCst);
-    Some(arc_blockchain)
+        // Call the async new function directly
+        match RecallBlockchain::new(&recall_config).await {
+            Ok(blockchain) => Some(Arc::new(blockchain)),
+            Err(_) => None,
+        }
+    })
+    .await
+    .clone()
 }
 
-fn get_test_storages() -> Vec<(
-    &'static str,
-    Box<dyn Fn() -> Box<dyn RecallStorage + Send + Sync> + Send + Sync>,
-)> {
-    let mut storages: Vec<(
-        &'static str,
-        Box<dyn Fn() -> Box<dyn RecallStorage + Send + Sync> + Send + Sync>,
-    )> = vec![];
+async fn get_test_storages() -> Vec<(&'static str, Box<dyn RecallStorage + Send + Sync>)> {
+    let mut storages: Vec<(&'static str, Box<dyn RecallStorage + Send + Sync>)> = vec![];
 
     // Always add fake storage
-    storages.push(("fake", Box::new(|| Box::new(FakeRecallStorage::new()))));
+    storages.push(("fake", Box::new(FakeRecallStorage::new())));
 
     // Conditionally add real Recall
-    if let Some(real_recall) = get_or_create_real_recall() {
-        storages.push((
-            "real_recall",
-            Box::new(move || Box::new(real_recall.clone())),
-        ));
+    if let Some(real_recall) = get_or_create_real_recall().await {
+        storages.push(("real_recall", Box::new(real_recall)));
     }
 
     storages
@@ -78,8 +49,7 @@ fn get_test_storages() -> Vec<(
 
 #[tokio::test]
 async fn add_blob_and_has_blob_work_correctly() {
-    for (name, storage_factory) in get_test_storages() {
-        let storage = storage_factory();
+    for (name, storage) in get_test_storages().await {
         let key = format!("test-blob-{}-{}", name, Uuid::new_v4());
         let data = b"test data".to_vec();
 
@@ -110,8 +80,7 @@ async fn add_blob_and_has_blob_work_correctly() {
 
 #[tokio::test]
 async fn list_blobs_works_correctly() {
-    for (name, storage_factory) in get_test_storages() {
-        let storage = storage_factory();
+    for (name, storage) in get_test_storages().await {
         let prefix = format!("test-prefix-{}-{}/", name, Uuid::new_v4());
 
         // Clear any existing blobs with this prefix
@@ -167,8 +136,7 @@ async fn list_blobs_works_correctly() {
 
 #[tokio::test]
 async fn delete_blob_works_correctly() {
-    for (name, storage_factory) in get_test_storages() {
-        let storage = storage_factory();
+    for (name, storage) in get_test_storages().await {
         let key = format!("test-delete-{}-{}", name, Uuid::new_v4());
         let data = b"test data".to_vec();
 
@@ -204,8 +172,7 @@ async fn delete_blob_works_correctly() {
 
 #[tokio::test]
 async fn clear_prefix_works_correctly() {
-    for (name, storage_factory) in get_test_storages() {
-        let storage = storage_factory();
+    for (name, storage) in get_test_storages().await {
         let prefix = format!("test-clear-{}-{}/", name, Uuid::new_v4());
         let other_prefix = format!("test-other-{}-{}/", name, Uuid::new_v4());
 
@@ -338,8 +305,8 @@ async fn fake_storage_prefix_tracking() {
 
 #[tokio::test]
 async fn concurrent_operations() {
-    for (name, storage_factory) in get_test_storages() {
-        let storage = Arc::new(storage_factory());
+    for (name, storage) in get_test_storages().await {
+        let storage = Arc::new(storage);
         let prefix = format!("test-concurrent-{}-{}/", name, Uuid::new_v4());
 
         // Spawn multiple tasks that add blobs concurrently

@@ -1,9 +1,9 @@
 use crate::config::{Config, DatabaseConfig, RecallConfig, S3Config, SyncConfig};
 use crate::db::{Database, FakeDatabase};
-use crate::recall::FakeRecallStorage;
+use crate::recall::fake::FakeRecallStorage;
 use crate::s3::FakeStorage;
 use crate::s3::Storage;
-use crate::sync::storage::{FakeSyncStorage, SyncStorage};
+use crate::sync::storage::{FakeSyncStorage, SyncRecord, SyncStorage};
 use crate::sync::synchronizer::Synchronizer;
 use crate::test_utils::create_test_object_index;
 use bytes::Bytes;
@@ -244,4 +244,76 @@ async fn test_synchronizer_with_timestamp_filter() {
             );
         }
     }
+}
+
+#[tokio::test]
+async fn test_synchronizer_handles_concurrent_processing() {
+    use crate::sync::storage::SyncStatus;
+    use std::sync::Arc;
+
+    let (database, sync_storage, s3_storage, recall_storage, config) = setup_test_env().await;
+
+    // Add a single object
+    let test_object = create_test_object_index("test/concurrent.jsonl", Utc::now());
+    database.fake_add_object(test_object.clone());
+
+    // Add the object's data to S3
+    s3_storage
+        .add_object("test/concurrent.jsonl", Bytes::from("Concurrent test data"))
+        .await
+        .unwrap();
+
+    // Convert to Arc versions for sharing between threads
+    let db_arc = Arc::new(database);
+    let sync_storage_arc = Arc::new(sync_storage);
+    let s3_storage_arc = Arc::new(s3_storage);
+    let recall_storage_arc = Arc::new(recall_storage);
+
+    // Create the sync record first
+    let sync_record = SyncRecord::new(
+        test_object.id,
+        test_object.object_key.clone(),
+        test_object.bucket_name.clone(),
+        test_object.object_last_modified_at,
+    );
+    sync_storage_arc.add_object(sync_record).await.unwrap();
+
+    // Mark the object as already being processed (simulating another worker)
+    sync_storage_arc
+        .set_object_status(test_object.id, SyncStatus::Processing)
+        .await
+        .unwrap();
+
+    let synchronizer = Synchronizer::with_storage(
+        db_arc.clone(),
+        sync_storage_arc.clone(),
+        s3_storage_arc.clone(),
+        recall_storage_arc.clone(),
+        config,
+        false,
+    );
+
+    // Run the synchronizer - it should skip the object because it's being processed
+    synchronizer.run(None, None).await.unwrap();
+
+    // The object should still be in Processing status since we didn't let our synchronizer complete it
+    let status = sync_storage_arc
+        .get_object_status(test_object.id)
+        .await
+        .unwrap();
+    assert_eq!(status, Some(SyncStatus::Processing));
+
+    // Now mark it as complete and run again
+    sync_storage_arc
+        .set_object_status(test_object.id, SyncStatus::Complete)
+        .await
+        .unwrap();
+    synchronizer.run(None, None).await.unwrap();
+
+    // The object should still be complete (not processed again)
+    let status = sync_storage_arc
+        .get_object_status(test_object.id)
+        .await
+        .unwrap();
+    assert_eq!(status, Some(SyncStatus::Complete));
 }

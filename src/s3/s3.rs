@@ -295,14 +295,12 @@ impl Storage for S3Storage {
                     let metadata = err.meta();
 
                     // Check the error code
-                    if let Some(code) = metadata.code() {
-                        match code {
-                            "BucketAlreadyExists" | "BucketAlreadyOwnedByYou" => {
-                                info!("Bucket '{}' already exists", bucket);
-                                return Ok(());
-                            }
-                            _ => {}
+                    match metadata.code() {
+                        Some("BucketAlreadyExists") | Some("BucketAlreadyOwnedByYou") => {
+                            info!("Bucket '{}' already exists", bucket);
+                            return Ok(());
                         }
+                        _ => {}
                     }
                 }
 
