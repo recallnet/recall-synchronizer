@@ -7,6 +7,7 @@ use std::collections::HashMap;
 use std::sync::{Arc, RwLock};
 
 /// A fake in-memory implementation of the Database trait for testing
+#[derive(Clone)]
 pub struct FakeDatabase {
     objects: Arc<RwLock<HashMap<String, ObjectIndex>>>,
 }

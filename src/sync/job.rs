@@ -1,5 +1,4 @@
 use anyhow::Result;
-use chrono::Utc;
 use std::sync::Arc;
 use thiserror::Error;
 use tracing::{debug, error, info};
@@ -8,7 +7,7 @@ use uuid::Uuid;
 use crate::db::models::ObjectIndex;
 use crate::db::Database;
 use crate::recall::RecallConnector;
-use crate::s3::S3Connector;
+use crate::s3::Storage;
 use crate::sync::storage::{SyncRecord, SyncStatus, SyncStorage};
 
 #[allow(clippy::enum_variant_names, dead_code)]
@@ -29,126 +28,199 @@ pub enum JobError {
 
 #[allow(dead_code)]
 pub struct SyncJob {
-    pub id: String,
-    pub object: ObjectIndex,
-    pub attempts: u32,
+    pub id: Uuid,
+    pub object_index: ObjectIndex,
 }
 
 #[allow(dead_code)]
 impl SyncJob {
-    pub fn new(object: ObjectIndex) -> Self {
+    pub fn new(object_index: ObjectIndex) -> Self {
         Self {
-            id: Uuid::new_v4().to_string(),
-            object,
-            attempts: 0,
+            id: Uuid::new_v4(),
+            object_index,
         }
     }
 
-    pub async fn execute<D: Database, S: SyncStorage>(
-        &mut self,
-        _database: &Arc<D>,
-        s3: &Arc<S3Connector>,
-        recall: &Arc<RecallConnector>,
-        storage: &Arc<S>,
+    pub async fn execute<ST: Storage, SS: SyncStorage>(
+        &self,
+        s3_storage: &Arc<ST>,
+        recall_connector: &Arc<RecallConnector>,
+        sync_storage: &Arc<SS>,
     ) -> Result<(), JobError> {
-        self.attempts += 1;
+        let object_key = &self.object_index.object_key;
+        let object_id = self.object_index.id;
 
-        // Check if already synced
-        if let Some(status) = storage
-            .get_object_status(self.object.id)
-            .await
-            .map_err(|e| JobError::StorageError(e.to_string()))?
-        {
-            if status == SyncStatus::Complete {
-                debug!(
-                    "[Job {}] Object already synced: {}",
-                    self.id, self.object.object_key
-                );
-                return Ok(());
-            }
-        } else {
-            // Add object as pending if not already in storage
-            let record = SyncRecord {
-                id: self.object.id,
-                object_key: self.object.object_key.clone(),
-                bucket_name: self.object.bucket_name.clone(),
-                timestamp: self.object.object_last_modified_at,
-                status: SyncStatus::PendingSync,
-            };
-            storage
-                .add_object(record)
-                .await
-                .map_err(|e| JobError::StorageError(e.to_string()))?;
-        }
+        info!("Starting sync job for object: {}", object_key);
 
-        // Mark as processing
-        storage
-            .set_object_status(self.object.id, SyncStatus::Processing)
+        // Create a sync record
+        let sync_record = SyncRecord::new(
+            object_id,
+            object_key.clone(),
+            self.object_index.bucket_name.clone(),
+            self.object_index.object_last_modified_at,
+        );
+
+        // Add the record to sync storage
+        sync_storage
+            .add_object(sync_record)
             .await
             .map_err(|e| JobError::StorageError(e.to_string()))?;
 
-        // Get object data from S3
-        debug!(
-            "[Job {}] Fetching object from S3: {}",
-            self.id, self.object.object_key
-        );
-        let data = match s3.get_object(&self.object.object_key).await {
-            Ok(data) => data,
-            Err(e) => {
-                error!("[Job {}] Failed to fetch object from S3: {}", self.id, e);
-                return Err(JobError::S3Error(e));
-            }
-        };
-
-        // Store to Recall
-        debug!(
-            "[Job {}] Storing object to Recall: {}",
-            self.id, self.object.object_key
-        );
-        let cid = match recall.store_object(&self.object.object_key, &data).await {
-            Ok(cid) => cid,
-            Err(e) => {
-                error!("[Job {}] Failed to store object to Recall: {}", self.id, e);
-                return Err(JobError::RecallError(e.to_string()));
-            }
-        };
-
-        // Mark as complete
-        debug!(
-            "[Job {}] Marking object as complete: {}",
-            self.id, self.object.object_key
-        );
-        match storage
-            .set_object_status(self.object.id, SyncStatus::Complete)
+        // Update status to Processing
+        sync_storage
+            .set_object_status(object_id, SyncStatus::Processing)
             .await
-        {
-            Ok(_) => {
-                info!(
-                    "[Job {}] Successfully synced object: {} -> {}",
-                    self.id, self.object.object_key, cid
-                );
-                Ok(())
+            .map_err(|e| JobError::StorageError(e.to_string()))?;
+
+        // Download the object from S3
+        let object_data = s3_storage
+            .get_object(object_key)
+            .await
+            .map_err(|e| JobError::S3Error(anyhow::anyhow!("Failed to get object from S3: {}", e)))?;
+
+        debug!(
+            "Downloaded object from S3: {} (size: {} bytes)",
+            object_key,
+            object_data.len()
+        );
+
+        // Upload the object to Recall
+        let recall_id = recall_connector
+            .store_object(object_key, &object_data)
+            .await
+            .map_err(|e| JobError::RecallError(e.to_string()))?;
+
+        info!(
+            "Successfully uploaded object to Recall: {} -> {}",
+            object_key, recall_id
+        );
+
+        // Update the sync status to Complete
+        sync_storage
+            .set_object_status(object_id, SyncStatus::Complete)
+            .await
+            .map_err(|e| JobError::StorageError(e.to_string()))?;
+
+        Ok(())
+    }
+
+    pub async fn retry<ST: Storage, SS: SyncStorage>(
+        &self,
+        s3_storage: &Arc<ST>,
+        recall_connector: &Arc<RecallConnector>,
+        sync_storage: &Arc<SS>,
+        retry_count: u32,
+    ) -> Result<(), JobError> {
+        let max_retries = 3;
+
+        for attempt in 0..max_retries {
+            match self.execute(s3_storage, recall_connector, sync_storage).await {
+                Ok(()) => return Ok(()),
+                Err(e) => {
+                    error!(
+                        "Sync job failed for {}: {} (attempt {}/{})",
+                        self.object_index.object_key,
+                        e,
+                        attempt + 1,
+                        max_retries
+                    );
+
+                    if attempt < max_retries - 1 {
+                        // Exponential backoff
+                        let delay_secs = 2u64.pow(attempt);
+                        tokio::time::sleep(tokio::time::Duration::from_secs(delay_secs)).await;
+                    }
+                }
             }
-            Err(e) => {
-                error!("[Job {}] Failed to mark object as complete: {}", self.id, e);
-                Err(JobError::StorageError(e.to_string()))
-            }
+        }
+
+        Err(JobError::StorageError(format!(
+            "Failed after {} attempts",
+            retry_count
+        )))
+    }
+}
+
+#[allow(dead_code)]
+pub struct JobScheduler<D: Database, ST: Storage, SS: SyncStorage> {
+    database: Arc<D>,
+    s3_storage: Arc<ST>,
+    recall_connector: Arc<RecallConnector>,
+    sync_storage: Arc<SS>,
+}
+
+#[allow(dead_code)]
+impl<D: Database, ST: Storage, SS: SyncStorage> JobScheduler<D, ST, SS> {
+    pub fn new(
+        database: Arc<D>,
+        s3_storage: Arc<ST>,
+        recall_connector: Arc<RecallConnector>,
+        sync_storage: Arc<SS>,
+    ) -> Self {
+        Self {
+            database,
+            s3_storage,
+            recall_connector,
+            sync_storage,
         }
     }
 
-    /// Create a batch of jobs from database objects
-    pub async fn create_batch<D: Database>(
-        database: &Arc<D>,
-        limit: u32,
-        since_timestamp: Option<chrono::DateTime<Utc>>,
-    ) -> Result<Vec<Self>, JobError> {
-        let objects = database
-            .get_objects_to_sync(limit, since_timestamp)
+    pub async fn run_batch(&self, batch_size: u32) -> Result<u32, JobError> {
+        // Get the last sync timestamp
+        let last_sync = self
+            .sync_storage
+            .get_last_object()
+            .await
+            .map_err(|e| JobError::StorageError(e.to_string()))?
+            .map(|record| record.timestamp);
+
+        // Fetch objects that need to be synced
+        let objects = self
+            .database
+            .get_objects_to_sync(batch_size, last_sync)
             .await
             .map_err(|e| JobError::DatabaseError(e.to_string()))?;
 
-        let jobs = objects.into_iter().map(Self::new).collect();
+        if objects.is_empty() {
+            info!("No objects to sync");
+            return Ok(0);
+        }
 
-        Ok(jobs)
+        info!("Found {} objects to sync", objects.len());
+
+        let mut successful_count = 0;
+
+        for object in objects {
+            let job = SyncJob::new(object);
+            
+            match job
+                .retry(&self.s3_storage, &self.recall_connector, &self.sync_storage, 3)
+                .await
+            {
+                Ok(()) => successful_count += 1,
+                Err(e) => error!("Failed to sync object: {}", e),
+            }
+        }
+
+        info!("Successfully synced {} objects", successful_count);
+        Ok(successful_count)
+    }
+
+    pub async fn run_continuous(&self, interval_seconds: u64, batch_size: u32) {
+        let interval = tokio::time::Duration::from_secs(interval_seconds);
+        let mut interval_timer = tokio::time::interval(interval);
+
+        loop {
+            interval_timer.tick().await;
+
+            match self.run_batch(batch_size).await {
+                Ok(count) => {
+                    if count > 0 {
+                        info!("Batch sync completed: {} objects", count);
+                    }
+                }
+                Err(e) => error!("Batch sync failed: {}", e),
+            }
+        }
     }
 }

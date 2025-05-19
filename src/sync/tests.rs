@@ -1,17 +1,13 @@
 use crate::config::{Config, DatabaseConfig, RecallConfig, S3Config, SyncConfig};
 use crate::db::{Database, FakeDatabase};
 use crate::recall::test_utils::FakeRecallConnector;
-use crate::s3::test_utils::FakeS3Connector;
+use crate::s3::FakeStorage;
+use crate::s3::Storage;
 use crate::sync::storage::{FakeSyncStorage, SyncStorage};
 use crate::sync::Synchronizer;
 use crate::test_utils::create_test_object_index;
 use bytes::Bytes;
 use chrono::{Duration, Utc};
-use std::sync::Arc;
-
-// Removed unused imports
-// use mockall::predicate::*;
-// use mockall::mock;
 
 // Helper to create a test config
 fn create_test_config() -> Config {
@@ -47,8 +43,8 @@ fn create_test_config() -> Config {
 async fn setup_test_env() -> (
     FakeDatabase,
     FakeSyncStorage,
-    Arc<FakeS3Connector>,
-    Arc<FakeRecallConnector>,
+    FakeStorage,
+    FakeRecallConnector,
     Config,
 ) {
     // Create fake database with test data
@@ -68,25 +64,27 @@ async fn setup_test_env() -> (
     // Create test config
     let config = create_test_config();
 
-    // Create fake S3 connector
-    let s3_connector = Arc::new(FakeS3Connector::new(&config.s3.bucket));
+    // Create fake S3 storage
+    let s3_storage = FakeStorage::new();
 
     // Setup test data in S3
-    s3_connector
-        .fake_add_object("test/object1.jsonl", Bytes::from("Test data for object1"))
-        .await;
+    s3_storage
+        .add_object("test/object1.jsonl", Bytes::from("Test data for object1"))
+        .await
+        .unwrap();
 
-    s3_connector
-        .fake_add_object("test/object2.jsonl", Bytes::from("Test data for object2"))
-        .await;
+    s3_storage
+        .add_object("test/object2.jsonl", Bytes::from("Test data for object2"))
+        .await
+        .unwrap();
 
     // Create fake Recall connector
-    let recall_connector = Arc::new(FakeRecallConnector::new(config.recall.prefix.clone()));
+    let recall_connector = FakeRecallConnector::new(config.recall.prefix.clone());
 
     (
         database,
         sync_storage,
-        s3_connector,
+        s3_storage,
         recall_connector,
         config,
     )
@@ -94,128 +92,163 @@ async fn setup_test_env() -> (
 
 #[tokio::test]
 async fn test_synchronizer_run_with_fake_implementations() {
-    let (database, sync_storage, s3_connector, recall_connector, config) = setup_test_env().await;
-
+    let (database, sync_storage, s3_storage, recall_connector, config) = setup_test_env().await;
+    
     // Get the objects before creating the synchronizer
-    let objects = database.get_objects_to_sync(10, None).await.unwrap();
-    let object1 = objects
-        .iter()
-        .find(|o| o.object_key == "test/object1.jsonl")
-        .unwrap()
-        .clone();
-    let object2 = objects
-        .iter()
-        .find(|o| o.object_key == "test/object2.jsonl")
-        .unwrap()
-        .clone();
+    let objects = database.get_objects_to_sync(100, None).await.unwrap();
+    let num_objects = objects.len();
 
-    // Create synchronizer with fake implementations
+
     let synchronizer = Synchronizer::with_storage(
         database,
         sync_storage,
-        (*s3_connector).clone(),
-        (*recall_connector).clone(),
+        s3_storage,
+        recall_connector,
         config,
         false,
     );
 
-    // Run synchronization
-    let result = synchronizer.run(None, None).await;
+    // Run the synchronizer without filters
+    synchronizer.run(None, None).await.unwrap();
 
-    // Check that the run completed successfully
-    assert!(result.is_ok(), "Synchronizer run should succeed");
-
-    // Check that objects were synced
+    // Verify that all objects were synchronized
     let sync_storage = synchronizer.get_sync_storage();
+    for obj in objects {
+        let status = sync_storage.get_object_status(obj.id).await.unwrap();
+        assert_eq!(
+            status,
+            Some(crate::sync::storage::SyncStatus::Complete),
+            "Object {} should be marked as complete",
+            obj.object_key
+        );
+    }
 
-    let status1 = SyncStorage::get_object_status(&**sync_storage, object1.id)
+    // Verify the number of synchronized objects
+    let completed_objects = sync_storage
+        .get_objects_with_status(crate::sync::storage::SyncStatus::Complete)
         .await
         .unwrap();
-    let status2 = SyncStorage::get_object_status(&**sync_storage, object2.id)
-        .await
-        .unwrap();
-
     assert_eq!(
-        status1,
-        Some(crate::sync::storage::SyncStatus::Complete),
-        "Object 1 should be synced"
-    );
-    assert_eq!(
-        status2,
-        Some(crate::sync::storage::SyncStatus::Complete),
-        "Object 2 should be synced"
-    );
-
-    // Check that we have synced objects
-    let last_object = SyncStorage::get_last_object(&**sync_storage).await.unwrap();
-    assert!(
-        last_object.is_some(),
-        "Should have at least one synced object"
-    );
-}
-
-#[tokio::test]
-async fn test_synchronizer_with_timestamp_filter() {
-    let (database, sync_storage, s3_connector, recall_connector, config) = setup_test_env().await;
-
-    // Create synchronizer with fake implementations
-    let synchronizer = Synchronizer::with_storage(
-        database,
-        sync_storage,
-        (*s3_connector).clone(),
-        (*recall_connector).clone(),
-        config,
-        false,
-    );
-
-    // Run synchronization with a future timestamp to filter out all objects
-    let future_time = (Utc::now() + Duration::days(1)).to_rfc3339();
-    let result = synchronizer.run(None, Some(future_time)).await;
-
-    // Check that the run completed successfully
-    assert!(result.is_ok(), "Synchronizer run should succeed");
-
-    // Check that no objects were synced by looking at the completed status
-    let sync_storage = synchronizer.get_sync_storage();
-    let synced_objects = SyncStorage::get_objects_with_status(
-        &**sync_storage,
-        crate::sync::storage::SyncStatus::Complete,
-    )
-    .await
-    .unwrap();
-
-    assert!(
-        synced_objects.is_empty(),
-        "No objects should be synced due to timestamp filter"
+        completed_objects.len(),
+        num_objects,
+        "All objects should be synchronized"
     );
 }
 
 #[tokio::test]
 async fn test_synchronizer_with_competition_id_filter() {
-    // This test is a placeholder since filtering by competition_id is not fully
-    // implemented in the current version of the synchronizer.
-    // When that functionality is implemented, this test should be expanded.
+    let (database, sync_storage, s3_storage, recall_connector, config) = setup_test_env().await;
 
-    let (database, sync_storage, s3_connector, recall_connector, config) = setup_test_env().await;
+    // Create a specific competition ID and add an object with it
+    let competition_id = uuid::Uuid::new_v4();
+    let now = Utc::now();
+    let mut filtered_object = create_test_object_index("test/filtered.jsonl", now);
+    filtered_object.competition_id = Some(competition_id);
+    database.fake_add_object(filtered_object.clone());
 
-    // Create synchronizer with fake implementations
+    // Add the filtered object's data to S3
+    s3_storage
+        .add_object("test/filtered.jsonl", Bytes::from("Filtered test data"))
+        .await
+        .unwrap();
+
+    // Store clone for later verification
+    let database_clone = database.clone();
+
     let synchronizer = Synchronizer::with_storage(
         database,
         sync_storage,
-        (*s3_connector).clone(),
-        (*recall_connector).clone(),
+        s3_storage,
+        recall_connector,
         config,
         false,
     );
 
-    // Run synchronization with a competition_id filter
-    let result = synchronizer
-        .run(Some("test-competition-id".to_string()), None)
-        .await;
+    // Run the synchronizer with competition_id filter
+    synchronizer
+        .run(Some(competition_id.to_string()), None)
+        .await
+        .unwrap();
 
-    // Check that the run completed successfully
-    assert!(
-        result.is_ok(),
-        "Synchronizer run should succeed even with unimplemented filter"
+    // Verify that only the filtered object was synchronized
+    let sync_storage = synchronizer.get_sync_storage();
+    let status = sync_storage
+        .get_object_status(filtered_object.id)
+        .await
+        .unwrap();
+    assert_eq!(
+        status,
+        Some(crate::sync::storage::SyncStatus::Complete),
+        "Filtered object should be marked as complete"
     );
+
+    // Verify that other objects were not synchronized
+    let all_objects = database_clone.get_objects_to_sync(100, None).await.unwrap();
+    for obj in all_objects {
+        if obj.competition_id != Some(competition_id) {
+            let status = sync_storage.get_object_status(obj.id).await.unwrap();
+            assert_eq!(
+                status, None,
+                "Object {} without matching competition_id should not be synchronized",
+                obj.object_key
+            );
+        }
+    }
+}
+
+#[tokio::test]
+async fn test_synchronizer_with_timestamp_filter() {
+    let (database, sync_storage, s3_storage, recall_connector, config) = setup_test_env().await;
+
+    // Add an older object that should not be synchronized
+    let old_time = Utc::now() - Duration::days(7);
+    let old_object = create_test_object_index("test/old.jsonl", old_time);
+    database.fake_add_object(old_object.clone());
+
+    // Add the old object's data to S3
+    s3_storage
+        .add_object("test/old.jsonl", Bytes::from("Old test data"))
+        .await
+        .unwrap();
+
+    // Store clone for later verification
+    let database_clone = database.clone();
+
+    let synchronizer = Synchronizer::with_storage(
+        database,
+        sync_storage,
+        s3_storage,
+        recall_connector,
+        config,
+        false,
+    );
+
+    // Run the synchronizer with a timestamp filter (2 days ago)
+    let filter_time = Utc::now() - Duration::days(2);
+    synchronizer
+        .run(None, Some(filter_time.to_rfc3339()))
+        .await
+        .unwrap();
+
+    // Verify that the old object was not synchronized
+    let sync_storage = synchronizer.get_sync_storage();
+    let status = sync_storage.get_object_status(old_object.id).await.unwrap();
+    assert_eq!(
+        status, None,
+        "Old object should not be synchronized when using timestamp filter"
+    );
+
+    // Verify that newer objects were synchronized
+    let all_objects = database_clone.get_objects_to_sync(100, None).await.unwrap();
+    for obj in all_objects {
+        if obj.object_last_modified_at > filter_time {
+            let status = sync_storage.get_object_status(obj.id).await.unwrap();
+            assert_eq!(
+                status,
+                Some(crate::sync::storage::SyncStatus::Complete),
+                "Newer object {} should be synchronized",
+                obj.object_key
+            );
+        }
+    }
 }

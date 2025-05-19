@@ -7,49 +7,12 @@ use crate::config::Config;
 use crate::db::Database;
 use crate::db::PostgresDatabase;
 use crate::recall::RecallConnector;
-use crate::s3::S3Connector;
+use crate::s3::Storage;
 use crate::sync::storage::SqliteSyncStorage;
 use crate::sync::storage::{SyncRecord, SyncStatus, SyncStorage};
 
 #[cfg(test)]
 use crate::recall::test_utils::FakeRecallConnector;
-#[cfg(test)]
-use crate::s3::test_utils::FakeS3Connector;
-
-// Define a trait for S3 access that both real and fake implementations can satisfy
-#[cfg(test)]
-pub trait S3Access {
-    fn get_object<'a>(
-        &'a self,
-        key: &'a str,
-    ) -> std::pin::Pin<
-        Box<dyn std::future::Future<Output = anyhow::Result<bytes::Bytes>> + Send + 'a>,
-    >;
-}
-
-#[cfg(test)]
-impl S3Access for S3Connector {
-    fn get_object<'a>(
-        &'a self,
-        key: &'a str,
-    ) -> std::pin::Pin<
-        Box<dyn std::future::Future<Output = anyhow::Result<bytes::Bytes>> + Send + 'a>,
-    > {
-        Box::pin(self.get_object(key))
-    }
-}
-
-#[cfg(test)]
-impl S3Access for FakeS3Connector {
-    fn get_object<'a>(
-        &'a self,
-        key: &'a str,
-    ) -> std::pin::Pin<
-        Box<dyn std::future::Future<Output = anyhow::Result<bytes::Bytes>> + Send + 'a>,
-    > {
-        Box::pin(self.get_object(key))
-    }
-}
 
 // Define a trait for Recall access
 #[cfg(test)]
@@ -87,10 +50,10 @@ impl RecallAccess for FakeRecallConnector {
 
 /// Main synchronizer that orchestrates the data synchronization process
 #[cfg(not(test))]
-pub struct Synchronizer<D: Database, S: SyncStorage> {
+pub struct Synchronizer<D: Database, S: SyncStorage, ST: Storage> {
     database: Arc<D>,
     sync_storage: Arc<S>,
-    s3_connector: Arc<S3Connector>,
+    s3_storage: Arc<ST>,
     recall_connector: Arc<RecallConnector>,
     config: Config,
     reset: bool,
@@ -98,25 +61,24 @@ pub struct Synchronizer<D: Database, S: SyncStorage> {
 
 /// Test version of the synchronizer that works with both real and fake implementations
 #[cfg(test)]
-pub struct Synchronizer<D: Database, S: SyncStorage> {
+pub struct Synchronizer<D: Database, S: SyncStorage, ST: Storage> {
     database: Arc<D>,
     sync_storage: Arc<S>,
-    s3_connector: Arc<dyn S3Access + Send + Sync>,
+    s3_storage: Arc<ST>,
     recall_connector: Arc<dyn RecallAccess + Send + Sync>,
     config: Config,
     reset: bool,
 }
 
 #[cfg(test)]
-impl<D: Database, S: SyncStorage> Synchronizer<D, S> {
+impl<D: Database, S: SyncStorage, ST: Storage> Synchronizer<D, S, ST> {
     /// Test version that works with dynamic trait objects
     pub fn with_storage<
-        T1: S3Access + Send + Sync + 'static,
         T2: RecallAccess + Send + Sync + 'static,
     >(
         database: D,
         sync_storage: S,
-        s3_connector: T1,
+        s3_storage: ST,
         recall_connector: T2,
         config: Config,
         reset: bool,
@@ -124,7 +86,7 @@ impl<D: Database, S: SyncStorage> Synchronizer<D, S> {
         Synchronizer {
             database: Arc::new(database),
             sync_storage: Arc::new(sync_storage),
-            s3_connector: Arc::new(s3_connector),
+            s3_storage: Arc::new(s3_storage),
             recall_connector: Arc::new(recall_connector),
             config,
             reset,
@@ -133,7 +95,7 @@ impl<D: Database, S: SyncStorage> Synchronizer<D, S> {
 }
 
 #[cfg(not(test))]
-impl<D: Database, S: SyncStorage> Synchronizer<D, S> {
+impl<D: Database, S: SyncStorage, ST: Storage> Synchronizer<D, S, ST> {
     /// Returns a reference to the sync storage
     #[allow(dead_code)]
     pub fn get_sync_storage(&self) -> &Arc<S> {
@@ -142,7 +104,7 @@ impl<D: Database, S: SyncStorage> Synchronizer<D, S> {
 }
 
 #[cfg(test)]
-impl<D: Database, S: SyncStorage> Synchronizer<D, S> {
+impl<D: Database, S: SyncStorage, ST: Storage> Synchronizer<D, S, ST> {
     /// Returns a reference to the sync storage
     #[allow(dead_code)]
     pub fn get_sync_storage(&self) -> &Arc<S> {
@@ -151,7 +113,7 @@ impl<D: Database, S: SyncStorage> Synchronizer<D, S> {
 }
 
 #[cfg(not(test))]
-impl<D: Database, S: SyncStorage> Synchronizer<D, S> {
+impl<D: Database, S: SyncStorage, ST: Storage> Synchronizer<D, S, ST> {
     /// Runs the synchronization process
     pub async fn run(&self, competition_id: Option<String>, since: Option<String>) -> Result<()> {
         info!("Starting synchronization");
@@ -200,71 +162,97 @@ impl<D: Database, S: SyncStorage> Synchronizer<D, S> {
             return Ok(());
         }
 
-        info!("Found {} objects to synchronize", objects.len());
+        // Apply competition_id filter if specified
+        let filtered_objects = if let Some(comp_id) = competition_id {
+            let comp_uuid = uuid::Uuid::parse_str(&comp_id)
+                .context(format!("Invalid competition ID format: {}", comp_id))?;
+            objects
+                .into_iter()
+                .filter(|obj| obj.competition_id == Some(comp_uuid))
+                .collect::<Vec<_>>()
+        } else {
+            objects
+        };
+
+        info!("Found {} objects to synchronize", filtered_objects.len());
 
         // Process each object
-        let mut synced_count = 0;
-
-        for object in objects {
-            // Check if already synced (to handle restarts)
-            if let Some(status) = self.sync_storage.get_object_status(object.id).await? {
-                if status == SyncStatus::Complete {
-                    debug!("Object already synced: {}", object.object_key);
+        for object in filtered_objects {
+            // Check if the object has already been synced
+            match self.sync_storage.get_object_status(object.id).await? {
+                Some(SyncStatus::Complete) => {
+                    debug!("Object {} already synchronized, skipping", object.object_key);
                     continue;
                 }
-            } else {
-                // Add object as pending if not already in storage
-                let record = SyncRecord {
-                    id: object.id,
-                    object_key: object.object_key.clone(),
-                    bucket_name: object.bucket_name.clone(),
-                    timestamp: object.object_last_modified_at,
-                    status: SyncStatus::PendingSync,
-                };
-                self.sync_storage.add_object(record).await?;
+                Some(SyncStatus::Processing) => {
+                    debug!("Object {} is already being processed, skipping", object.object_key);
+                    continue;
+                }
+                _ => {}
             }
 
-            // Mark as processing
+            // Create a record in sync storage
+            let sync_record = SyncRecord::new(
+                object.id,
+                object.object_key.clone(),
+                object.bucket_name.clone(),
+                object.object_last_modified_at,
+            );
+
+            // Add the object to sync storage with PendingSync status
+            self.sync_storage.add_object(sync_record.clone()).await?;
+
+            // Update status to Processing
             self.sync_storage
                 .set_object_status(object.id, SyncStatus::Processing)
                 .await?;
 
-            // Download from S3
-            debug!("Fetching object from S3: {}", object.object_key);
-            let data = self.s3_connector.get_object(&object.object_key).await?;
+            // Get the object from S3
+            match self.s3_storage.get_object(&object.object_key).await {
+                Ok(data) => {
+                    // Submit to Recall
+                    match self
+                        .recall_connector
+                        .store_object(&object.object_key, &data)
+                        .await
+                    {
+                        Ok(recall_id) => {
+                            info!(
+                                "Successfully synchronized {} to Recall with ID: {}",
+                                object.object_key, recall_id
+                            );
 
-            // Upload to Recall
-            debug!("Storing object to Recall: {}", object.object_key);
-            let cid = self
-                .recall_connector
-                .store_object(&object.object_key, &data)
-                .await?;
-
-            // Mark as complete
-            self.sync_storage
-                .set_object_status(object.id, SyncStatus::Complete)
-                .await?;
-
-            info!(
-                "Successfully synced object: {} -> {}",
-                object.object_key, cid
-            );
-            synced_count += 1;
+                            // Update status to Complete
+                            self.sync_storage
+                                .set_object_status(object.id, SyncStatus::Complete)
+                                .await?;
+                        }
+                        Err(e) => {
+                            eprintln!(
+                                "Failed to submit {} to Recall: {}",
+                                object.object_key, e
+                            );
+                            // Consider retry logic here
+                        }
+                    }
+                }
+                Err(e) => {
+                    eprintln!("Failed to get {} from S3: {}", object.object_key, e);
+                    // Consider retry logic here
+                }
+            }
         }
 
-        info!(
-            "Synchronization completed successfully. Synced {} objects.",
-            synced_count
-        );
+        info!("Synchronization completed");
         Ok(())
     }
 }
 
 #[cfg(test)]
-impl<D: Database, S: SyncStorage> Synchronizer<D, S> {
-    /// Runs the synchronization process (test version)
+impl<D: Database, S: SyncStorage, ST: Storage> Synchronizer<D, S, ST> {
+    /// Test version of run that uses trait objects
     pub async fn run(&self, competition_id: Option<String>, since: Option<String>) -> Result<()> {
-        info!("Starting synchronization (test version)");
+        info!("Starting synchronization");
 
         // Log parameters for debugging
         if let Some(id) = &competition_id {
@@ -310,97 +298,126 @@ impl<D: Database, S: SyncStorage> Synchronizer<D, S> {
             return Ok(());
         }
 
-        info!("Found {} objects to synchronize", objects.len());
+        // Apply competition_id filter if specified
+        let filtered_objects = if let Some(comp_id) = competition_id {
+            let comp_uuid = uuid::Uuid::parse_str(&comp_id)
+                .context(format!("Invalid competition ID format: {}", comp_id))?;
+            objects
+                .into_iter()
+                .filter(|obj| obj.competition_id == Some(comp_uuid))
+                .collect::<Vec<_>>()
+        } else {
+            objects
+        };
+
+        info!("Found {} objects to synchronize", filtered_objects.len());
 
         // Process each object
-        let mut synced_count = 0;
-
-        for object in objects {
-            // Check if already synced (to handle restarts)
-            if let Some(status) = self.sync_storage.get_object_status(object.id).await? {
-                if status == SyncStatus::Complete {
-                    debug!("Object already synced: {}", object.object_key);
+        for object in filtered_objects {
+            // Check if the object has already been synced
+            match self.sync_storage.get_object_status(object.id).await? {
+                Some(SyncStatus::Complete) => {
+                    debug!("Object {} already synchronized, skipping", object.object_key);
                     continue;
                 }
-            } else {
-                // Add object as pending if not already in storage
-                let record = SyncRecord {
-                    id: object.id,
-                    object_key: object.object_key.clone(),
-                    bucket_name: object.bucket_name.clone(),
-                    timestamp: object.object_last_modified_at,
-                    status: SyncStatus::PendingSync,
-                };
-                self.sync_storage.add_object(record).await?;
+                Some(SyncStatus::Processing) => {
+                    debug!("Object {} is already being processed, skipping", object.object_key);
+                    continue;
+                }
+                _ => {}
             }
 
-            // Mark as processing
+            // Create a record in sync storage
+            let sync_record = SyncRecord::new(
+                object.id,
+                object.object_key.clone(),
+                object.bucket_name.clone(),
+                object.object_last_modified_at,
+            );
+
+            // Add the object to sync storage with PendingSync status
+            self.sync_storage.add_object(sync_record.clone()).await?;
+
+            // Update status to Processing
             self.sync_storage
                 .set_object_status(object.id, SyncStatus::Processing)
                 .await?;
 
-            // Download from S3 using the trait method
-            debug!("Fetching object from S3: {}", object.object_key);
-            let data = self.s3_connector.get_object(&object.object_key).await?;
+            // Get the object from S3
+            match self.s3_storage.get_object(&object.object_key).await {
+                Ok(data) => {
+                    // Submit to Recall
+                    match self
+                        .recall_connector
+                        .store_object(&object.object_key, &data)
+                        .await
+                    {
+                        Ok(recall_id) => {
+                            info!(
+                                "Successfully synchronized {} to Recall with ID: {}",
+                                object.object_key, recall_id
+                            );
 
-            // Upload to Recall using the trait method
-            debug!("Storing object to Recall: {}", object.object_key);
-            let cid = self
-                .recall_connector
-                .store_object(&object.object_key, &data)
-                .await?;
-
-            // Mark as complete
-            self.sync_storage
-                .set_object_status(object.id, SyncStatus::Complete)
-                .await?;
-
-            info!(
-                "Successfully synced object: {} -> {}",
-                object.object_key, cid
-            );
-            synced_count += 1;
+                            // Update status to Complete
+                            self.sync_storage
+                                .set_object_status(object.id, SyncStatus::Complete)
+                                .await?;
+                        }
+                        Err(e) => {
+                            eprintln!(
+                                "Failed to submit {} to Recall: {}",
+                                object.object_key, e
+                            );
+                            // Consider retry logic here
+                        }
+                    }
+                }
+                Err(e) => {
+                    eprintln!("Failed to get {} from S3: {}", object.object_key, e);
+                    // Consider retry logic here
+                }
+            }
         }
 
-        info!(
-            "Synchronization completed successfully. Synced {} objects.",
-            synced_count
-        );
+        info!("Synchronization completed");
         Ok(())
     }
 }
 
-impl Synchronizer<PostgresDatabase, SqliteSyncStorage> {
-    /// Creates a new synchronizer instance from the provided configuration
-    pub async fn new(config: Config, reset: bool) -> Result<Self> {
-        info!("Initializing synchronizer with default implementations");
-
-        // Initialize database connection
-        let database = PostgresDatabase::new(&config.database.url)
-            .await
-            .context("Failed to connect to PostgreSQL database")?;
-
-        // Initialize sync storage
-        let sync_storage = SqliteSyncStorage::new(&config.sync.state_db_path)
-            .context("Failed to initialize SQLite sync storage")?;
-
-        // Initialize S3 connector
-        let s3_connector = S3Connector::new(&config.s3)
-            .await
-            .context("Failed to initialize S3 connector")?;
-
-        // Initialize Recall connector
-        let recall_connector = RecallConnector::new(&config.recall)
-            .await
-            .context("Failed to initialize Recall connector")?;
+#[cfg(not(test))]
+impl<D: Database, S: SyncStorage, ST: Storage> Synchronizer<D, S, ST> {
+    /// Creates a new Synchronizer instance
+    pub async fn new(database: D, config: Config, reset: bool) -> Result<Self> {
+        let sync_storage = SqliteSyncStorage::new(&config.sync.state_db_path).await?;
+        let s3_storage = crate::s3::S3Storage::new(&config.s3).await?;
+        let recall_connector = RecallConnector::new(&config.recall)?;
 
         Ok(Synchronizer {
             database: Arc::new(database),
             sync_storage: Arc::new(sync_storage),
-            s3_connector: Arc::new(s3_connector),
+            s3_storage: Arc::new(s3_storage),
             recall_connector: Arc::new(recall_connector),
             config,
             reset,
         })
+    }
+}
+
+#[cfg(test)]
+impl<D: Database, S: SyncStorage, ST: Storage> Synchronizer<D, S, ST> {
+    /// Creates a new test Synchronizer instance
+    pub async fn new(_database: D, _config: Config, _reset: bool) -> Result<Self> {
+        unimplemented!("Use with_storage for test instances")
+    }
+}
+
+/// Default implementation for PostgreSQL database and SQLite sync storage
+pub type DefaultSynchronizer = Synchronizer<PostgresDatabase, SqliteSyncStorage, crate::s3::S3Storage>;
+
+impl DefaultSynchronizer {
+    /// Creates a synchronizer with default implementations
+    pub async fn default(config: Config, reset: bool) -> Result<Self> {
+        let database = PostgresDatabase::new(&config.database.url).await?;
+        Synchronizer::new(database, config, reset).await
     }
 }

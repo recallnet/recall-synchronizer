@@ -12,6 +12,8 @@ mod sync;
 #[cfg(test)]
 mod test_utils;
 
+use crate::sync::synchronizer::DefaultSynchronizer;
+
 #[derive(Parser, Debug)]
 #[command(author, version, about, long_about = None)]
 struct Cli {
@@ -75,7 +77,7 @@ async fn run(
     since: Option<String>,
 ) -> Result<()> {
     // Initialize and run synchronizer
-    match sync::Synchronizer::new(config, reset).await {
+    match DefaultSynchronizer::default(config, reset).await {
         Ok(synchronizer) => {
             info!("Synchronizer initialized successfully");
 
