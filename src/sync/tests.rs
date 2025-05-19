@@ -1,6 +1,6 @@
 use crate::config::{Config, DatabaseConfig, RecallConfig, S3Config, SyncConfig};
 use crate::db::{Database, FakeDatabase};
-use crate::recall::test_utils::FakeRecallConnector;
+use crate::recall::FakeRecallStorage;
 use crate::s3::FakeStorage;
 use crate::s3::Storage;
 use crate::sync::storage::{FakeSyncStorage, SyncStorage};
@@ -44,7 +44,7 @@ async fn setup_test_env() -> (
     FakeDatabase,
     FakeSyncStorage,
     FakeStorage,
-    FakeRecallConnector,
+    FakeRecallStorage,
     Config,
 ) {
     // Create fake database with test data
@@ -78,15 +78,15 @@ async fn setup_test_env() -> (
         .await
         .unwrap();
 
-    // Create fake Recall connector
-    let recall_connector = FakeRecallConnector::new(config.recall.prefix.clone());
+    // Create fake Recall storage
+    let recall_storage = FakeRecallStorage::new();
 
-    (database, sync_storage, s3_storage, recall_connector, config)
+    (database, sync_storage, s3_storage, recall_storage, config)
 }
 
 #[tokio::test]
 async fn test_synchronizer_run_with_fake_implementations() {
-    let (database, sync_storage, s3_storage, recall_connector, config) = setup_test_env().await;
+    let (database, sync_storage, s3_storage, recall_storage, config) = setup_test_env().await;
 
     // Get the objects before creating the synchronizer
     let objects = database.get_objects_to_sync(100, None).await.unwrap();
@@ -96,7 +96,7 @@ async fn test_synchronizer_run_with_fake_implementations() {
         database,
         sync_storage,
         s3_storage,
-        recall_connector,
+        recall_storage,
         config,
         false,
     );
@@ -130,7 +130,7 @@ async fn test_synchronizer_run_with_fake_implementations() {
 
 #[tokio::test]
 async fn test_synchronizer_with_competition_id_filter() {
-    let (database, sync_storage, s3_storage, recall_connector, config) = setup_test_env().await;
+    let (database, sync_storage, s3_storage, recall_storage, config) = setup_test_env().await;
 
     // Create a specific competition ID and add an object with it
     let competition_id = uuid::Uuid::new_v4();
@@ -152,7 +152,7 @@ async fn test_synchronizer_with_competition_id_filter() {
         database,
         sync_storage,
         s3_storage,
-        recall_connector,
+        recall_storage,
         config,
         false,
     );
@@ -191,7 +191,7 @@ async fn test_synchronizer_with_competition_id_filter() {
 
 #[tokio::test]
 async fn test_synchronizer_with_timestamp_filter() {
-    let (database, sync_storage, s3_storage, recall_connector, config) = setup_test_env().await;
+    let (database, sync_storage, s3_storage, recall_storage, config) = setup_test_env().await;
 
     // Add an older object that should not be synchronized
     let old_time = Utc::now() - Duration::days(7);
@@ -211,7 +211,7 @@ async fn test_synchronizer_with_timestamp_filter() {
         database,
         sync_storage,
         s3_storage,
-        recall_connector,
+        recall_storage,
         config,
         false,
     );

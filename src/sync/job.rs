@@ -6,7 +6,7 @@ use uuid::Uuid;
 
 use crate::db::models::ObjectIndex;
 use crate::db::Database;
-use crate::recall::RecallConnector;
+use crate::recall::RecallStorage;
 use crate::s3::Storage;
 use crate::sync::storage::{SyncRecord, SyncStatus, SyncStorage};
 
@@ -41,10 +41,10 @@ impl SyncJob {
         }
     }
 
-    pub async fn execute<ST: Storage, SS: SyncStorage>(
+    pub async fn execute<ST: Storage, RS: RecallStorage, SS: SyncStorage>(
         &self,
         s3_storage: &Arc<ST>,
-        recall_connector: &Arc<RecallConnector>,
+        recall_storage: &Arc<RS>,
         sync_storage: &Arc<SS>,
     ) -> Result<(), JobError> {
         let object_key = &self.object_index.object_key;
@@ -84,8 +84,8 @@ impl SyncJob {
         );
 
         // Upload the object to Recall
-        let recall_id = recall_connector
-            .store_object(object_key, &object_data)
+        let recall_id = recall_storage
+            .add_blob(object_key, object_data.to_vec())
             .await
             .map_err(|e| JobError::RecallError(e.to_string()))?;
 
@@ -103,10 +103,10 @@ impl SyncJob {
         Ok(())
     }
 
-    pub async fn retry<ST: Storage, SS: SyncStorage>(
+    pub async fn retry<ST: Storage, RS: RecallStorage, SS: SyncStorage>(
         &self,
         s3_storage: &Arc<ST>,
-        recall_connector: &Arc<RecallConnector>,
+        recall_storage: &Arc<RS>,
         sync_storage: &Arc<SS>,
         retry_count: u32,
     ) -> Result<(), JobError> {
@@ -114,7 +114,7 @@ impl SyncJob {
 
         for attempt in 0..max_retries {
             match self
-                .execute(s3_storage, recall_connector, sync_storage)
+                .execute(s3_storage, recall_storage, sync_storage)
                 .await
             {
                 Ok(()) => return Ok(()),
@@ -144,25 +144,25 @@ impl SyncJob {
 }
 
 #[allow(dead_code)]
-pub struct JobScheduler<D: Database, ST: Storage, SS: SyncStorage> {
+pub struct JobScheduler<D: Database, ST: Storage, RS: RecallStorage, SS: SyncStorage> {
     database: Arc<D>,
     s3_storage: Arc<ST>,
-    recall_connector: Arc<RecallConnector>,
+    recall_storage: Arc<RS>,
     sync_storage: Arc<SS>,
 }
 
 #[allow(dead_code)]
-impl<D: Database, ST: Storage, SS: SyncStorage> JobScheduler<D, ST, SS> {
+impl<D: Database, ST: Storage, RS: RecallStorage, SS: SyncStorage> JobScheduler<D, ST, RS, SS> {
     pub fn new(
         database: Arc<D>,
         s3_storage: Arc<ST>,
-        recall_connector: Arc<RecallConnector>,
+        recall_storage: Arc<RS>,
         sync_storage: Arc<SS>,
     ) -> Self {
         Self {
             database,
             s3_storage,
-            recall_connector,
+            recall_storage,
             sync_storage,
         }
     }
@@ -198,7 +198,7 @@ impl<D: Database, ST: Storage, SS: SyncStorage> JobScheduler<D, ST, SS> {
             match job
                 .retry(
                     &self.s3_storage,
-                    &self.recall_connector,
+                    &self.recall_storage,
                     &self.sync_storage,
                     3,
                 )
