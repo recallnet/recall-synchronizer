@@ -18,6 +18,14 @@ pub trait Storage: Send + Sync + 'static {
     /// Remove an object from storage (test-only)
     #[cfg(test)]
     async fn remove_object(&self, key: &str) -> Result<(), StorageError>;
+
+    /// Check if a bucket exists (test-only)
+    #[cfg(test)]
+    async fn has_bucket(&self, bucket: &str) -> Result<bool, StorageError>;
+
+    /// Create a bucket (test-only)
+    #[cfg(test)]
+    async fn create_bucket(&self, bucket: &str) -> Result<(), StorageError>;
 }
 
 /// Implementation of Storage trait for Arc<T> where T implements Storage
@@ -38,5 +46,15 @@ impl<T: Storage + ?Sized> Storage for Arc<T> {
     #[cfg(test)]
     async fn remove_object(&self, key: &str) -> Result<(), StorageError> {
         (**self).remove_object(key).await
+    }
+
+    #[cfg(test)]
+    async fn has_bucket(&self, bucket: &str) -> Result<bool, StorageError> {
+        (**self).has_bucket(bucket).await
+    }
+
+    #[cfg(test)]
+    async fn create_bucket(&self, bucket: &str) -> Result<(), StorageError> {
+        (**self).create_bucket(bucket).await
     }
 }

@@ -2,7 +2,7 @@ use crate::s3::error::StorageError;
 use crate::s3::storage::Storage;
 use async_trait::async_trait;
 use bytes::Bytes;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use tokio::sync::Mutex;
 
@@ -12,6 +12,8 @@ use tokio::sync::Mutex;
 pub struct FakeStorage {
     data: Arc<Mutex<HashMap<String, Bytes>>>,
     fail_objects: Arc<Mutex<HashMap<String, bool>>>,
+    #[cfg_attr(not(test), allow(dead_code))]
+    buckets: Arc<Mutex<HashSet<String>>>,
 }
 
 #[allow(dead_code)]
@@ -21,6 +23,7 @@ impl FakeStorage {
         FakeStorage {
             data: Arc::new(Mutex::new(HashMap::new())),
             fail_objects: Arc::new(Mutex::new(HashMap::new())),
+            buckets: Arc::new(Mutex::new(HashSet::new())),
         }
     }
 
@@ -62,6 +65,19 @@ impl Storage for FakeStorage {
         } else {
             Err(StorageError::ObjectNotFound(key.to_string()))
         }
+    }
+
+    #[cfg(test)]
+    async fn has_bucket(&self, bucket: &str) -> Result<bool, StorageError> {
+        let buckets = self.buckets.lock().await;
+        Ok(buckets.contains(bucket))
+    }
+
+    #[cfg(test)]
+    async fn create_bucket(&self, bucket: &str) -> Result<(), StorageError> {
+        let mut buckets = self.buckets.lock().await;
+        buckets.insert(bucket.to_string());
+        Ok(())
     }
 }
 

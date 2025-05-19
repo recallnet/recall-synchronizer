@@ -97,75 +97,13 @@ impl S3Storage {
             }
         }
 
-        // Check if bucket exists
-        let result = self.client.head_bucket().bucket(&self.bucket).send().await;
-
-        match result {
-            Ok(_) => {
-                info!("Bucket '{}' already exists", self.bucket);
-                Ok(())
-            }
-            Err(e) => {
-                let error_str = e.to_string();
-                info!("Bucket '{}' check error: {}", self.bucket, error_str);
-
-                // Check if it's a 404 (bucket doesn't exist)
-                let is_not_found = error_str.contains("404")
-                    || error_str.contains("NoSuchBucket")
-                    || error_str.contains("Not Found");
-
-                if !is_not_found {
-                    eprintln!("Unexpected error checking bucket: {:?}", e);
-                    return Err(StorageError::Other(anyhow::anyhow!(
-                        "Error checking bucket existence: {}",
-                        e
-                    )));
-                }
-
-                // Try to create the bucket
-                info!(
-                    "Bucket '{}' doesn't exist. Creating it for tests...",
-                    self.bucket
-                );
-                match self
-                    .client
-                    .create_bucket()
-                    .bucket(&self.bucket)
-                    .send()
-                    .await
-                {
-                    Ok(_) => {
-                        info!("Successfully created bucket '{}'", self.bucket);
-                        Ok(())
-                    }
-                    Err(create_err) => {
-                        let create_error_str = create_err.to_string();
-                        eprintln!(
-                            "Failed to create bucket '{}': {}",
-                            self.bucket, create_error_str
-                        );
-                        eprintln!("Create error details: {:?}", create_err);
-
-                        // If it's a BucketAlreadyExists error, that's OK
-                        if create_error_str.contains("BucketAlreadyExists")
-                            || create_error_str.contains("BucketAlreadyOwnedByYou")
-                        {
-                            info!(
-                                "Bucket '{}' already exists (owned by you), continuing",
-                                self.bucket
-                            );
-                            Ok(())
-                        } else {
-                            Err(StorageError::Other(anyhow::anyhow!(
-                                "Failed to create bucket '{}': {}",
-                                self.bucket,
-                                create_err
-                            )))
-                        }
-                    }
-                }
-            }
+        // Check if bucket exists using trait method
+        if !self.has_bucket(&self.bucket).await? {
+            // Create the bucket using trait method
+            self.create_bucket(&self.bucket).await?;
         }
+
+        Ok(())
     }
 }
 
@@ -294,5 +232,66 @@ impl Storage for S3Storage {
 
         debug!("Successfully removed object: {}", key);
         Ok(())
+    }
+
+    #[cfg(test)]
+    async fn has_bucket(&self, bucket: &str) -> Result<bool, StorageError> {
+        let result = self.client.head_bucket().bucket(bucket).send().await;
+
+        match result {
+            Ok(_) => {
+                info!("Bucket '{}' exists", bucket);
+                Ok(true)
+            }
+            Err(e) => {
+                let error_str = e.to_string();
+
+                // Check if it's a 404 (bucket doesn't exist)
+                let is_not_found = error_str.contains("404")
+                    || error_str.contains("NoSuchBucket")
+                    || error_str.contains("Not Found");
+
+                if is_not_found {
+                    info!("Bucket '{}' does not exist", bucket);
+                    Ok(false)
+                } else {
+                    eprintln!("Error checking bucket '{}': {:?}", bucket, e);
+                    Err(StorageError::Other(anyhow::anyhow!(
+                        "Error checking bucket existence: {}",
+                        e
+                    )))
+                }
+            }
+        }
+    }
+
+    #[cfg(test)]
+    async fn create_bucket(&self, bucket: &str) -> Result<(), StorageError> {
+        info!("Creating bucket '{}'", bucket);
+
+        match self.client.create_bucket().bucket(bucket).send().await {
+            Ok(_) => {
+                info!("Successfully created bucket '{}'", bucket);
+                Ok(())
+            }
+            Err(create_err) => {
+                let error_str = create_err.to_string();
+
+                // If it's a BucketAlreadyExists error, that's OK
+                if error_str.contains("BucketAlreadyExists")
+                    || error_str.contains("BucketAlreadyOwnedByYou")
+                {
+                    info!("Bucket '{}' already exists (owned by you)", bucket);
+                    Ok(())
+                } else {
+                    eprintln!("Failed to create bucket '{}': {}", bucket, error_str);
+                    Err(StorageError::Other(anyhow::anyhow!(
+                        "Failed to create bucket '{}': {}",
+                        bucket,
+                        create_err
+                    )))
+                }
+            }
+        }
     }
 }
