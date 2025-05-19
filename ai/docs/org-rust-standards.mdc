@@ -53,6 +53,9 @@ alwaysApply: true
 - **Benchmarks:** Use criterion or similar for performance-critical code benchmarking.
 - **Scenario Coverage:** Ensure tests cover common use cases, edge cases, and error scenarios.
 - **Testing Dependencies:** Create lightweight in-memory fake implementations of traits for testing rather than using mocking frameworks. Each trait representing an external dependency should have both a real implementation and a test double. See `rust-snippet-fake.mds` for detailed examples and guidance.
+  - Fake implementations should focus on simulating specific edge cases and failure scenarios
+  - Only add `fake_` prefixed methods that set up test scenarios, not duplicate trait functionality
+  - Write tests that verify fake-specific behavior helps catch edge cases
 - **Test Function Naming:** Name test functions using the pattern `{condition_or_prerequisite}_{result_or_expectation}` instead of starting with `test_`. For example, use `if_db_fail_to_provide_data_synchronizer_should_return_error` instead of `test_synchronizer_error_handling`. This naming pattern:
   - Makes the test's purpose immediately clear
   - Documents expected behavior in the function name

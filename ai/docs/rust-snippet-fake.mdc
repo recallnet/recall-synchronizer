@@ -204,7 +204,10 @@ When creating test abstractions:
 4. **Add Special Testing Methods**: Add special methods to the fake with the `fake_` prefix:
    - These methods should only be used in tests
    - They control the fake's behavior to simulate various scenarios (failures, delays, etc.)
-   - Example: `fake_failed_chunks()`, `fake_add_data()`
+   - Do NOT create `fake_` methods that duplicate regular trait methods functionality
+   - Example: `fake_failed_chunks()` - sets up failure behavior for specific chunks when regular `download_chunk` is called
+   - Do NOT create `fake_` methods duplicate trait methods or that don't change fake storage state that affect behavior of regular trait methods.
+   - Focus on methods that set up special testing scenarios, not normal operations
 
 5. **Implement Production Version**: Create a real implementation that works with the actual service:
    - Keep implementation details separate from the trait definition
