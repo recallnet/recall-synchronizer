@@ -37,11 +37,12 @@ services:
   recall:
     image: textile/recall-localnet:latest
     ports:
-      - "8545:8545"  # Ethereum RPC port
-      - "8080:8080"  # Recall API port 
+      - "127.0.0.1:8545:8545"  # Ethereum RPC port
+      - "127.0.0.1:8645:8645"  # Recall EVM RPC port
+      - "127.0.0.1:8001:8001"  # Object API port
+      - "127.0.0.1:26657:26657"  # CometBFT RPC port
     volumes:
       - recall_data:/data
-      #- /var/run/docker.sock:/var/run/docker.sock  # Mount Docker socket
     privileged: true  # Required for Docker-in-Docker
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8545"]
