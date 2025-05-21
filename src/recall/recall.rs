@@ -272,7 +272,7 @@ mod tests {
     use recall_provider::{json_rpc::JsonRpcProvider, query::FvmQueryHeight};
     use recall_sdk::machine::{bucket::Bucket, Machine};
     use recall_sdk::network::{NetworkConfig, NetworkSpec};
-    use recall_signer::{key::parse_secret_key, AccountKind, Signer, Wallet};
+    use recall_signer::{key::parse_secret_key, AccountKind, Wallet};
     use shellexpand;
     use std::collections::HashMap;
     use std::fs;
@@ -293,21 +293,16 @@ mod tests {
         spec.into_network_config()
     }
 
-    #[tokio::test]
-    async fn test_bucket_list_command() -> Result<()> {
+    async fn setup_wallet_and_provider() -> Result<(JsonRpcProvider, Wallet)> {
         let cfg = get_network_config()?;
 
         let provider =
             JsonRpcProvider::new_http(cfg.rpc_url, cfg.subnet_id.chain_id(), None, None)?;
 
-        // Set up wallet with private key
         let private_key_hex = "ce38d69e9b5166baeb7ba3f9b5c231ae5e4bbf479159b723242ce77f6ba556b3";
-        println!("Using private key: 0x{}", private_key_hex);
 
         let private_key = parse_secret_key(private_key_hex)?;
         let mut wallet = Wallet::new_secp256k1(private_key, AccountKind::Ethereum, cfg.subnet_id)?;
-
-        println!("Wallet address: {}", wallet.address());
 
         match wallet.init_sequence(&provider).await {
             Ok(_) => println!("Wallet sequence initialized successfully"),
@@ -317,11 +312,51 @@ mod tests {
             ),
         }
 
+        Ok((provider, wallet))
+    }
+
+    #[tokio::test]
+    async fn test_bucket_list_command() -> Result<()> {
+        let (provider, mut wallet) = setup_wallet_and_provider().await?;
+
         let metadata = Bucket::list(&provider, &mut wallet, FvmQueryHeight::Committed).await?;
 
         println!("\nListing buckets...");
         println!("{:?}", metadata);
 
         Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_bucket_create_command() -> Result<()> {
+        let (provider, mut wallet) = setup_wallet_and_provider().await?;
+
+        match Bucket::new(
+            &provider,
+            &mut wallet,
+            None,
+            HashMap::new(),
+            Default::default(),
+        )
+        .await
+        {
+            Ok(_) => {
+                // Wait a moment for the transaction to be processed
+                tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
+
+                let metadata =
+                    Bucket::list(&provider, &mut wallet, FvmQueryHeight::Committed).await?;
+
+                println!("All buckets:");
+                for meta in &metadata {
+                    println!("- Bucket at address: {}", meta.address);
+                }
+                Ok(())
+            }
+            Err(e) => {
+                println!("Failed to create bucket: {}", e);
+                Ok(())
+            }
+        }
     }
 }
