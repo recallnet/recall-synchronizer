@@ -16,4 +16,4 @@ secret_access_key = "minioadmin"
 
 [recall]
 enabled = false
-endpoint = "http://localhost:8080"
+endpoint = "http://localhost:8545"

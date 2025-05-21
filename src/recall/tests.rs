@@ -31,15 +31,22 @@ fn get_test_storages() -> Vec<(&'static str, StorageFactory)> {
                 Box::pin(async {
                     let config = load_test_config();
                     let endpoint = config.recall.endpoint.clone();
+                    
+                    // Use the configured ETH API endpoint (should be http://localhost:8645)
+                    println!("Connecting to Recall at endpoint: {}", endpoint);
+                    
                     let recall_config = RecallConfig {
-                        endpoint: config.recall.endpoint,
+                        endpoint: endpoint.clone(),
                         prefix: None,
-                        // Use a valid test private key in hex format
-                        private_key: "0000000000000000000000000000000000000000000000000000000000000001".to_string(),
+                        // Use a valid test private key from Anvil
+                        private_key: "ac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80".to_string(),
                     };
 
                     match RecallBlockchain::new(&recall_config).await {
-                        Ok(blockchain) => Box::new(Arc::new(blockchain)) as Box<dyn RecallStorage + Send + Sync>,
+                        Ok(blockchain) => {
+                            println!("Successfully connected to Recall storage");
+                            Box::new(Arc::new(blockchain)) as Box<dyn RecallStorage + Send + Sync>
+                        },
                         Err(e) => {
                             panic!("Failed to connect to real Recall storage: {}\n\nMake sure the Recall container is running and accessible at {}", e, endpoint);
                         }

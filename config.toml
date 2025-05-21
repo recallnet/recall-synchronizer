@@ -1,10 +1,9 @@
-# Example configuration file for the Recall Data Synchronizer
+# Configuration file for the Recall Data Synchronizer
 
 # PostgreSQL database configuration (source of object metadata)
 [database]
 url = "postgresql://recall:recall_password@localhost:5432/recall_competitions"
 max_connections = 5
-connect_timeout_seconds = 3
 
 # SQLite configuration (for synchronizer state)
 [sync_storage]
@@ -12,20 +11,23 @@ path = "data/sync_state.db"
 
 # S3 configuration
 [s3]
-endpoint_url = "https://s3.amazonaws.com"
+endpoint = "http://localhost:9000"
 region = "us-east-1"
-access_key_id = "YOUR_ACCESS_KEY"
-secret_access_key = "YOUR_SECRET_KEY"
-bucket_name = "competition-data"
+access_key_id = "minioadmin"
+secret_access_key = "minioadmin"
+bucket = "recall-bucket"
 
 # Recall network configuration
 [recall]
-node_url = "https://node.example.com"
-signer_key = "YOUR_PRIVATE_KEY"
+endpoint = "http://localhost:8080"
+private_key = "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80"
+prefix = "dev"
 
 # Synchronization settings
 [sync]
 interval_seconds = 60
 batch_size = 100
-max_retries = 3
+workers = 2
+retry_limit = 3
 retry_delay_seconds = 5
+state_db_path = "./sync_state.db"
