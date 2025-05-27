@@ -39,15 +39,13 @@ fn get_test_storages() -> Vec<(&'static str, StorageFactory)> {
                     let config_path = config.recall.config_path.clone().unwrap_or_else(|| "networks.toml".to_string());
                     
                     let recall_config = RecallConfig {
-                        endpoint: endpoint.clone(),
-                        prefix: None,
                         // Use a valid test private key from Anvil
-                        private_key: config.recall.private_key.clone().unwrap_or_else(|| 
-                            "ac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80".to_string()
-                        ),
+                        //private_key: config.recall.private_key.clone().unwrap_or_else(|| 
+                            //"0xce38d69e9b5166baeb7ba3f9b5c231ae5e4bbf479159b723242ce77f6ba556b3".to_string()
+                        private_key: "0xce38d69e9b5166baeb7ba3f9b5c231ae5e4bbf479159b723242ce77f6ba556b3".to_string(),
                         network,
                         config_path: Some(config_path),
-                        bucket: config.recall.bucket.clone(),
+                        bucket: None,
                     };
 
                     match RecallBlockchain::new(&recall_config).await {

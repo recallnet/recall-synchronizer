@@ -2,8 +2,7 @@ use crate::config::RecallConfig;
 use crate::recall::error::RecallError;
 use crate::recall::storage::RecallStorage;
 use async_trait::async_trait;
-use recall_provider::fvm_shared::address::Address;
-use recall_provider::json_rpc::JsonRpcProvider;
+use recall_provider::{fvm_shared::address::Address, json_rpc::JsonRpcProvider};
 use recall_sdk::{
     machine::{bucket::Bucket, Machine},
     network::{NetworkConfig, NetworkSpec},
@@ -12,15 +11,13 @@ use recall_signer::{key::parse_secret_key, AccountKind, Signer, Wallet};
 use std::collections::HashMap;
 use std::fs;
 use std::str::FromStr;
-use std::sync::Arc;
-use tokio::sync::Mutex;
 use tracing::{debug, info, warn};
 
 /// Real Recall blockchain implementation of the RecallStorage trait
 #[derive(Clone)]
 pub struct RecallBlockchain {
-    provider: Arc<JsonRpcProvider>,
-    signer: Arc<Mutex<Wallet>>,
+    config: RecallConfig,
+    network_config: NetworkConfig,
     bucket_address: Address,
 }
 
@@ -76,11 +73,11 @@ impl RecallBlockchain {
         .map_err(|e| RecallError::Connection(format!("Failed to create provider: {}", e)))?;
 
         // Create secret key from hex string (strip "0x" prefix if present)
-        let private_key_hex = config
+        let private_key = config
             .private_key
             .strip_prefix("0x")
-            .unwrap_or(&config.private_key);
-        let pk = parse_secret_key(private_key_hex).map_err(|e| {
+            .map_or(config.private_key.as_str(), |s| s);
+        let pk = parse_secret_key(private_key).map_err(|e| {
             RecallError::Configuration(format!("Failed to parse private key: {}", e))
         })?;
 
@@ -132,9 +129,9 @@ impl RecallBlockchain {
         let (bucket, tx_result) = Bucket::new(
             provider,
             signer,
-            None,                             // no metadata
-            std::collections::HashMap::new(), // no additional options
-            Default::default(),               // default gas params
+            None,
+            std::collections::HashMap::new(),
+            Default::default(),
         )
         .await
         .map_err(|e| RecallError::Configuration(format!("Failed to create new bucket: {}", e)))?;
@@ -171,10 +168,15 @@ impl RecallBlockchain {
             Self::get_or_create_bucket_address(config, &provider, &mut signer).await?;
 
         Ok(Self {
-            provider: Arc::new(provider),
-            signer: Arc::new(Mutex::new(signer)),
+            config: config.clone(),
+            network_config,
             bucket_address,
         })
+    }
+
+    /// Create provider and signer from stored configuration
+    async fn create_provider_and_signer(&self) -> Result<(JsonRpcProvider, Wallet), RecallError> {
+        Self::setup_provider_and_wallet(&self.config, &self.network_config).await
     }
 }
 
@@ -182,6 +184,8 @@ impl RecallBlockchain {
 impl RecallStorage for RecallBlockchain {
     async fn add_blob(&self, key: &str, data: Vec<u8>) -> Result<String, RecallError> {
         debug!("Storing blob to Recall: {}", key);
+
+        let (provider, mut signer) = self.create_provider_and_signer().await?;
 
         // Attach to the bucket
         let bucket = Bucket::attach(self.bucket_address)
@@ -203,9 +207,6 @@ impl RecallStorage for RecallBlockchain {
 
         let reader = std::io::Cursor::new(data);
 
-        // Use the Recall SDK to store the blob
-        let mut signer = self.signer.lock().await;
-
         // Create AddOptions with default values
         let add_options = recall_sdk::machine::bucket::AddOptions {
             ttl: None,
@@ -218,14 +219,7 @@ impl RecallStorage for RecallBlockchain {
         };
 
         match bucket
-            .add_reader(
-                &*self.provider,
-                &mut *signer,
-                key,
-                reader,
-                data_len,
-                add_options,
-            )
+            .add_reader(&provider, &mut signer, key, reader, data_len, add_options)
             .await
         {
             Ok(tx_result) => {
@@ -298,6 +292,8 @@ impl RecallStorage for RecallBlockchain {
     async fn has_blob(&self, key: &str) -> Result<bool, RecallError> {
         debug!("Checking if blob exists: {}", key);
 
+        let (provider, _) = self.create_provider_and_signer().await?;
+
         // Attach to the bucket
         let bucket = Bucket::attach(self.bucket_address)
             .await
@@ -312,7 +308,7 @@ impl RecallStorage for RecallBlockchain {
             height: recall_provider::query::FvmQueryHeight::Committed,
         };
 
-        match bucket.query(&*self.provider, query_options).await {
+        match bucket.query(&provider, query_options).await {
             Ok(result) => {
                 let exists = !result.objects.is_empty();
                 debug!("Blob {} exists on Recall: {}", key, exists);
@@ -329,6 +325,8 @@ impl RecallStorage for RecallBlockchain {
     async fn list_blobs(&self, prefix: &str) -> Result<Vec<String>, RecallError> {
         debug!("Listing blobs with prefix: {}", prefix);
 
+        let (provider, _) = self.create_provider_and_signer().await?;
+
         // Attach to the bucket
         let bucket = Bucket::attach(self.bucket_address)
             .await
@@ -343,7 +341,7 @@ impl RecallStorage for RecallBlockchain {
             height: recall_provider::query::FvmQueryHeight::Committed,
         };
 
-        match bucket.query(&*self.provider, query_options).await {
+        match bucket.query(&provider, query_options).await {
             Ok(result) => {
                 let mut all_blobs = Vec::new();
                 for (key_bytes, _) in result.objects {
@@ -371,20 +369,21 @@ impl RecallStorage for RecallBlockchain {
             return Err(RecallError::BlobNotFound(key.to_string()));
         }
 
+        let (provider, mut signer) = self.create_provider_and_signer().await?;
+
         // Attach to the bucket
         let bucket = Bucket::attach(self.bucket_address)
             .await
             .map_err(|e| RecallError::Operation(format!("Failed to attach to bucket: {}", e)))?;
 
         // Use the SDK to delete the object
-        let mut signer = self.signer.lock().await;
         let delete_options = recall_sdk::machine::bucket::DeleteOptions {
             broadcast_mode: recall_provider::tx::BroadcastMode::Commit,
             gas_params: Default::default(),
         };
 
         match bucket
-            .delete(&*self.provider, &mut *signer, key, delete_options)
+            .delete(&provider, &mut signer, key, delete_options)
             .await
         {
             Ok(_) => {

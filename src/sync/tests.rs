@@ -24,9 +24,7 @@ fn create_test_config() -> Config {
             secret_access_key: Some("test".to_string()),
         },
         recall: RecallConfig {
-            endpoint: "http://localhost:8080".to_string(),
             private_key: "fake-key".to_string(),
-            prefix: Some("test".to_string()),
             network: "localnet".to_string(),
             config_path: Some("networks.toml".to_string()),
             bucket: None,
