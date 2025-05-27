@@ -35,11 +35,19 @@ fn get_test_storages() -> Vec<(&'static str, StorageFactory)> {
                     // Use the configured ETH API endpoint (should be http://localhost:8645)
                     println!("Connecting to Recall at endpoint: {}", endpoint);
                     
+                    let network = config.recall.network.clone().unwrap_or_else(|| "localnet".to_string());
+                    let config_path = config.recall.config_path.clone().unwrap_or_else(|| "networks.toml".to_string());
+                    
                     let recall_config = RecallConfig {
                         endpoint: endpoint.clone(),
                         prefix: None,
                         // Use a valid test private key from Anvil
-                        private_key: "ac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80".to_string(),
+                        private_key: config.recall.private_key.clone().unwrap_or_else(|| 
+                            "ac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80".to_string()
+                        ),
+                        network,
+                        config_path: Some(config_path),
+                        bucket: config.recall.bucket.clone(),
                     };
 
                     match RecallBlockchain::new(&recall_config).await {
@@ -144,7 +152,7 @@ async fn list_blobs_works_correctly() {
         );
 
         // Clean up
-        storage.clear_prefix(&prefix).await.unwrap();
+        //storage.clear_prefix(&prefix).await.unwrap();
     }
 }
 

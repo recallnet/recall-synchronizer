@@ -26,11 +26,14 @@ pub struct S3Config {
     pub secret_access_key: Option<String>,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct RecallConfig {
     pub endpoint: String,
     pub private_key: String,
     pub prefix: Option<String>,
+    pub network: String,
+    pub config_path: Option<String>,
+    pub bucket: Option<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -43,12 +46,13 @@ pub struct SyncConfig {
     pub state_db_path: String,
 }
 
+
 pub fn load_config(path: &str) -> Result<Config> {
     let config_path = Path::new(path);
     let config_text =
         fs::read_to_string(config_path).context(format!("Failed to read config file: {}", path))?;
 
-    let config: Config = config::Config::builder()
+    let mut config: Config = config::Config::builder()
         .add_source(config::File::from_str(
             &config_text,
             config::FileFormat::Toml,
@@ -56,5 +60,23 @@ pub fn load_config(path: &str) -> Result<Config> {
         .build()?
         .try_deserialize()?;
 
+    // Apply environment variable overrides for Recall configuration
+    if let Ok(network) = std::env::var("RECALL_NETWORK") {
+        config.recall.network = network;
+    }
+    
+    if let Ok(config_file) = std::env::var("RECALL_NETWORK_FILE") {
+        config.recall.config_path = Some(config_file);
+    }
+    
+    if let Ok(private_key) = std::env::var("RECALL_PRIVATE_KEY") {
+        config.recall.private_key = private_key;
+    }
+    
+    if let Ok(bucket) = std::env::var("RECALL_BUCKET_ADDRESS") {
+        config.recall.bucket = Some(bucket);
+    }
+
     Ok(config)
 }
+
