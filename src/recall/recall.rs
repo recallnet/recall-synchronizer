@@ -343,7 +343,7 @@ impl RecallStorage for RecallBlockchain {
 
         match bucket.query(&provider, query_options).await {
             Ok(result) => {
-                let mut all_blobs = Vec::new();
+                let mut all_blobs = Vec::with_capacity(result.objects.len());
                 for (key_bytes, _) in result.objects {
                     if let Ok(key_str) = String::from_utf8(key_bytes) {
                         all_blobs.push(key_str);
@@ -405,11 +405,47 @@ impl RecallStorage for RecallBlockchain {
         // List all blobs with the prefix
         let blobs = self.list_blobs(prefix).await?;
 
+        if blobs.is_empty() {
+            debug!("No blobs found with prefix: {}", prefix);
+            return Ok(());
+        }
+
         debug!(
-            "Completed clearing operation for {} blobs with prefix: {}",
+            "Found {} blobs to delete with prefix: {}",
             blobs.len(),
             prefix
         );
+
+        // Delete each blob
+        let mut deleted_count = 0;
+        let mut failed_count = 0;
+
+        for blob_key in &blobs {
+            match self.delete_blob(blob_key).await {
+                Ok(_) => {
+                    deleted_count += 1;
+                    debug!("Deleted blob: {}", blob_key);
+                }
+                Err(e) => {
+                    failed_count += 1;
+                    warn!("Failed to delete blob {}: {}", blob_key, e);
+                }
+            }
+        }
+
+        info!(
+            "Cleared prefix '{}': {} blobs deleted, {} failed",
+            prefix, deleted_count, failed_count
+        );
+
+        if failed_count > 0 {
+            return Err(RecallError::Operation(format!(
+                "Failed to delete {} out of {} blobs",
+                failed_count,
+                blobs.len()
+            )));
+        }
+
         Ok(())
     }
 }

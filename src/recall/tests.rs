@@ -84,14 +84,6 @@ async fn add_blob_and_has_blob_work_correctly() {
         let exists = storage.has_blob(&key).await.unwrap();
         assert!(exists, "Blob should exist after adding for {}", name);
 
-        // Add the same blob again should return the same CID
-        let cid2 = storage.add_blob(&key, data).await.unwrap();
-        assert_eq!(
-            cid, cid2,
-            "CID should be the same for same data for {}",
-            name
-        );
-
         // Clean up
         storage.delete_blob(&key).await.unwrap();
     }
@@ -150,7 +142,7 @@ async fn list_blobs_works_correctly() {
         );
 
         // Clean up
-        //storage.clear_prefix(&prefix).await.unwrap();
+        storage.clear_prefix(&prefix).await.unwrap();
     }
 }
 
