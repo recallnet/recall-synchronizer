@@ -4,28 +4,26 @@
 [database]
 url = "postgresql://recall:recall_password@localhost:5432/recall_competitions"
 max_connections = 5
-connect_timeout_seconds = 3
-
-# SQLite configuration (for synchronizer state)
-[sync_storage]
-path = "data/sync_state.db"
 
 # S3 configuration
 [s3]
-endpoint_url = "https://s3.amazonaws.com"    # For local testing: "http://localhost:9000"
+endpoint = "https://s3.amazonaws.com"         # For local testing: "http://localhost:9000"
 region = "us-east-1"
+bucket = "competition-data"
 access_key_id = "YOUR_ACCESS_KEY"            # For local testing: "minioadmin"
 secret_access_key = "YOUR_SECRET_KEY"        # For local testing: "minioadmin"
-bucket_name = "competition-data"
 
 # Recall network configuration
 [recall]
-node_url = "https://node.example.com"        # For local testing: "http://localhost:8080"
-signer_key = "YOUR_PRIVATE_KEY"
+private_key = "YOUR_PRIVATE_KEY_HEX"        # 64 character hex string
+network = "mainnet"                          # Network name from networks.toml
+config_path = "networks.toml"                # Path to network configuration file
 
 # Synchronization settings
 [sync]
 interval_seconds = 60
 batch_size = 100
-max_retries = 3
+workers = 2
+retry_limit = 3
 retry_delay_seconds = 5
+state_db_path = "./sync_state.db"

@@ -16,4 +16,6 @@ secret_access_key = "minioadmin"
 
 [recall]
 enabled = false
-endpoint = "http://localhost:8545"
+network = "localnet"
+config_path = "networks.toml"
+private_key = "ac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80"
