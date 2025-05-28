@@ -17,6 +17,7 @@ config = { version = "0.13", features = ["toml"] }
 futures = "0.3"
 hex = "0.4"
 lru = "0.10"
+rand = "0.8"
 #recall_provider = "0.1.2"
 #recall_sdk = "0.1.2"
 #recall_signer = "0.1.2"
