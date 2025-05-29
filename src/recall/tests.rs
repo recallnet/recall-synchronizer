@@ -30,11 +30,7 @@ fn get_test_storages() -> Vec<(&'static str, StorageFactory)> {
             Box::new(|| {
                 Box::pin(async {
                     let config = load_test_config();
-                    let endpoint = config.recall.endpoint.clone();
-                    
-                    // Use the configured ETH API endpoint (should be http://localhost:8645)
-                    println!("Connecting to Recall at endpoint: {}", endpoint);
-                    
+
                     let network = config.recall.network.clone().unwrap_or_else(|| "localnet".to_string());
                     let config_path = config.recall.config_path.clone().unwrap_or_else(|| "networks.toml".to_string());
                     let recall_config = RecallConfig {
@@ -50,7 +46,7 @@ fn get_test_storages() -> Vec<(&'static str, StorageFactory)> {
                             Box::new(Arc::new(blockchain)) as Box<dyn RecallStorage + Send + Sync>
                         },
                         Err(e) => {
-                            panic!("Failed to connect to real Recall storage: {}\n\nMake sure the Recall container is running and accessible at {}", e, endpoint);
+                            panic!("Failed to connect to real Recall storage: {}\n\nMake sure the Recall container is running and accessible", e);
                         }
                     }
                 })

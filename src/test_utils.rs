@@ -49,8 +49,6 @@ pub struct RecallTestConfig {
     #[allow(dead_code)]
     pub enabled: bool,
     #[allow(dead_code)]
-    pub endpoint: String,
-    #[allow(dead_code)]
     pub network: Option<String>,
     #[allow(dead_code)]
     pub config_path: Option<String>,
@@ -130,10 +128,11 @@ fn default_test_config() -> TestConfig {
         },
         recall: RecallTestConfig {
             enabled: false,
-            endpoint: "http://localhost:8080".to_string(),
             network: Some("localnet".to_string()),
             config_path: Some("networks.toml".to_string()),
-            private_key: Some("ac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80".to_string()),
+            private_key: Some(
+                "ac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80".to_string(),
+            ),
             bucket: None,
         },
     }
