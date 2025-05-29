@@ -37,11 +37,7 @@ fn get_test_storages() -> Vec<(&'static str, StorageFactory)> {
                     
                     let network = config.recall.network.clone().unwrap_or_else(|| "localnet".to_string());
                     let config_path = config.recall.config_path.clone().unwrap_or_else(|| "networks.toml".to_string());
-                    
                     let recall_config = RecallConfig {
-                        // Use a valid test private key from Anvil
-                        //private_key: config.recall.private_key.clone().unwrap_or_else(|| 
-                            //"0xce38d69e9b5166baeb7ba3f9b5c231ae5e4bbf479159b723242ce77f6ba556b3".to_string()
                         private_key: "0xce38d69e9b5166baeb7ba3f9b5c231ae5e4bbf479159b723242ce77f6ba556b3".to_string(),
                         network,
                         config_path: Some(config_path),

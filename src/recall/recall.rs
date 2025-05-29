@@ -11,15 +11,17 @@ use recall_signer::{key::parse_secret_key, AccountKind, Signer, Wallet};
 use std::collections::HashMap;
 use std::fs;
 use std::str::FromStr;
+use std::sync::Arc;
 use std::time::Duration;
+use tokio::sync::Mutex;
 use tracing::{debug, info, warn};
 
 /// Real Recall blockchain implementation of the RecallStorage trait
 #[derive(Clone)]
 pub struct RecallBlockchain {
-    config: RecallConfig,
-    network_config: NetworkConfig,
     bucket_address: Address,
+    provider: Arc<JsonRpcProvider>,
+    signer: Arc<Mutex<Wallet>>,
 }
 
 impl RecallBlockchain {
@@ -171,15 +173,10 @@ impl RecallBlockchain {
             Self::get_or_create_bucket_address(config, &provider, &mut signer).await?;
 
         Ok(Self {
-            config: config.clone(),
-            network_config,
             bucket_address,
+            provider: Arc::new(provider),
+            signer: Arc::new(Mutex::new(signer)),
         })
-    }
-
-    /// Create provider and signer from stored configuration
-    async fn create_provider_and_signer(&self) -> Result<(JsonRpcProvider, Wallet), RecallError> {
-        Self::setup_provider_and_wallet(&self.config, &self.network_config).await
     }
 
     /// Execute an operation with retry logic for sequence errors
@@ -202,8 +199,13 @@ impl RecallBlockchain {
                 Ok(result) => return Ok(result),
                 Err(e) => {
                     let error_msg = e.to_string();
-                    debug!("{}: Error on attempt {}: {}", operation_name, attempt + 1, error_msg);
-                    
+                    debug!(
+                        "{}: Error on attempt {}: {}",
+                        operation_name,
+                        attempt + 1,
+                        error_msg
+                    );
+
                     // Check if this is a sequence error
                     if error_msg.contains("expected sequence") && error_msg.contains("got") {
                         debug!("{}: Detected sequence error, will retry", operation_name);
@@ -211,10 +213,9 @@ impl RecallBlockchain {
                             // Calculate exponential backoff with jitter
                             use rand::Rng;
                             let jitter = rand::thread_rng().gen_range(0..500);
-                            let delay = Duration::from_millis(
-                                BASE_DELAY_MS * 2u64.pow(attempt) + jitter
-                            );
-                            
+                            let delay =
+                                Duration::from_millis(BASE_DELAY_MS * 2u64.pow(attempt) + jitter);
+
                             info!(
                                 "{}: Sequence error on attempt {}/{}: {}. Retrying in {:?}...",
                                 operation_name,
@@ -223,27 +224,25 @@ impl RecallBlockchain {
                                 error_msg,
                                 delay
                             );
-                            
+
                             tokio::time::sleep(delay).await;
                             continue;
                         }
                     }
-                    
+
                     // Not a sequence error or max retries reached
                     return Err(RecallError::Operation(format!(
                         "{} failed: {}",
-                        operation_name,
-                        e
+                        operation_name, e
                     )));
                 }
             }
         }
-        
+
         warn!("{}: Failed after {} retries", operation_name, MAX_RETRIES);
         Err(RecallError::Operation(format!(
             "{} failed after {} retries",
-            operation_name,
-            MAX_RETRIES
+            operation_name, MAX_RETRIES
         )))
     }
 }
@@ -269,15 +268,15 @@ impl RecallStorage for RecallBlockchain {
         let bucket_address = self.bucket_address;
 
         // Wrap the bucket operation in retry logic
-        let tx_result = self.retry_on_sequence_error(
-            &format!("add_blob({})", key),
-            || async {
-                let (provider, mut signer) = self.create_provider_and_signer().await
-                    .map_err(|e| anyhow::anyhow!(e.to_string()))?;
+        let provider = Arc::clone(&self.provider);
+        let signer = Arc::clone(&self.signer);
+
+        let tx_result = self
+            .retry_on_sequence_error(&format!("add_blob({})", key), || async {
+                let mut signer_guard = signer.lock().await;
 
                 // Attach to the bucket
-                let bucket = Bucket::attach(bucket_address)
-                    .await?;
+                let bucket = Bucket::attach(bucket_address).await?;
 
                 let reader = std::io::Cursor::new(data.clone());
 
@@ -293,14 +292,21 @@ impl RecallStorage for RecallBlockchain {
                 };
 
                 bucket
-                    .add_reader(&provider, &mut signer, &key_owned, reader, data_len, add_options)
+                    .add_reader(
+                        &*provider,
+                        &mut *signer_guard,
+                        &key_owned,
+                        reader,
+                        data_len,
+                        add_options,
+                    )
                     .await
                     .map_err(|e| {
                         debug!("SDK error in add_blob: {}", e);
                         e
                     })
-            }
-        ).await;
+            })
+            .await;
 
         match tx_result {
             Ok(tx_result) => {
@@ -369,8 +375,6 @@ impl RecallStorage for RecallBlockchain {
     async fn has_blob(&self, key: &str) -> Result<bool, RecallError> {
         debug!("Checking if blob exists: {}", key);
 
-        let (provider, _) = self.create_provider_and_signer().await?;
-
         // Attach to the bucket
         let bucket = Bucket::attach(self.bucket_address)
             .await
@@ -385,7 +389,7 @@ impl RecallStorage for RecallBlockchain {
             height: recall_provider::query::FvmQueryHeight::Committed,
         };
 
-        match bucket.query(&provider, query_options).await {
+        match bucket.query(&*self.provider, query_options).await {
             Ok(result) => {
                 let exists = !result.objects.is_empty();
                 debug!("Blob {} exists on Recall: {}", key, exists);
@@ -402,8 +406,6 @@ impl RecallStorage for RecallBlockchain {
     async fn list_blobs(&self, prefix: &str) -> Result<Vec<String>, RecallError> {
         debug!("Listing blobs with prefix: {}", prefix);
 
-        let (provider, _) = self.create_provider_and_signer().await?;
-
         // Attach to the bucket
         let bucket = Bucket::attach(self.bucket_address)
             .await
@@ -418,7 +420,7 @@ impl RecallStorage for RecallBlockchain {
             height: recall_provider::query::FvmQueryHeight::Committed,
         };
 
-        match bucket.query(&provider, query_options).await {
+        match bucket.query(&*self.provider, query_options).await {
             Ok(result) => {
                 let mut all_blobs = Vec::with_capacity(result.objects.len());
                 for (key_bytes, _) in result.objects {
@@ -448,17 +450,16 @@ impl RecallStorage for RecallBlockchain {
 
         let key_owned = key.to_string();
         let bucket_address = self.bucket_address;
+        let provider = Arc::clone(&self.provider);
+        let signer = Arc::clone(&self.signer);
 
         // Wrap the bucket operation in retry logic
-        let result = self.retry_on_sequence_error(
-            &format!("delete_blob({})", key),
-            || async {
-                let (provider, mut signer) = self.create_provider_and_signer().await
-                    .map_err(|e| anyhow::anyhow!(e.to_string()))?;
+        let result = self
+            .retry_on_sequence_error(&format!("delete_blob({})", key), || async {
+                let mut signer_guard = signer.lock().await;
 
                 // Attach to the bucket
-                let bucket = Bucket::attach(bucket_address)
-                    .await?;
+                let bucket = Bucket::attach(bucket_address).await?;
 
                 // Use the SDK to delete the object
                 let delete_options = recall_sdk::machine::bucket::DeleteOptions {
@@ -467,10 +468,10 @@ impl RecallStorage for RecallBlockchain {
                 };
 
                 bucket
-                    .delete(&provider, &mut signer, &key_owned, delete_options)
+                    .delete(&*provider, &mut *signer_guard, &key_owned, delete_options)
                     .await
-            }
-        ).await;
+            })
+            .await;
 
         match result {
             Ok(_) => {
@@ -587,6 +588,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[ignore = "Requires running Recall network"]
     async fn test_bucket_list_command() -> Result<()> {
         let (provider, wallet) = setup_wallet_and_provider().await?;
 
@@ -599,6 +601,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[ignore = "Requires running Recall network"]
     async fn test_bucket_create_command() -> Result<()> {
         let (provider, mut wallet) = setup_wallet_and_provider().await?;
 
@@ -615,8 +618,7 @@ mod tests {
                 // Wait a moment for the transaction to be processed
                 tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
 
-                let metadata =
-                    Bucket::list(&provider, &wallet, FvmQueryHeight::Committed).await?;
+                let metadata = Bucket::list(&provider, &wallet, FvmQueryHeight::Committed).await?;
 
                 println!("All buckets:");
                 for meta in &metadata {
