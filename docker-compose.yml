@@ -34,23 +34,6 @@ services:
       timeout: 5s
       retries: 5
 
-  recall:
-    image: textile/recall-localnet:latest
-    ports:
-      - "127.0.0.1:8545:8545"  # Ethereum RPC port
-      - "127.0.0.1:8645:8645"  # Recall EVM RPC port
-      - "127.0.0.1:8001:8001"  # Object API port
-      - "127.0.0.1:26657:26657"  # CometBFT RPC port
-    volumes:
-      - recall_data:/data
-    privileged: true  # Required for Docker-in-Docker
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8545"]
-      interval: 5s
-      timeout: 5s
-      retries: 5
-
 volumes:
   postgres_data:
   minio_data:
-  recall_data:

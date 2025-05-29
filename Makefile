@@ -1,4 +1,4 @@
-.PHONY: all build test test-fast test-coverage clean docker-up docker-down init-db fmt lint
+.PHONY: all build test test-fast test-coverage clean docker-up docker-down init-db fmt lint start-recall stop-recall
 
 # Default target
 all: build
@@ -29,7 +29,7 @@ lint:
 	cargo clippy --all-targets --all-features -- -D warnings
 
 # Start Docker containers for integration tests
-docker-up:
+docker-up: stop-recall
 	@docker compose up -d
 	# Wait for PostgreSQL to be ready
 	@docker compose exec -T postgres pg_isready -U recall -q || sleep 5
@@ -37,8 +37,8 @@ docker-up:
 	@docker compose exec -T postgres pg_isready -U recall -q || (echo "Error: PostgreSQL failed to start" && exit 1)
 	# Wait for MinIO to be ready
 	@docker compose exec -T minio mc --version > /dev/null 2>&1 || sleep 5
-	# Wait for Recall to be ready
-	@docker compose ps recall | grep -q "healthy" || sleep 10
+	# Start Recall container
+	@$(MAKE) start-recall
 	@echo "All services are ready"
 
 # Initialize test database
@@ -47,8 +47,16 @@ init-db:
 	@docker compose exec -T postgres psql -U recall -d recall_competitions -f /docker-entrypoint-initdb.d/init.sql >/dev/null 2>&1
 
 # Stop Docker containers
-docker-down:
+docker-down: stop-recall
 	@docker compose down
+
+# Start Recall container
+start-recall:
+	@./scripts/start-recall.sh
+
+# Stop Recall container
+stop-recall:
+	@./scripts/stop-recall.sh
 
 # Clean the project
 clean: docker-down
