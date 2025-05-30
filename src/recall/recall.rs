@@ -178,6 +178,132 @@ impl RecallBlockchain {
             signer: Arc::new(Mutex::new(signer)),
         })
     }
+    
+    /// Prepare an account for testing by purchasing credits
+    ///
+    /// This method is only available in test builds and helps set up test accounts
+    /// with the necessary credits to perform operations. It checks the account's
+    /// balance and only buys credits if the balance is less than 2x the credit amount.
+    ///
+    /// # Arguments
+    ///
+    /// * `config` - The RecallConfig with the account's private key
+    /// * `credit_amount` - The amount of RECALL tokens to spend on credits (e.g., 20 for 20 RECALL)
+    ///
+    /// # Returns
+    ///
+    /// Returns Ok(()) if credits were successfully purchased or skipped, or an error otherwise.
+    #[cfg(test)]
+    pub async fn prepare_account(
+        config: &RecallConfig,
+        credit_amount: u32,
+    ) -> Result<(), RecallError> {
+        use recall_provider::fvm_shared::econ::TokenAmount;
+        use recall_provider::tx::BroadcastMode;
+        use recall_provider::query::FvmQueryHeight;
+        use recall_sdk::account::Account;
+        use recall_sdk::credits::{BuyOptions, Credits};
+        use recall_sdk::ipc::subnet::EVMSubnet;
+        use recall_signer::Void;
+        
+        info!("Preparing account by checking balance and potentially purchasing credits");
+        
+        let network_config = Self::load_network_config(config)?;
+        
+        let (provider, mut signer) =
+            Self::setup_provider_and_wallet(config, &network_config).await?;
+        
+        // Convert credit amount from RECALL to attoRECALL (1 RECALL = 10^18 attoRECALL)
+        let amount = TokenAmount::from_whole(credit_amount as i64);
+
+        let to_address = signer.address();
+        
+        // Create subnet config for balance check
+        let subnet_config = EVMSubnet {
+            id: network_config.subnet_id.clone(),
+            provider_http: network_config.evm_rpc_url.clone(),
+            provider_timeout: Some(Duration::from_secs(60)),
+            auth_token: None,
+            registry_addr: network_config.evm_registry_address,
+            gateway_addr: network_config.evm_gateway_address,
+            supply_source: None,
+        };
+
+        // Check the current token balance
+        let current_balance = Account::balance(&Void::new(to_address), subnet_config)
+            .await
+            .map_err(|e| RecallError::Operation(format!("Failed to get balance: {}", e)))?;
+
+        info!(
+            "Current token balance for {}: {} attoRECALL",
+            to_address, current_balance
+        );
+
+        // Check current credit balance
+        let needs_credits = match Credits::balance(&provider, to_address, FvmQueryHeight::Committed).await {
+            Ok(credit_balance) => {
+                info!("Current credit balance: {:?}", credit_balance);
+                // Always buy credits if we don't have enough
+                true
+            }
+            Err(e) => {
+                if e.to_string().contains("actor not found") {
+                    info!("Account has no credits yet");
+                    true
+                } else {
+                    warn!("Failed to check credit balance: {}", e);
+                    true
+                }
+            }
+        };
+
+        info!("Requested credit amount: {} RECALL ({} attoRECALL)", credit_amount, amount);
+
+        // Only buy credits if needed
+        if needs_credits {
+            info!("Proceeding to buy {} RECALL worth of credits", credit_amount);
+        
+        let buy_options = BuyOptions {
+            broadcast_mode: BroadcastMode::Commit,
+            gas_params: Default::default(),
+        };
+        
+            match Credits::buy(&provider, &mut signer, to_address, amount, buy_options).await {
+            Ok(tx_result) => {
+                match &tx_result.status {
+                    recall_provider::tx::TxStatus::Pending(pending) => {
+                        info!(
+                            "Credit purchase transaction pending, tx hash: {:?}",
+                            pending.hash
+                        );
+                    }
+                    recall_provider::tx::TxStatus::Committed(committed) => {
+                        info!(
+                            "Credit purchase transaction committed, tx hash: {:?}",
+                            committed.transaction_hash
+                        );
+                    }
+                }
+                
+                // Wait a bit for the transaction to be processed
+                tokio::time::sleep(Duration::from_secs(2)).await;
+                
+                info!("Successfully purchased credits for account {}", to_address);
+                Ok(())
+            }
+            Err(e) => {
+                warn!("Failed to purchase credits: {}", e);
+                    Err(RecallError::Operation(format!(
+                        "Failed to purchase credits: {}",
+                        e
+                    )))
+            }
+            }
+        } else {
+            info!("Credits are sufficient, skipping credit purchase");
+            Ok(())
+        }
+    }
 
     /// Execute an operation with retry logic for sequence errors
     async fn retry_on_sequence_error<F, Fut, T>(

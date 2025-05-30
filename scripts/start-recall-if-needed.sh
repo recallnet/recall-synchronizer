@@ -1,19 +1,35 @@
 #!/bin/bash
 
+# Start recall container only if it's not already running
+
 # Configuration
-CONTAINER_NAME="recall-localnet"
+CONTAINER_NAME="${CONTAINER_NAME:-recall-localnet}"
 RECALL_LOCALNET_IMAGE="${RECALL_LOCALNET_IMAGE:-textile/recall-localnet:latest}"
 RECALL_NETWORK_CONFIG_FILE="${RECALL_NETWORK_CONFIG_FILE:-networks.toml}"
 TEST_WALLETS_FILE="${TEST_WALLETS_FILE:-test-wallets.json}"
-ETH_PER_WALLET="${ETH_PER_WALLET:-100000}"
+ETH_PER_WALLET="${ETH_PER_WALLET:-10000000}"
 
-# Stop existing container if running
-echo "Stopping existing recall-localnet container if running..."
-docker stop $CONTAINER_NAME 2>/dev/null || true
-docker rm $CONTAINER_NAME 2>/dev/null || true
+# Check if container is already running
+if docker ps --format '{{.Names}}' | grep -q "^${CONTAINER_NAME}$"; then
+    echo "Recall-localnet container is already running."
+    
+    # Check if networks.toml exists
+    if [ ! -f "$RECALL_NETWORK_CONFIG_FILE" ]; then
+        echo "Copying networks.toml from running container..."
+        docker cp $CONTAINER_NAME:/workdir/localnet-data/networks.toml $RECALL_NETWORK_CONFIG_FILE
+        
+        if [ $? -ne 0 ]; then
+            echo "Warning: Failed to copy networks.toml from container"
+        fi
+    fi
+    
+    exit 0
+fi
+
+# Container is not running, start it
+echo "Recall-localnet container is not running. Starting it..."
 
 # Start the recall container
-echo "Starting recall-localnet container..."
 docker run --privileged --rm -d --name $CONTAINER_NAME \
     -p 8545:8545 \
     -p 8645:8645 \
@@ -52,20 +68,20 @@ echo "Recall-localnet is ready and networks.toml has been copied!"
 
 # Fund test wallets if jq is available
 if command -v jq &> /dev/null; then
-    echo "Funding test wallets..."
+    echo "Checking if test wallets need funding..."
     
     # Check if test-wallets.json exists
     if [ ! -f "$TEST_WALLETS_FILE" ]; then
-        echo "Error: $TEST_WALLETS_FILE not found."
-        echo "Please ensure test-wallets.json exists in the project root."
-        exit 1
+        echo "Warning: $TEST_WALLETS_FILE not found."
+        echo "Tests may fail if wallets are not funded."
+        exit 0
     fi
     
     # Check if fund-wallet.sh exists
     FUND_WALLET_SCRIPT="./scripts/fund-wallet.sh"
     if [ ! -x "$FUND_WALLET_SCRIPT" ]; then
-        echo "Error: $FUND_WALLET_SCRIPT not found or not executable."
-        exit 1
+        echo "Warning: $FUND_WALLET_SCRIPT not found or not executable."
+        exit 0
     fi
     
     # Read addresses from test-wallets.json and fund them

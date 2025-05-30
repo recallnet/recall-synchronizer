@@ -16,6 +16,8 @@ services:
       interval: 5s
       timeout: 5s
       retries: 5
+    networks:
+      - recall-sync-network
 
   minio:
     image: minio/minio
@@ -33,7 +35,13 @@ services:
       interval: 5s
       timeout: 5s
       retries: 5
+    networks:
+      - recall-sync-network
 
 volumes:
   postgres_data:
   minio_data:
+
+networks:
+  recall-sync-network:
+    driver: bridge

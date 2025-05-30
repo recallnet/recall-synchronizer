@@ -5,6 +5,12 @@ use std::fs;
 use std::path::Path;
 use uuid::Uuid;
 
+// Re-export wallet pool functionality
+#[cfg(test)]
+pub mod wallet_pool;
+#[cfg(test)]
+pub use wallet_pool::get_next_wallet;
+
 #[derive(Debug, Deserialize)]
 pub struct TestConfig {
     pub database: DatabaseTestConfig,

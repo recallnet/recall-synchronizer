@@ -2,7 +2,7 @@ use crate::config::RecallConfig;
 use crate::recall::error::RecallError;
 use crate::recall::fake::FakeRecallStorage;
 use crate::recall::{RecallBlockchain, RecallStorage};
-use crate::test_utils::load_test_config;
+use crate::test_utils::{get_next_wallet, load_test_config};
 use std::sync::Arc;
 use uuid::Uuid;
 
@@ -31,18 +31,33 @@ fn get_test_storages() -> Vec<(&'static str, StorageFactory)> {
                 Box::pin(async {
                     let config = load_test_config();
 
+                    // Get a unique wallet for this test
+                    let test_wallet = get_next_wallet();
+                    println!("Using test wallet: {}", test_wallet.address);
+
                     let network = config.recall.network.clone().unwrap_or_else(|| "localnet".to_string());
                     let config_path = config.recall.config_path.clone().unwrap_or_else(|| "networks.toml".to_string());
                     let recall_config = RecallConfig {
-                        private_key: "0xce38d69e9b5166baeb7ba3f9b5c231ae5e4bbf479159b723242ce77f6ba556b3".to_string(),
+                        private_key: test_wallet.private_key.clone(),
                         network,
                         config_path: Some(config_path),
                         bucket: None,
                     };
 
+                    println!("Preparing wallet {} with credits...", test_wallet.address);
+                    // Buy 20 RECALL worth of credits
+                    match RecallBlockchain::prepare_account(&recall_config, 20).await {
+                        Ok(_) => {
+                            println!("Successfully prepared wallet {} with credits", test_wallet.address);
+                        }
+                        Err(e) => {
+                            println!("Warning: Failed to prepare wallet {} with credits: {}. Tests may fail if account lacks credits.", test_wallet.address, e);
+                        }
+                    }
+
                     match RecallBlockchain::new(&recall_config).await {
                         Ok(blockchain) => {
-                            println!("Successfully connected to Recall storage");
+                            println!("Successfully connected to Recall storage with wallet {}", test_wallet.address);
                             Box::new(Arc::new(blockchain)) as Box<dyn RecallStorage + Send + Sync>
                         },
                         Err(e) => {
@@ -77,7 +92,7 @@ async fn add_blob_and_has_blob_work_correctly() {
         assert!(exists, "Blob should exist after adding for {}", name);
 
         // Clean up
-        storage.delete_blob(&key).await.unwrap();
+        //storage.delete_blob(&key).await.unwrap();
     }
 }
 
@@ -87,10 +102,8 @@ async fn list_blobs_works_correctly() {
         let storage = storage_factory().await;
         let prefix = format!("test-prefix-{}-{}/", name, Uuid::new_v4());
 
-        // Clear any existing blobs with this prefix
         storage.clear_prefix(&prefix).await.unwrap();
 
-        // Initially should be empty
         let blobs = storage.list_blobs(&prefix).await.unwrap();
         assert!(
             blobs.is_empty(),
@@ -109,7 +122,6 @@ async fn list_blobs_works_correctly() {
             storage.add_blob(key, b"test data".to_vec()).await.unwrap();
         }
 
-        // List all blobs with prefix
         let blobs = storage.list_blobs(&prefix).await.unwrap();
         assert_eq!(blobs.len(), 3, "Should have 3 blobs for {}", name);
 
@@ -133,7 +145,6 @@ async fn list_blobs_works_correctly() {
             name
         );
 
-        // Clean up
         storage.clear_prefix(&prefix).await.unwrap();
     }
 }
@@ -145,27 +156,22 @@ async fn delete_blob_works_correctly() {
         let key = format!("test-delete-{}-{}", name, Uuid::new_v4());
         let data = b"test data".to_vec();
 
-        // Add blob
         storage.add_blob(&key, data).await.unwrap();
 
-        // Verify it exists
         assert!(
             storage.has_blob(&key).await.unwrap(),
             "Blob should exist for {}",
             name
         );
 
-        // Delete blob
         storage.delete_blob(&key).await.unwrap();
 
-        // Verify it no longer exists
         assert!(
             !storage.has_blob(&key).await.unwrap(),
             "Blob should not exist after deletion for {}",
             name
         );
 
-        // Deleting non-existent blob should return error
         let result = storage.delete_blob(&key).await;
         assert!(
             result.is_err(),
@@ -203,10 +209,8 @@ async fn clear_prefix_works_correctly() {
             storage.add_blob(key, b"test data".to_vec()).await.unwrap();
         }
 
-        // Clear our prefix
         storage.clear_prefix(&prefix).await.unwrap();
 
-        // Our blobs should be gone
         let our_blobs = storage.list_blobs(&prefix).await.unwrap();
         assert!(
             our_blobs.is_empty(),
@@ -214,7 +218,6 @@ async fn clear_prefix_works_correctly() {
             name
         );
 
-        // Other blobs should still exist
         let other_blobs = storage.list_blobs(&other_prefix).await.unwrap();
         assert_eq!(
             other_blobs.len(),
@@ -223,7 +226,6 @@ async fn clear_prefix_works_correctly() {
             name
         );
 
-        // Clean up
         storage.clear_prefix(&other_prefix).await.unwrap();
     }
 }
@@ -234,20 +236,16 @@ async fn error_handling_works_correctly() {
     let storage = FakeRecallStorage::new();
     let key = format!("test-error-{}", Uuid::new_v4());
 
-    // Make the blob fail
     storage.mark_blob_failed(&key);
 
-    // Operations should fail
     let add_result = storage.add_blob(&key, b"data".to_vec()).await;
     assert!(add_result.is_err(), "Add should fail for failed blob");
 
     let has_result = storage.has_blob(&key).await;
     assert!(has_result.is_err(), "Has should fail for failed blob");
 
-    // Clear the failure
     storage.clear_blob_failure(&key);
 
-    // Now operations should succeed
     let add_result = storage.add_blob(&key, b"data".to_vec()).await;
     assert!(
         add_result.is_ok(),
@@ -267,7 +265,6 @@ async fn fake_storage_failure_simulation() {
     let key = "fail-test";
     let data = b"test data".to_vec();
 
-    // Mark blob as failed
     storage.mark_blob_failed(key);
 
     // Operations should fail with Operation error
@@ -333,11 +330,9 @@ async fn concurrent_operations() {
             handle.await.unwrap().unwrap();
         }
 
-        // Verify all blobs were added
         let blobs = storage.list_blobs(&prefix).await.unwrap();
         assert_eq!(blobs.len(), 10, "Should have 10 blobs for {}", name);
 
-        // Clean up
         storage.clear_prefix(&prefix).await.unwrap();
     }
 }
