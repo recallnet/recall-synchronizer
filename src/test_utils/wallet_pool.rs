@@ -138,9 +138,7 @@ mod tests {
         let wallet_count = pool.wallet_count();
 
         // Spawn multiple threads that get wallets
-        let handles: Vec<_> = (0..10)
-            .map(|_| thread::spawn(move || get_next_wallet()))
-            .collect();
+        let handles: Vec<_> = (0..10).map(|_| thread::spawn(get_next_wallet)).collect();
 
         // Collect results
         let wallets: Vec<_> = handles.into_iter().map(|h| h.join().unwrap()).collect();

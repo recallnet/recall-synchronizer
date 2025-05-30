@@ -84,15 +84,12 @@ impl SyncJob {
         );
 
         // Upload the object to Recall
-        let recall_id = recall_storage
+        recall_storage
             .add_blob(object_key, object_data.to_vec())
             .await
             .map_err(|e| JobError::RecallError(e.to_string()))?;
 
-        info!(
-            "Successfully uploaded object to Recall: {} -> {}",
-            object_key, recall_id
-        );
+        info!("Successfully uploaded object to Recall: {}", object_key);
 
         // Update the sync status to Complete
         sync_storage

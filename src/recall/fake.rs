@@ -9,7 +9,6 @@ use std::sync::{Arc, Mutex};
 #[derive(Clone)]
 pub struct FakeRecallStorage {
     data: Arc<Mutex<HashMap<String, Vec<u8>>>>,
-    cids: Arc<Mutex<HashMap<String, String>>>,
     fail_blobs: Arc<Mutex<HashSet<String>>>,
     #[cfg_attr(not(test), allow(dead_code))]
     prefixes: Arc<Mutex<HashSet<String>>>,
@@ -21,7 +20,6 @@ impl FakeRecallStorage {
     pub fn new() -> Self {
         FakeRecallStorage {
             data: Arc::new(Mutex::new(HashMap::new())),
-            cids: Arc::new(Mutex::new(HashMap::new())),
             fail_blobs: Arc::new(Mutex::new(HashSet::new())),
             prefixes: Arc::new(Mutex::new(HashSet::new())),
         }
@@ -76,7 +74,7 @@ impl FakeRecallStorage {
 
 #[async_trait]
 impl RecallStorage for FakeRecallStorage {
-    async fn add_blob(&self, key: &str, data: Vec<u8>) -> Result<String, RecallError> {
+    async fn add_blob(&self, key: &str, data: Vec<u8>) -> Result<(), RecallError> {
         let fail_blobs = self.fail_blobs.lock().unwrap();
         if fail_blobs.contains(key) {
             return Err(RecallError::Operation(format!(
@@ -86,14 +84,8 @@ impl RecallStorage for FakeRecallStorage {
         }
         drop(fail_blobs);
 
-        // Generate a fake CID based on key and data length
-        let fake_cid = format!("bafybeifake{}len{}", key.len(), data.len());
-
         let mut storage_data = self.data.lock().unwrap();
-        let mut cids = self.cids.lock().unwrap();
-
         storage_data.insert(key.to_string(), data);
-        cids.insert(key.to_string(), fake_cid.clone());
 
         // Track prefix
         let mut prefixes = self.prefixes.lock().unwrap();
@@ -101,7 +93,7 @@ impl RecallStorage for FakeRecallStorage {
             prefixes.insert(key[..=pos].to_string());
         }
 
-        Ok(fake_cid)
+        Ok(())
     }
 
     async fn has_blob(&self, key: &str) -> Result<bool, RecallError> {
@@ -131,10 +123,8 @@ impl RecallStorage for FakeRecallStorage {
     #[cfg(test)]
     async fn delete_blob(&self, key: &str) -> Result<(), RecallError> {
         let mut storage_data = self.data.lock().unwrap();
-        let mut cids = self.cids.lock().unwrap();
 
         if storage_data.remove(key).is_some() {
-            cids.remove(key);
             Ok(())
         } else {
             Err(RecallError::BlobNotFound(key.to_string()))
@@ -144,7 +134,6 @@ impl RecallStorage for FakeRecallStorage {
     #[cfg(test)]
     async fn clear_prefix(&self, prefix: &str) -> Result<(), RecallError> {
         let mut storage_data = self.data.lock().unwrap();
-        let mut cids = self.cids.lock().unwrap();
 
         let keys_to_remove: Vec<String> = storage_data
             .keys()
@@ -154,7 +143,6 @@ impl RecallStorage for FakeRecallStorage {
 
         for key in keys_to_remove {
             storage_data.remove(&key);
-            cids.remove(&key);
         }
 
         Ok(())

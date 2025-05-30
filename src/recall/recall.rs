@@ -178,7 +178,7 @@ impl RecallBlockchain {
             signer: Arc::new(Mutex::new(signer)),
         })
     }
-    
+
     /// Prepare an account for testing by purchasing credits
     ///
     /// This method is only available in test builds and helps set up test accounts
@@ -199,25 +199,25 @@ impl RecallBlockchain {
         credit_amount: u32,
     ) -> Result<(), RecallError> {
         use recall_provider::fvm_shared::econ::TokenAmount;
-        use recall_provider::tx::BroadcastMode;
         use recall_provider::query::FvmQueryHeight;
+        use recall_provider::tx::BroadcastMode;
         use recall_sdk::account::Account;
         use recall_sdk::credits::{BuyOptions, Credits};
         use recall_sdk::ipc::subnet::EVMSubnet;
         use recall_signer::Void;
-        
+
         info!("Preparing account by checking balance and potentially purchasing credits");
-        
+
         let network_config = Self::load_network_config(config)?;
-        
+
         let (provider, mut signer) =
             Self::setup_provider_and_wallet(config, &network_config).await?;
-        
+
         // Convert credit amount from RECALL to attoRECALL (1 RECALL = 10^18 attoRECALL)
         let amount = TokenAmount::from_whole(credit_amount as i64);
 
         let to_address = signer.address();
-        
+
         // Create subnet config for balance check
         let subnet_config = EVMSubnet {
             id: network_config.subnet_id.clone(),
@@ -240,64 +240,71 @@ impl RecallBlockchain {
         );
 
         // Check current credit balance
-        let needs_credits = match Credits::balance(&provider, to_address, FvmQueryHeight::Committed).await {
-            Ok(credit_balance) => {
-                info!("Current credit balance: {:?}", credit_balance);
-                // Always buy credits if we don't have enough
-                true
-            }
-            Err(e) => {
-                if e.to_string().contains("actor not found") {
-                    info!("Account has no credits yet");
-                    true
-                } else {
-                    warn!("Failed to check credit balance: {}", e);
+        let needs_credits =
+            match Credits::balance(&provider, to_address, FvmQueryHeight::Committed).await {
+                Ok(credit_balance) => {
+                    info!("Current credit balance: {:?}", credit_balance);
+                    // Always buy credits if we don't have enough
                     true
                 }
-            }
-        };
+                Err(e) => {
+                    if e.to_string().contains("actor not found") {
+                        info!("Account has no credits yet");
+                        true
+                    } else {
+                        warn!("Failed to check credit balance: {}", e);
+                        true
+                    }
+                }
+            };
 
-        info!("Requested credit amount: {} RECALL ({} attoRECALL)", credit_amount, amount);
+        info!(
+            "Requested credit amount: {} RECALL ({} attoRECALL)",
+            credit_amount, amount
+        );
 
         // Only buy credits if needed
         if needs_credits {
-            info!("Proceeding to buy {} RECALL worth of credits", credit_amount);
-        
-        let buy_options = BuyOptions {
-            broadcast_mode: BroadcastMode::Commit,
-            gas_params: Default::default(),
-        };
-        
+            info!(
+                "Proceeding to buy {} RECALL worth of credits",
+                credit_amount
+            );
+
+            let buy_options = BuyOptions {
+                broadcast_mode: BroadcastMode::Commit,
+                gas_params: Default::default(),
+            };
+
             match Credits::buy(&provider, &mut signer, to_address, amount, buy_options).await {
-            Ok(tx_result) => {
-                match &tx_result.status {
-                    recall_provider::tx::TxStatus::Pending(pending) => {
-                        info!(
-                            "Credit purchase transaction pending, tx hash: {:?}",
-                            pending.hash
-                        );
+                Ok(tx_result) => {
+                    match &tx_result.status {
+                        recall_provider::tx::TxStatus::Pending(pending) => {
+                            info!(
+                                "Credit purchase transaction pending, tx hash: {:?}",
+                                pending.hash
+                            );
+                        }
+                        recall_provider::tx::TxStatus::Committed(committed) => {
+                            info!(
+                                "Credit purchase transaction committed, tx hash: {:?}",
+                                committed.transaction_hash
+                            );
+                        }
                     }
-                    recall_provider::tx::TxStatus::Committed(committed) => {
-                        info!(
-                            "Credit purchase transaction committed, tx hash: {:?}",
-                            committed.transaction_hash
-                        );
-                    }
+
+                    // Wait a bit for the transaction to be processed
+                    tokio::time::sleep(Duration::from_secs(2)).await;
+
+                    info!("Successfully purchased credits for account {}", to_address);
+                    Ok(())
                 }
-                
-                // Wait a bit for the transaction to be processed
-                tokio::time::sleep(Duration::from_secs(2)).await;
-                
-                info!("Successfully purchased credits for account {}", to_address);
-                Ok(())
-            }
-            Err(e) => {
-                warn!("Failed to purchase credits: {}", e);
+                Err(e) => {
+                    warn!("Failed to purchase credits: {}", e);
                     Err(RecallError::Operation(format!(
                         "Failed to purchase credits: {}",
                         e
                     )))
-            }
+                }
             }
         } else {
             info!("Credits are sufficient, skipping credit purchase");
@@ -375,18 +382,8 @@ impl RecallBlockchain {
 
 #[async_trait]
 impl RecallStorage for RecallBlockchain {
-    async fn add_blob(&self, key: &str, data: Vec<u8>) -> Result<String, RecallError> {
+    async fn add_blob(&self, key: &str, data: Vec<u8>) -> Result<(), RecallError> {
         debug!("Storing blob to Recall: {}", key);
-
-        // Generate a content identifier based on the data before moving it
-        let mut hash_val = 0u64;
-        for (i, &byte) in data.iter().enumerate() {
-            hash_val = hash_val
-                .wrapping_mul(31)
-                .wrapping_add(byte as u64)
-                .wrapping_add(i as u64);
-        }
-        let content_id = format!("recall-{:016x}", hash_val);
 
         // Create an async reader from the data
         let data_len = data.len() as u64;
@@ -460,20 +457,10 @@ impl RecallStorage for RecallBlockchain {
                     }
                 };
 
-                // Use the pre-computed content ID
-                let cid = content_id.clone();
+                println!("Successfully stored blob to Recall: {}", key);
+                info!("Successfully stored blob to Recall: {}", key);
 
-                println!(
-                    "Successfully stored blob to Recall: {} with CID: {}",
-                    key, cid
-                );
-                info!(
-                    "Successfully stored blob to Recall: {} with CID: {}",
-                    key, cid
-                );
-
-                debug!("Blob {} stored with CID: {}", key, cid);
-                Ok(cid)
+                Ok(())
             }
             Err(e) => {
                 println!("Failed to store blob to Recall: {}", e);
@@ -483,12 +470,9 @@ impl RecallStorage for RecallBlockchain {
                     || e.to_string().contains("response error")
                 {
                     warn!("Recall network appears to be unavailable: {}", e);
-                    warn!("Returning a test CID for development");
+                    warn!("Continuing without error for development");
 
-                    // For testing, return a generated CID
-                    let cid = content_id.clone();
-                    info!("Generated test CID: {} for key: {}", cid, key);
-                    Ok(cid)
+                    Ok(())
                 } else {
                     // For other errors, propagate them
                     warn!("Failed to store blob to Recall: {}", e);

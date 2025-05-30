@@ -9,8 +9,7 @@ pub trait RecallStorage: Send + Sync + 'static {
     ///
     /// * `key` - The key/path for the blob
     /// * `data` - The blob data to store
-    /// Returns the CID (Content Identifier) of the stored blob
-    async fn add_blob(&self, key: &str, data: Vec<u8>) -> Result<String, RecallError>;
+    async fn add_blob(&self, key: &str, data: Vec<u8>) -> Result<(), RecallError>;
 
     /// Check if a blob exists on the Recall network
     ///
@@ -37,7 +36,7 @@ pub trait RecallStorage: Send + Sync + 'static {
 /// The Arc wrapper provides thread-safe reference counting.
 #[async_trait]
 impl<T: RecallStorage + ?Sized> RecallStorage for Arc<T> {
-    async fn add_blob(&self, key: &str, data: Vec<u8>) -> Result<String, RecallError> {
+    async fn add_blob(&self, key: &str, data: Vec<u8>) -> Result<(), RecallError> {
         (**self).add_blob(key, data).await
     }
 

@@ -156,11 +156,8 @@ impl<D: Database, S: SyncStorage, ST: Storage, RS: RecallStorage> Synchronizer<D
                         .add_blob(&object.object_key, data.to_vec())
                         .await
                     {
-                        Ok(recall_id) => {
-                            info!(
-                                "Successfully synchronized {} to Recall with ID: {}",
-                                object.object_key, recall_id
-                            );
+                        Ok(()) => {
+                            info!("Successfully synchronized {} to Recall", object.object_key);
 
                             // Update status to Complete
                             self.sync_storage
