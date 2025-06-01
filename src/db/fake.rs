@@ -19,12 +19,6 @@ impl FakeDatabase {
             objects: Arc::new(RwLock::new(HashMap::new())),
         }
     }
-
-    /// Add a test object to the database
-    pub fn fake_add_object(&self, object: ObjectIndex) {
-        let mut objects = self.objects.write().unwrap();
-        objects.insert(object.object_key.clone(), object);
-    }
 }
 
 #[async_trait]
@@ -65,7 +59,8 @@ impl Database for FakeDatabase {
 
     #[cfg(test)]
     async fn add_object(&self, object: ObjectIndex) -> Result<(), DatabaseError> {
-        self.fake_add_object(object);
+        let mut objects = self.objects.write().unwrap();
+        objects.insert(object.object_key.clone(), object);
         Ok(())
     }
 

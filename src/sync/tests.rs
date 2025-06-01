@@ -1,10 +1,11 @@
 use crate::config::{Config, DatabaseConfig, RecallConfig, S3Config, SyncConfig};
 use crate::db::{Database, FakeDatabase};
 use crate::recall::fake::FakeRecallStorage;
-use crate::s3::FakeStorage;
-use crate::s3::Storage;
-use crate::sync::storage::{FakeSyncStorage, SyncRecord, SyncStorage};
-use crate::sync::synchronizer::Synchronizer;
+use crate::s3::{FakeStorage, Storage};
+use crate::sync::{
+    storage::{FakeSyncStorage, SyncRecord, SyncStatus, SyncStorage},
+    synchronizer::Synchronizer,
+};
 use crate::test_utils::create_test_object_index;
 use bytes::Bytes;
 use chrono::{Duration, Utc};
@@ -49,27 +50,22 @@ async fn setup_test_env() -> (
     FakeRecallStorage,
     Config,
 ) {
-    // Create fake database with test data
     let database = FakeDatabase::new();
     let now = Utc::now();
 
     let object1 = create_test_object_index("test/object1.jsonl", now);
     let mut object2 = create_test_object_index("test/object2.jsonl", now + Duration::hours(1));
-    object2.size_bytes = Some(2048); // Customize size if needed
+    object2.size_bytes = Some(2048);
 
-    database.fake_add_object(object1);
-    database.fake_add_object(object2);
+    database.add_object(object1).await.unwrap();
+    database.add_object(object2).await.unwrap();
 
-    // Create fake sync storage
     let sync_storage = FakeSyncStorage::new();
 
-    // Create test config
     let config = create_test_config();
 
-    // Create fake S3 storage
     let s3_storage = FakeStorage::new();
 
-    // Setup test data in S3
     s3_storage
         .add_object("test/object1.jsonl", Bytes::from("Test data for object1"))
         .await
@@ -80,7 +76,6 @@ async fn setup_test_env() -> (
         .await
         .unwrap();
 
-    // Create fake Recall storage
     let recall_storage = FakeRecallStorage::new();
 
     (database, sync_storage, s3_storage, recall_storage, config)
@@ -90,38 +85,34 @@ async fn setup_test_env() -> (
 async fn when_no_filters_applied_all_objects_are_synchronized() {
     let (database, sync_storage, s3_storage, recall_storage, config) = setup_test_env().await;
 
-    // Get the objects before creating the synchronizer
     let objects = database.get_objects_to_sync(100, None).await.unwrap();
     let num_objects = objects.len();
 
-    let sync_storage_arc = Arc::new(sync_storage);
+    let sync_storage = Arc::new(sync_storage);
 
     let synchronizer = Synchronizer::with_storage(
         Arc::new(database),
-        sync_storage_arc.clone(),
+        sync_storage.clone(),
         Arc::new(s3_storage),
         Arc::new(recall_storage),
         config,
         false,
     );
-    // Run the synchronizer without filters
+
     synchronizer.run(None, None).await.unwrap();
 
-    // Verify that all objects were synchronized
-    let sync_storage = sync_storage_arc;
     for obj in objects {
         let status = sync_storage.get_object_status(obj.id).await.unwrap();
         assert_eq!(
             status,
-            Some(crate::sync::storage::SyncStatus::Complete),
+            Some(SyncStatus::Complete),
             "Object {} should be marked as complete",
             obj.object_key
         );
     }
 
-    // Verify the number of synchronized objects
     let completed_objects = sync_storage
-        .get_objects_with_status(crate::sync::storage::SyncStatus::Complete)
+        .get_objects_with_status(SyncStatus::Complete)
         .await
         .unwrap();
     assert_eq!(
@@ -135,51 +126,45 @@ async fn when_no_filters_applied_all_objects_are_synchronized() {
 async fn when_competition_id_filter_is_applied_only_matching_objects_are_synchronized() {
     let (database, sync_storage, s3_storage, recall_storage, config) = setup_test_env().await;
 
-    // Create a specific competition ID and add an object with it
     let competition_id = uuid::Uuid::new_v4();
     let now = Utc::now();
     let mut filtered_object = create_test_object_index("test/filtered.jsonl", now);
     filtered_object.competition_id = Some(competition_id);
-    database.fake_add_object(filtered_object.clone());
+    database.add_object(filtered_object.clone()).await.unwrap();
 
-    // Add the filtered object's data to S3
     s3_storage
         .add_object("test/filtered.jsonl", Bytes::from("Filtered test data"))
         .await
         .unwrap();
 
-    let db_arc = Arc::new(database);
-    let sync_storage_arc = Arc::new(sync_storage);
+    let database = Arc::new(database);
+    let sync_storage = Arc::new(sync_storage);
 
     let synchronizer = Synchronizer::with_storage(
-        db_arc.clone(),
-        sync_storage_arc.clone(),
+        database.clone(),
+        sync_storage.clone(),
         Arc::new(s3_storage),
         Arc::new(recall_storage),
         config,
         false,
     );
 
-    // Run the synchronizer with competition_id filter
     synchronizer
         .run(Some(competition_id.to_string()), None)
         .await
         .unwrap();
 
-    // Verify that only the filtered object was synchronized
-    let sync_storage = sync_storage_arc;
     let status = sync_storage
         .get_object_status(filtered_object.id)
         .await
         .unwrap();
     assert_eq!(
         status,
-        Some(crate::sync::storage::SyncStatus::Complete),
+        Some(SyncStatus::Complete),
         "Filtered object should be marked as complete"
     );
 
-    // Verify that other objects were not synchronized
-    let all_objects = db_arc.get_objects_to_sync(100, None).await.unwrap();
+    let all_objects = database.get_objects_to_sync(100, None).await.unwrap();
     for obj in all_objects {
         if obj.competition_id != Some(competition_id) {
             let status = sync_storage.get_object_status(obj.id).await.unwrap();
@@ -196,52 +181,46 @@ async fn when_competition_id_filter_is_applied_only_matching_objects_are_synchro
 async fn when_timestamp_filter_is_applied_only_newer_objects_are_synchronized() {
     let (database, sync_storage, s3_storage, recall_storage, config) = setup_test_env().await;
 
-    // Add an older object that should not be synchronized
     let old_time = Utc::now() - Duration::days(7);
     let old_object = create_test_object_index("test/old.jsonl", old_time);
-    database.fake_add_object(old_object.clone());
+    database.add_object(old_object.clone()).await.unwrap();
 
-    // Add the old object's data to S3
     s3_storage
         .add_object("test/old.jsonl", Bytes::from("Old test data"))
         .await
         .unwrap();
 
-    let db_arc = Arc::new(database);
-    let sync_storage_arc = Arc::new(sync_storage);
+    let database = Arc::new(database);
+    let sync_storage = Arc::new(sync_storage);
 
     let synchronizer = Synchronizer::with_storage(
-        db_arc.clone(),
-        sync_storage_arc.clone(),
+        database.clone(),
+        sync_storage.clone(),
         Arc::new(s3_storage),
         Arc::new(recall_storage),
         config,
         false,
     );
 
-    // Run the synchronizer with a timestamp filter (2 days ago)
     let filter_time = Utc::now() - Duration::days(2);
     synchronizer
         .run(None, Some(filter_time.to_rfc3339()))
         .await
         .unwrap();
 
-    // Verify that the old object was not synchronized
-    let sync_storage = sync_storage_arc;
     let status = sync_storage.get_object_status(old_object.id).await.unwrap();
     assert_eq!(
         status, None,
         "Old object should not be synchronized when using timestamp filter"
     );
 
-    // Verify that newer objects were synchronized
-    let all_objects = db_arc.get_objects_to_sync(100, None).await.unwrap();
+    let all_objects = database.get_objects_to_sync(100, None).await.unwrap();
     for obj in all_objects {
         if obj.object_last_modified_at > filter_time {
             let status = sync_storage.get_object_status(obj.id).await.unwrap();
             assert_eq!(
                 status,
-                Some(crate::sync::storage::SyncStatus::Complete),
+                Some(SyncStatus::Complete),
                 "Newer object {} should be synchronized",
                 obj.object_key
             );
@@ -251,69 +230,61 @@ async fn when_timestamp_filter_is_applied_only_newer_objects_are_synchronized() 
 
 #[tokio::test]
 async fn when_object_is_already_being_processed_it_is_skipped() {
-    use crate::sync::storage::SyncStatus;
-
     let (database, sync_storage, s3_storage, recall_storage, config) = setup_test_env().await;
 
-    // Add a single object
     let test_object = create_test_object_index("test/concurrent.jsonl", Utc::now());
-    database.fake_add_object(test_object.clone());
+    database.add_object(test_object.clone()).await.unwrap();
 
-    // Add the object's data to S3
     s3_storage
         .add_object("test/concurrent.jsonl", Bytes::from("Concurrent test data"))
         .await
         .unwrap();
 
-    // Convert to Arc versions for sharing between threads
-    let db_arc = Arc::new(database);
-    let sync_storage_arc = Arc::new(sync_storage);
-    let s3_storage_arc = Arc::new(s3_storage);
-    let recall_storage_arc = Arc::new(recall_storage);
+    let database = Arc::new(database);
+    let sync_storage = Arc::new(sync_storage);
+    let s3_storage = Arc::new(s3_storage);
+    let recall_storage = Arc::new(recall_storage);
 
-    // Create the sync record first
     let sync_record = SyncRecord::new(
         test_object.id,
         test_object.object_key.clone(),
         test_object.bucket_name.clone(),
         test_object.object_last_modified_at,
     );
-    sync_storage_arc.add_object(sync_record).await.unwrap();
+    sync_storage.add_object(sync_record).await.unwrap();
 
-    // Mark the object as already being processed (simulating another worker)
-    sync_storage_arc
+    sync_storage
         .set_object_status(test_object.id, SyncStatus::Processing)
         .await
         .unwrap();
 
     let synchronizer = Synchronizer::with_storage(
-        db_arc.clone(),
-        sync_storage_arc.clone(),
-        s3_storage_arc.clone(),
-        recall_storage_arc.clone(),
+        database.clone(),
+        sync_storage.clone(),
+        s3_storage.clone(),
+        recall_storage.clone(),
         config,
         false,
     );
 
-    // Run the synchronizer - it should skip the object because it's being processed
     synchronizer.run(None, None).await.unwrap();
 
     // The object should still be in Processing status since we didn't let our synchronizer complete it
-    let status = sync_storage_arc
+    let status = sync_storage
         .get_object_status(test_object.id)
         .await
         .unwrap();
     assert_eq!(status, Some(SyncStatus::Processing));
 
     // Now mark it as complete and run again
-    sync_storage_arc
+    sync_storage
         .set_object_status(test_object.id, SyncStatus::Complete)
         .await
         .unwrap();
     synchronizer.run(None, None).await.unwrap();
 
     // The object should still be complete (not processed again)
-    let status = sync_storage_arc
+    let status = sync_storage
         .get_object_status(test_object.id)
         .await
         .unwrap();
