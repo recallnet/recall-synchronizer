@@ -87,7 +87,7 @@ async fn setup_test_env() -> (
 }
 
 #[tokio::test]
-async fn test_synchronizer_run_with_fake_implementations() {
+async fn when_no_filters_applied_all_objects_are_synchronized() {
     let (database, sync_storage, s3_storage, recall_storage, config) = setup_test_env().await;
 
     // Get the objects before creating the synchronizer
@@ -132,7 +132,7 @@ async fn test_synchronizer_run_with_fake_implementations() {
 }
 
 #[tokio::test]
-async fn test_synchronizer_with_competition_id_filter() {
+async fn when_competition_id_filter_is_applied_only_matching_objects_are_synchronized() {
     let (database, sync_storage, s3_storage, recall_storage, config) = setup_test_env().await;
 
     // Create a specific competition ID and add an object with it
@@ -193,7 +193,7 @@ async fn test_synchronizer_with_competition_id_filter() {
 }
 
 #[tokio::test]
-async fn test_synchronizer_with_timestamp_filter() {
+async fn when_timestamp_filter_is_applied_only_newer_objects_are_synchronized() {
     let (database, sync_storage, s3_storage, recall_storage, config) = setup_test_env().await;
 
     // Add an older object that should not be synchronized
@@ -250,7 +250,7 @@ async fn test_synchronizer_with_timestamp_filter() {
 }
 
 #[tokio::test]
-async fn test_synchronizer_handles_concurrent_processing() {
+async fn when_object_is_already_being_processed_it_is_skipped() {
     use crate::sync::storage::SyncStatus;
 
     let (database, sync_storage, s3_storage, recall_storage, config) = setup_test_env().await;
