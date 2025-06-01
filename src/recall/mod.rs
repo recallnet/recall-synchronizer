@@ -5,7 +5,7 @@ pub mod recall;
 pub mod storage;
 
 pub use recall::RecallBlockchain;
-pub use storage::RecallStorage;
+pub use storage::Storage;
 
 #[cfg(test)]
 mod tests;

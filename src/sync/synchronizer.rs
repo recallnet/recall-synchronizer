@@ -5,7 +5,7 @@ use tracing::{debug, error, info};
 
 use crate::config::Config;
 use crate::db::{Database, ObjectIndex};
-use crate::recall::RecallStorage;
+use crate::recall::Storage as RecallStorage;
 use crate::s3::Storage as S3Storage;
 use crate::sync::storage::{SyncRecord, SyncStatus, SyncStorage};
 

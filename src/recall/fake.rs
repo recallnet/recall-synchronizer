@@ -1,5 +1,5 @@
 use crate::recall::error::RecallError;
-use crate::recall::storage::RecallStorage;
+use crate::recall::storage::Storage;
 use async_trait::async_trait;
 use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Mutex};
@@ -73,7 +73,7 @@ impl FakeRecallStorage {
 }
 
 #[async_trait]
-impl RecallStorage for FakeRecallStorage {
+impl Storage for FakeRecallStorage {
     async fn add_blob(&self, key: &str, data: Vec<u8>) -> Result<(), RecallError> {
         let fail_blobs = self.fail_blobs.lock().unwrap();
         if fail_blobs.contains(key) {

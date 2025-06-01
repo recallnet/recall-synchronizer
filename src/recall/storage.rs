@@ -4,7 +4,7 @@ use std::sync::Arc;
 
 /// Storage trait defining the interface for reading and writing data to the Recall blockchain
 #[async_trait]
-pub trait RecallStorage: Send + Sync + 'static {
+pub trait Storage: Send + Sync + 'static {
     /// Store a blob on the Recall network
     ///
     /// * `key` - The key/path for the blob
@@ -35,7 +35,7 @@ pub trait RecallStorage: Send + Sync + 'static {
 /// This allows sharing storage instances across threads and components efficiently.
 /// The Arc wrapper provides thread-safe reference counting.
 #[async_trait]
-impl<T: RecallStorage + ?Sized> RecallStorage for Arc<T> {
+impl<T: Storage + ?Sized> Storage for Arc<T> {
     async fn add_blob(&self, key: &str, data: Vec<u8>) -> Result<(), RecallError> {
         (**self).add_blob(key, data).await
     }

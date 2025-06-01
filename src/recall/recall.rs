@@ -1,6 +1,6 @@
 use crate::config::RecallConfig;
 use crate::recall::error::RecallError;
-use crate::recall::storage::RecallStorage;
+use crate::recall::storage::Storage;
 use async_trait::async_trait;
 use recall_provider::{fvm_shared::address::Address, json_rpc::JsonRpcProvider};
 use recall_sdk::{
@@ -381,7 +381,7 @@ impl RecallBlockchain {
 }
 
 #[async_trait]
-impl RecallStorage for RecallBlockchain {
+impl Storage for RecallBlockchain {
     async fn add_blob(&self, key: &str, data: Vec<u8>) -> Result<(), RecallError> {
         debug!("Storing blob to Recall: {}", key);
 

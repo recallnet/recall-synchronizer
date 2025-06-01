@@ -1,13 +1,13 @@
 use crate::config::RecallConfig;
 use crate::recall::error::RecallError;
 use crate::recall::fake::FakeRecallStorage;
-use crate::recall::{RecallBlockchain, RecallStorage};
+use crate::recall::{RecallBlockchain, Storage};
 use crate::test_utils::{get_next_wallet, load_test_config};
 use std::sync::Arc;
 use uuid::Uuid;
 
 type StorageFactory =
-    Box<dyn Fn() -> futures::future::BoxFuture<'static, Box<dyn RecallStorage + Send + Sync>>>;
+    Box<dyn Fn() -> futures::future::BoxFuture<'static, Box<dyn Storage + Send + Sync>>>;
 
 fn get_test_storages() -> Vec<(&'static str, StorageFactory)> {
     let mut storages: Vec<(&'static str, StorageFactory)> = vec![];
@@ -16,9 +16,7 @@ fn get_test_storages() -> Vec<(&'static str, StorageFactory)> {
     storages.push((
         "fake",
         Box::new(|| {
-            Box::pin(async {
-                Box::new(FakeRecallStorage::new()) as Box<dyn RecallStorage + Send + Sync>
-            })
+            Box::pin(async { Box::new(FakeRecallStorage::new()) as Box<dyn Storage + Send + Sync> })
         }),
     ));
 
@@ -58,7 +56,7 @@ fn get_test_storages() -> Vec<(&'static str, StorageFactory)> {
                     match RecallBlockchain::new(&recall_config).await {
                         Ok(blockchain) => {
                             println!("Successfully connected to Recall storage with wallet {}", test_wallet.address);
-                            Box::new(Arc::new(blockchain)) as Box<dyn RecallStorage + Send + Sync>
+                            Box::new(Arc::new(blockchain)) as Box<dyn Storage + Send + Sync>
                         },
                         Err(e) => {
                             panic!("Failed to connect to real Recall storage: {}\n\nMake sure the Recall container is running and accessible", e);
