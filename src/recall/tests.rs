@@ -24,7 +24,7 @@ fn get_test_storages() -> Vec<(&'static str, StorageFactory)> {
 
     // Conditionally add real Recall
     let config = load_test_config();
-    if true || config.recall.enabled {
+    if config.recall.enabled {
         storages.push((
             "real_recall",
             Box::new(|| {
@@ -149,13 +149,14 @@ async fn list_blobs_works_correctly() {
 }
 
 #[tokio::test]
-#[ignore = "Deletion needs to be refined"]
+//#[ignore = "Deletion needs to be refined"]
 async fn delete_blob_works_correctly() {
     for (name, storage_factory) in get_test_storages() {
         let storage = storage_factory().await;
         let key = format!("test-delete-{}-{}", name, Uuid::new_v4());
         let data = b"test data".to_vec();
 
+        println!("Adding blob with key: {}", key);
         storage.add_blob(&key, data).await.unwrap();
 
         // Wait for blob to be available with retry

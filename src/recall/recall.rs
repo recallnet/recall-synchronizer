@@ -568,10 +568,8 @@ impl RecallStorage for RecallBlockchain {
             .retry_on_sequence_error(&format!("delete_blob({})", key), || async {
                 let mut signer_guard = signer.lock().await;
 
-                // Attach to the bucket
                 let bucket = Bucket::attach(bucket_address).await?;
 
-                // Use the SDK to delete the object
                 let delete_options = recall_sdk::machine::bucket::DeleteOptions {
                     broadcast_mode: recall_provider::tx::BroadcastMode::Commit,
                     gas_params: Default::default(),
