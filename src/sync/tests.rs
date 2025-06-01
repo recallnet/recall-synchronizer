@@ -8,6 +8,7 @@ use crate::sync::synchronizer::Synchronizer;
 use crate::test_utils::create_test_object_index;
 use bytes::Bytes;
 use chrono::{Duration, Utc};
+use std::sync::Arc;
 
 // Helper to create a test config
 fn create_test_config() -> Config {
@@ -93,20 +94,21 @@ async fn test_synchronizer_run_with_fake_implementations() {
     let objects = database.get_objects_to_sync(100, None).await.unwrap();
     let num_objects = objects.len();
 
+    let sync_storage_arc = Arc::new(sync_storage);
+
     let synchronizer = Synchronizer::with_storage(
-        database,
-        sync_storage,
-        s3_storage,
-        recall_storage,
+        Arc::new(database),
+        sync_storage_arc.clone(),
+        Arc::new(s3_storage),
+        Arc::new(recall_storage),
         config,
         false,
     );
-
     // Run the synchronizer without filters
     synchronizer.run(None, None).await.unwrap();
 
     // Verify that all objects were synchronized
-    let sync_storage = synchronizer.get_sync_storage();
+    let sync_storage = sync_storage_arc;
     for obj in objects {
         let status = sync_storage.get_object_status(obj.id).await.unwrap();
         assert_eq!(
@@ -146,14 +148,14 @@ async fn test_synchronizer_with_competition_id_filter() {
         .await
         .unwrap();
 
-    // Store clone for later verification
-    let database_clone = database.clone();
+    let db_arc = Arc::new(database);
+    let sync_storage_arc = Arc::new(sync_storage);
 
     let synchronizer = Synchronizer::with_storage(
-        database,
-        sync_storage,
-        s3_storage,
-        recall_storage,
+        db_arc.clone(),
+        sync_storage_arc.clone(),
+        Arc::new(s3_storage),
+        Arc::new(recall_storage),
         config,
         false,
     );
@@ -165,7 +167,7 @@ async fn test_synchronizer_with_competition_id_filter() {
         .unwrap();
 
     // Verify that only the filtered object was synchronized
-    let sync_storage = synchronizer.get_sync_storage();
+    let sync_storage = sync_storage_arc;
     let status = sync_storage
         .get_object_status(filtered_object.id)
         .await
@@ -177,7 +179,7 @@ async fn test_synchronizer_with_competition_id_filter() {
     );
 
     // Verify that other objects were not synchronized
-    let all_objects = database_clone.get_objects_to_sync(100, None).await.unwrap();
+    let all_objects = db_arc.get_objects_to_sync(100, None).await.unwrap();
     for obj in all_objects {
         if obj.competition_id != Some(competition_id) {
             let status = sync_storage.get_object_status(obj.id).await.unwrap();
@@ -205,14 +207,14 @@ async fn test_synchronizer_with_timestamp_filter() {
         .await
         .unwrap();
 
-    // Store clone for later verification
-    let database_clone = database.clone();
+    let db_arc = Arc::new(database);
+    let sync_storage_arc = Arc::new(sync_storage);
 
     let synchronizer = Synchronizer::with_storage(
-        database,
-        sync_storage,
-        s3_storage,
-        recall_storage,
+        db_arc.clone(),
+        sync_storage_arc.clone(),
+        Arc::new(s3_storage),
+        Arc::new(recall_storage),
         config,
         false,
     );
@@ -225,7 +227,7 @@ async fn test_synchronizer_with_timestamp_filter() {
         .unwrap();
 
     // Verify that the old object was not synchronized
-    let sync_storage = synchronizer.get_sync_storage();
+    let sync_storage = sync_storage_arc;
     let status = sync_storage.get_object_status(old_object.id).await.unwrap();
     assert_eq!(
         status, None,
@@ -233,7 +235,7 @@ async fn test_synchronizer_with_timestamp_filter() {
     );
 
     // Verify that newer objects were synchronized
-    let all_objects = database_clone.get_objects_to_sync(100, None).await.unwrap();
+    let all_objects = db_arc.get_objects_to_sync(100, None).await.unwrap();
     for obj in all_objects {
         if obj.object_last_modified_at > filter_time {
             let status = sync_storage.get_object_status(obj.id).await.unwrap();
@@ -250,7 +252,6 @@ async fn test_synchronizer_with_timestamp_filter() {
 #[tokio::test]
 async fn test_synchronizer_handles_concurrent_processing() {
     use crate::sync::storage::SyncStatus;
-    use std::sync::Arc;
 
     let (database, sync_storage, s3_storage, recall_storage, config) = setup_test_env().await;
 

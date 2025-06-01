@@ -12,7 +12,10 @@ mod sync;
 #[cfg(test)]
 mod test_utils;
 
-use crate::sync::synchronizer::DefaultSynchronizer;
+use crate::db::postgres::PostgresDatabase;
+use crate::recall::RecallBlockchain;
+use crate::sync::storage::SqliteSyncStorage;
+use crate::sync::synchronizer::Synchronizer;
 
 #[derive(Parser, Debug)]
 #[command(author, version, about, long_about = None)]
@@ -76,20 +79,28 @@ async fn run(
     competition_id: Option<String>,
     since: Option<String>,
 ) -> Result<()> {
-    // Initialize and run synchronizer
-    match DefaultSynchronizer::default(config, reset).await {
-        Ok(synchronizer) => {
-            info!("Synchronizer initialized successfully");
+    // Create specific implementations
+    let database = PostgresDatabase::new(&config.database.url).await?;
+    let sync_storage = SqliteSyncStorage::new(&config.sync.state_db_path)?;
+    let s3_storage = crate::s3::S3Storage::new(&config.s3).await?;
+    let recall_storage = RecallBlockchain::new(&config.recall).await?;
 
-            if let Err(e) = synchronizer.run(competition_id, since).await {
-                error!("Synchronizer failed: {}", e);
-                process::exit(1);
-            }
-        }
-        Err(e) => {
-            error!("Failed to initialize synchronizer: {}", e);
-            process::exit(1);
-        }
+    // Create the synchronizer with specific implementations
+    let synchronizer = Synchronizer::new(
+        database,
+        sync_storage,
+        s3_storage,
+        recall_storage,
+        config,
+        reset,
+    );
+
+    info!("Synchronizer initialized successfully");
+
+    // Run the synchronizer
+    if let Err(e) = synchronizer.run(competition_id, since).await {
+        error!("Synchronizer failed: {}", e);
+        process::exit(1);
     }
 
     Ok(())

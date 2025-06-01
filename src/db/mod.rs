@@ -14,4 +14,3 @@ pub use error::DatabaseError;
 pub use fake::FakeDatabase;
 #[allow(unused_imports)]
 pub use models::ObjectIndex;
-pub use postgres::PostgresDatabase;

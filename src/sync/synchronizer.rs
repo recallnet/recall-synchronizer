@@ -5,14 +5,12 @@ use tracing::{debug, info};
 
 use crate::config::Config;
 use crate::db::Database;
-use crate::db::PostgresDatabase;
 use crate::recall::RecallStorage;
-use crate::s3::Storage;
-use crate::sync::storage::SqliteSyncStorage;
+use crate::s3::Storage as S3Storage;
 use crate::sync::storage::{SyncRecord, SyncStatus, SyncStorage};
 
 /// Main synchronizer that orchestrates the data synchronization process
-pub struct Synchronizer<D: Database, S: SyncStorage, ST: Storage, RS: RecallStorage> {
+pub struct Synchronizer<D: Database, S: SyncStorage, ST: S3Storage, RS: RecallStorage> {
     database: Arc<D>,
     sync_storage: Arc<S>,
     s3_storage: Arc<ST>,
@@ -21,16 +19,9 @@ pub struct Synchronizer<D: Database, S: SyncStorage, ST: Storage, RS: RecallStor
     reset: bool,
 }
 
-impl<D: Database, S: SyncStorage, ST: Storage, RS: RecallStorage> Synchronizer<D, S, ST, RS> {
-    /// Returns a reference to the sync storage
-    #[allow(dead_code)]
-    pub fn get_sync_storage(&self) -> &Arc<S> {
-        &self.sync_storage
-    }
-
-    /// Test version that works with different trait implementations
-    #[allow(dead_code)]
-    pub fn with_storage(
+impl<D: Database, S: SyncStorage, ST: S3Storage, RS: RecallStorage> Synchronizer<D, S, ST, RS> {
+    /// Creates a new Synchronizer instance
+    pub fn new(
         database: D,
         sync_storage: S,
         s3_storage: ST,
@@ -43,6 +34,26 @@ impl<D: Database, S: SyncStorage, ST: Storage, RS: RecallStorage> Synchronizer<D
             sync_storage: Arc::new(sync_storage),
             s3_storage: Arc::new(s3_storage),
             recall_storage: Arc::new(recall_storage),
+            config,
+            reset,
+        }
+    }
+
+    /// Test-specific constructor that accepts Arc-wrapped storage implementations
+    #[cfg(test)]
+    pub fn with_storage(
+        database: Arc<D>,
+        sync_storage: Arc<S>,
+        s3_storage: Arc<ST>,
+        recall_storage: Arc<RS>,
+        config: Config,
+        reset: bool,
+    ) -> Self {
+        Synchronizer {
+            database,
+            sync_storage,
+            s3_storage,
+            recall_storage,
             config,
             reset,
         }
@@ -179,50 +190,5 @@ impl<D: Database, S: SyncStorage, ST: Storage, RS: RecallStorage> Synchronizer<D
 
         info!("Synchronization completed");
         Ok(())
-    }
-}
-
-impl
-    Synchronizer<
-        crate::db::postgres::PostgresDatabase,
-        SqliteSyncStorage,
-        crate::s3::S3Storage,
-        crate::recall::RecallBlockchain,
-    >
-{
-    /// Creates a new Synchronizer instance with real implementations
-    pub async fn new(
-        database: crate::db::postgres::PostgresDatabase,
-        config: Config,
-        reset: bool,
-    ) -> Result<Self> {
-        let sync_storage = SqliteSyncStorage::new(&config.sync.state_db_path)?;
-        let s3_storage = crate::s3::S3Storage::new(&config.s3).await?;
-        let recall_storage = crate::recall::RecallBlockchain::new(&config.recall).await?;
-
-        Ok(Synchronizer {
-            database: Arc::new(database),
-            sync_storage: Arc::new(sync_storage),
-            s3_storage: Arc::new(s3_storage),
-            recall_storage: Arc::new(recall_storage),
-            config,
-            reset,
-        })
-    }
-}
-
-/// Default implementation for PostgreSQL database and SQLite sync storage
-pub type DefaultSynchronizer = Synchronizer<
-    PostgresDatabase,
-    SqliteSyncStorage,
-    crate::s3::S3Storage,
-    crate::recall::RecallBlockchain,
->;
-
-impl DefaultSynchronizer {
-    /// Creates a synchronizer with default implementations
-    pub async fn default(config: Config, reset: bool) -> Result<Self> {
-        let database = PostgresDatabase::new(&config.database.url).await?;
-        Synchronizer::new(database, config, reset).await
     }
 }

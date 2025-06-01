@@ -1,4 +1,4 @@
-use crate::db::{Database, DatabaseError, FakeDatabase, ObjectIndex, PostgresDatabase};
+use crate::db::{postgres::PostgresDatabase, Database, DatabaseError, FakeDatabase, ObjectIndex};
 use crate::test_utils::{create_test_object_index, load_test_config};
 use chrono::{Duration, Utc};
 use std::sync::Arc;
