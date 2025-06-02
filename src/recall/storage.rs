@@ -28,6 +28,12 @@ pub trait Storage: Send + Sync + 'static {
     /// Clear all blobs with a given prefix (test-only)
     #[cfg(test)]
     async fn clear_prefix(&self, prefix: &str) -> Result<(), RecallError>;
+
+    /// Get a blob from the Recall network (test-only)
+    ///
+    /// * `key` - The key/path to retrieve
+    #[cfg(test)]
+    async fn get_blob(&self, key: &str) -> Result<Vec<u8>, RecallError>;
 }
 
 /// Implementation of RecallStorage trait for Arc<T> where T implements RecallStorage
@@ -56,5 +62,10 @@ impl<T: Storage + ?Sized> Storage for Arc<T> {
     #[cfg(test)]
     async fn clear_prefix(&self, prefix: &str) -> Result<(), RecallError> {
         (**self).clear_prefix(prefix).await
+    }
+
+    #[cfg(test)]
+    async fn get_blob(&self, key: &str) -> Result<Vec<u8>, RecallError> {
+        (**self).get_blob(key).await
     }
 }

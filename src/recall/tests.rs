@@ -94,6 +94,34 @@ async fn add_blob_and_has_blob_work_correctly() {
 }
 
 #[tokio::test]
+async fn get_blob_works_correctly() {
+    for (name, storage_factory) in get_test_storages() {
+        let storage = storage_factory().await;
+        let key = format!("test-get-blob-{}-{}", name, Uuid::new_v4());
+        let original_data = b"test data for get_blob".to_vec();
+
+        let result = storage.get_blob(&key).await;
+        assert!(
+            result.is_err(),
+            "Getting non-existent blob should fail for {}",
+            name
+        );
+
+        storage.add_blob(&key, original_data.clone()).await.unwrap();
+
+        let retrieved_data = storage.get_blob(&key).await.unwrap();
+
+        assert_eq!(
+            retrieved_data, original_data,
+            "Retrieved data should match original for {}",
+            name
+        );
+
+        storage.delete_blob(&key).await.unwrap();
+    }
+}
+
+#[tokio::test]
 async fn list_blobs_works_correctly() {
     for (name, storage_factory) in get_test_storages() {
         let storage = storage_factory().await;

@@ -147,6 +147,24 @@ impl Storage for FakeRecallStorage {
 
         Ok(())
     }
+
+    #[cfg(test)]
+    async fn get_blob(&self, key: &str) -> Result<Vec<u8>, RecallError> {
+        let fail_blobs = self.fail_blobs.lock().unwrap();
+        if fail_blobs.contains(key) {
+            return Err(RecallError::Operation(format!(
+                "Simulated failure for blob: {}",
+                key
+            )));
+        }
+        drop(fail_blobs);
+
+        let data = self.data.lock().unwrap();
+        match data.get(key) {
+            Some(blob_data) => Ok(blob_data.clone()),
+            None => Err(RecallError::BlobNotFound(key.to_string())),
+        }
+    }
 }
 
 #[cfg(test)]

@@ -644,6 +644,110 @@ impl Storage for RecallBlockchain {
 
         Ok(())
     }
+
+    #[cfg(test)]
+    async fn get_blob(&self, key: &str) -> Result<Vec<u8>, RecallError> {
+        use std::pin::Pin;
+        use std::task::{Context, Poll};
+        use tokio::io::AsyncWrite;
+
+        debug!("Getting blob from Recall: {}", key);
+
+        let key_owned = key.to_string();
+        let bucket_address = self.bucket_address;
+        let provider = Arc::clone(&self.provider);
+
+        // Create a shared buffer wrapped in Arc<Mutex> to satisfy 'static lifetime
+        let buffer = Arc::new(Mutex::new(Vec::new()));
+        let buffer_clone = Arc::clone(&buffer);
+
+        // Create a wrapper that implements AsyncWrite by delegating to the Arc<Mutex<Vec<u8>>>
+        struct ArcVecWriter(Arc<Mutex<Vec<u8>>>);
+
+        impl AsyncWrite for ArcVecWriter {
+            fn poll_write(
+                self: Pin<&mut Self>,
+                cx: &mut Context<'_>,
+                buf: &[u8],
+            ) -> Poll<Result<usize, std::io::Error>> {
+                // Try to acquire the lock
+                match self.0.try_lock() {
+                    Ok(mut vec) => {
+                        vec.extend_from_slice(buf);
+                        Poll::Ready(Ok(buf.len()))
+                    }
+                    Err(_) => {
+                        // Wake the task to retry
+                        cx.waker().wake_by_ref();
+                        Poll::Pending
+                    }
+                }
+            }
+
+            fn poll_flush(
+                self: Pin<&mut Self>,
+                _cx: &mut Context<'_>,
+            ) -> Poll<Result<(), std::io::Error>> {
+                Poll::Ready(Ok(()))
+            }
+
+            fn poll_shutdown(
+                self: Pin<&mut Self>,
+                _cx: &mut Context<'_>,
+            ) -> Poll<Result<(), std::io::Error>> {
+                Poll::Ready(Ok(()))
+            }
+        }
+
+        // Wrap the bucket.get operation in retry logic
+        let result = self
+            .retry_on_sequence_error(&format!("get_blob({})", key), || async {
+                let bucket = Bucket::attach(bucket_address).await?;
+
+                let get_options = recall_sdk::machine::bucket::GetOptions {
+                    range: None,
+                    height: recall_provider::query::FvmQueryHeight::Committed,
+                    show_progress: false,
+                };
+
+                bucket
+                    .get(
+                        &*provider,
+                        &key_owned,
+                        ArcVecWriter(buffer_clone.clone()),
+                        get_options,
+                    )
+                    .await
+                    .map_err(|e| {
+                        debug!("SDK error in get_blob: {}", e);
+                        e
+                    })
+            })
+            .await;
+
+        match result {
+            Ok(_) => {
+                let data = buffer.lock().await.clone();
+                info!(
+                    "Successfully retrieved blob from Recall: {} ({} bytes)",
+                    key,
+                    data.len()
+                );
+                Ok(data)
+            }
+            Err(e) => {
+                // Check if this is an "object not found" error
+                let error_msg = e.to_string();
+                if error_msg.contains("object not found") || error_msg.contains("not found") {
+                    debug!("Blob not found: {}", key);
+                    Err(RecallError::BlobNotFound(key.to_string()))
+                } else {
+                    warn!("Failed to get blob from Recall: {}", e);
+                    Err(e)
+                }
+            }
+        }
+    }
 }
 
 #[cfg(test)]
