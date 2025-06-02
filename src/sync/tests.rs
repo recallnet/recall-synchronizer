@@ -25,7 +25,6 @@ struct TestEnvironment {
 impl TestEnvironment {
     /// Verify that an object has been properly synchronized
     async fn verify_object_synced(&self, object: &ObjectIndex) -> Result<(), String> {
-        // Check sync storage status
         let status = self
             .sync_storage
             .get_object_status(object.id)
@@ -39,17 +38,24 @@ impl TestEnvironment {
             ));
         }
 
-        // Verify the blob exists in Recall
-        let exists_in_recall = self
-            .recall_storage
-            .has_blob(&object.object_key)
+        let s3_data = self
+            .s3_storage
+            .get_object(&object.object_key)
             .await
-            .map_err(|e| format!("Failed to check blob existence in Recall: {}", e))?;
+            .map_err(|e| format!("Failed to get object from S3: {}", e))?;
 
-        if !exists_in_recall {
+        let recall_data = self
+            .recall_storage
+            .get_blob(&object.object_key)
+            .await
+            .map_err(|e| format!("Failed to get blob from Recall: {}", e))?;
+
+        if s3_data.as_ref() != recall_data.as_slice() {
             return Err(format!(
-                "Object {} not found in Recall storage",
-                object.object_key
+                "Data mismatch for object {}: S3 has {} bytes, Recall has {} bytes",
+                object.object_key,
+                s3_data.len(),
+                recall_data.len()
             ));
         }
 
