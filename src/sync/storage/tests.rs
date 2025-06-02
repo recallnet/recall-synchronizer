@@ -3,7 +3,6 @@ use crate::sync::storage::{FakeSyncStorage, SqliteSyncStorage, SyncStorage};
 use crate::test_utils::load_test_config;
 use chrono::{Duration, Utc};
 use std::sync::Arc;
-use tempfile::tempdir;
 use uuid::Uuid;
 
 // Type alias to simplify the complex type for storage factory functions
@@ -41,72 +40,6 @@ async fn setup_test_data(storage: &dyn SyncStorage) -> Vec<SyncRecord> {
     test_data
 }
 
-/// Creates a new SQLite storage for testing
-fn create_sqlite_storage(db_path: &str) -> Arc<SqliteSyncStorage> {
-    Arc::new(SqliteSyncStorage::new(db_path).expect("Failed to create SQLite storage"))
-}
-
-/// Wrapper to hold temp directory and storage together
-struct SqliteStorageWrapper {
-    _temp_dir: tempfile::TempDir,
-    storage: Arc<SqliteSyncStorage>,
-}
-
-impl SqliteStorageWrapper {
-    fn new() -> Self {
-        let temp_dir = tempdir().expect("Failed to create temp directory");
-        let db_path = temp_dir.path().join("sync_test.db");
-        let storage = create_sqlite_storage(db_path.to_str().unwrap());
-        Self {
-            _temp_dir: temp_dir,
-            storage,
-        }
-    }
-}
-
-#[async_trait::async_trait]
-impl SyncStorage for SqliteStorageWrapper {
-    async fn add_object(
-        &self,
-        record: SyncRecord,
-    ) -> Result<(), crate::sync::storage::error::SyncStorageError> {
-        self.storage.add_object(record).await
-    }
-
-    async fn set_object_status(
-        &self,
-        id: Uuid,
-        status: SyncStatus,
-    ) -> Result<(), crate::sync::storage::error::SyncStorageError> {
-        self.storage.set_object_status(id, status).await
-    }
-
-    async fn get_object_status(
-        &self,
-        id: Uuid,
-    ) -> Result<Option<SyncStatus>, crate::sync::storage::error::SyncStorageError> {
-        self.storage.get_object_status(id).await
-    }
-
-    async fn get_objects_with_status(
-        &self,
-        status: SyncStatus,
-    ) -> Result<Vec<SyncRecord>, crate::sync::storage::error::SyncStorageError> {
-        self.storage.get_objects_with_status(status).await
-    }
-
-    async fn get_last_object(
-        &self,
-    ) -> Result<Option<SyncRecord>, crate::sync::storage::error::SyncStorageError> {
-        self.storage.get_last_object().await
-    }
-
-    #[cfg(test)]
-    async fn clear_data(&self) -> Result<(), crate::sync::storage::error::SyncStorageError> {
-        self.storage.clear_data().await
-    }
-}
-
 /// Helper function to create test storage implementations
 fn get_test_storages() -> Vec<StorageFactory> {
     let mut storages: Vec<StorageFactory> = vec![
@@ -123,8 +56,11 @@ fn get_test_storages() -> Vec<StorageFactory> {
     if test_config.sqlite.enabled {
         storages.push(Box::new(|| {
             Box::pin(async move {
-                // Create a wrapped SQLite storage with temp directory kept alive
-                Box::new(SqliteStorageWrapper::new()) as Box<dyn SyncStorage + Send + Sync>
+                // Create an in-memory SQLite storage for testing
+                // Using ":memory:" creates a database that exists only in RAM
+                let storage = SqliteSyncStorage::new(":memory:")
+                    .expect("Failed to create in-memory SQLite storage");
+                Box::new(storage) as Box<dyn SyncStorage + Send + Sync>
             })
         }));
     }
