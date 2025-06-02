@@ -5,6 +5,7 @@ use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use std::collections::HashMap;
 use std::sync::{Arc, RwLock};
+use uuid::Uuid;
 
 /// A fake in-memory implementation of the Database trait for testing
 #[derive(Clone)]
@@ -23,24 +24,39 @@ impl FakeDatabase {
 
 #[async_trait]
 impl Database for FakeDatabase {
-    async fn get_objects_to_sync(
+    async fn get_objects_to_sync_with_id(
         &self,
         limit: u32,
         since: Option<DateTime<Utc>>,
+        after_id: Option<Uuid>,
     ) -> Result<Vec<ObjectIndex>, DatabaseError> {
         let objects = self.objects.read().unwrap();
 
         let mut filtered: Vec<ObjectIndex> = objects
             .values()
-            .filter(|obj| match since {
-                Some(ts) => obj.object_last_modified_at > ts,
-                None => true,
+            .filter(|obj| {
+                match (since, after_id) {
+                    (Some(ts), Some(id)) => {
+                        // For objects with timestamp > since OR (timestamp == since AND id > after_id)
+                        obj.object_last_modified_at > ts
+                            || (obj.object_last_modified_at == ts && obj.id > id)
+                    }
+                    (Some(ts), None) => obj.object_last_modified_at > ts,
+                    (None, Some(_)) => true, // If only after_id is provided, include all
+                    (None, None) => true,
+                }
             })
             .cloned()
             .collect();
 
         // Sort by last_modified_at in descending order (most recent first)
-        filtered.sort_by(|a, b| b.object_last_modified_at.cmp(&a.object_last_modified_at));
+        // For same timestamps, sort by ID ascending
+        filtered.sort_by(
+            |a, b| match b.object_last_modified_at.cmp(&a.object_last_modified_at) {
+                std::cmp::Ordering::Equal => a.id.cmp(&b.id),
+                other => other,
+            },
+        );
 
         // Apply limit after sorting
         filtered.truncate(limit as usize);

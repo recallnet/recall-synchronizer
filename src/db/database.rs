@@ -3,22 +3,25 @@ use crate::db::models::ObjectIndex;
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use std::sync::Arc;
+use uuid::Uuid;
 
 /// Database trait defining the interface for reading object metadata
 #[async_trait]
 pub trait Database: Send + Sync + 'static {
-    /// Query for objects that need to be synchronized
+    /// Query for objects that need to be synchronized with ID-based filtering
     ///
     /// * `limit` - Maximum number of objects to return
     /// * `since` - Only return objects modified after this timestamp
-    async fn get_objects_to_sync(
+    /// * `after_id` - For objects with the same timestamp as `since`, only return those with ID > after_id
+    async fn get_objects_to_sync_with_id(
         &self,
         limit: u32,
         since: Option<DateTime<Utc>>,
+        after_id: Option<Uuid>,
     ) -> Result<Vec<ObjectIndex>, DatabaseError>;
 
     /// Get a specific object by its key
-    #[allow(dead_code)]
+    #[cfg(test)]
     async fn get_object_by_key(&self, object_key: &str) -> Result<ObjectIndex, DatabaseError>;
 
     /// Add an object to the database (test-only)
@@ -37,14 +40,18 @@ pub trait Database: Send + Sync + 'static {
 /// parts of the application to share the same database instance.
 #[async_trait]
 impl<T: Database + ?Sized> Database for Arc<T> {
-    async fn get_objects_to_sync(
+    async fn get_objects_to_sync_with_id(
         &self,
         limit: u32,
         since: Option<DateTime<Utc>>,
+        after_id: Option<Uuid>,
     ) -> Result<Vec<ObjectIndex>, DatabaseError> {
-        (**self).get_objects_to_sync(limit, since).await
+        (**self)
+            .get_objects_to_sync_with_id(limit, since, after_id)
+            .await
     }
 
+    #[cfg(test)]
     async fn get_object_by_key(&self, object_key: &str) -> Result<ObjectIndex, DatabaseError> {
         (**self).get_object_by_key(object_key).await
     }

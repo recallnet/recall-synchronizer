@@ -10,11 +10,20 @@ use std::time::Duration;
 /// A PostgreSQL implementation of the Database trait
 pub struct PostgresDatabase {
     pool: PgPool,
+    schema: Option<String>,
 }
 
 impl PostgresDatabase {
     /// Create a new PostgresDatabase with the given connection URL
     pub async fn new(database_url: &str) -> Result<Self, DatabaseError> {
+        Self::new_with_schema(database_url, None).await
+    }
+
+    /// Create a new PostgresDatabase with a specific schema
+    pub async fn new_with_schema(
+        database_url: &str,
+        schema: Option<String>,
+    ) -> Result<Self, DatabaseError> {
         let pool = PgPoolOptions::new()
             .max_connections(10)
             .acquire_timeout(Duration::from_secs(10))
@@ -29,7 +38,72 @@ impl PostgresDatabase {
             )));
         };
 
-        Ok(PostgresDatabase { pool })
+        let db = PostgresDatabase { pool, schema };
+
+        // If a schema is specified, create it and the tables
+        if let Some(ref schema_name) = db.schema {
+            db.initialize_schema(schema_name).await?;
+        }
+
+        Ok(db)
+    }
+
+    /// Initialize a schema with the required tables
+    async fn initialize_schema(&self, schema_name: &str) -> Result<(), DatabaseError> {
+        // Create schema if it doesn't exist
+        let create_schema_query = format!("CREATE SCHEMA IF NOT EXISTS {}", schema_name);
+        sqlx::query(&create_schema_query)
+            .execute(&self.pool)
+            .await
+            .map_err(|e| DatabaseError::QueryError(format!("Failed to create schema: {}", e)))?;
+
+        // Create the object_index table in the schema
+        let create_table_query = format!(
+            r#"
+            CREATE TABLE IF NOT EXISTS {}.object_index (
+                id UUID PRIMARY KEY,
+                object_key TEXT UNIQUE NOT NULL,
+                bucket_name VARCHAR(100) NOT NULL,
+                competition_id UUID,
+                agent_id UUID,
+                data_type VARCHAR(50) NOT NULL,
+                size_bytes BIGINT,
+                content_hash VARCHAR(128),
+                metadata JSONB,
+                event_timestamp TIMESTAMPTZ,
+                object_last_modified_at TIMESTAMPTZ NOT NULL,
+                created_at TIMESTAMPTZ NOT NULL,
+                updated_at TIMESTAMPTZ NOT NULL
+            )
+            "#,
+            schema_name
+        );
+
+        sqlx::query(&create_table_query)
+            .execute(&self.pool)
+            .await
+            .map_err(|e| DatabaseError::QueryError(format!("Failed to create table: {}", e)))?;
+
+        // Create index
+        let create_index_query = format!(
+            "CREATE INDEX IF NOT EXISTS object_index_last_modified_idx ON {}.object_index (object_last_modified_at)",
+            schema_name
+        );
+
+        sqlx::query(&create_index_query)
+            .execute(&self.pool)
+            .await
+            .map_err(|e| DatabaseError::QueryError(format!("Failed to create index: {}", e)))?;
+
+        Ok(())
+    }
+
+    /// Get the table name with schema prefix if applicable
+    fn table_name(&self) -> String {
+        match &self.schema {
+            Some(schema) => format!("{}.object_index", schema),
+            None => "object_index".to_string(),
+        }
     }
 
     /// Helper function to create an ObjectIndex from a database row
@@ -83,64 +157,90 @@ impl PostgresDatabase {
 
 #[async_trait]
 impl Database for PostgresDatabase {
-    async fn get_objects_to_sync(
+    async fn get_objects_to_sync_with_id(
         &self,
         limit: u32,
         since: Option<DateTime<Utc>>,
+        after_id: Option<uuid::Uuid>,
     ) -> Result<Vec<ObjectIndex>, DatabaseError> {
-        let query_base = r#"
+        let query_base = format!(
+            r#"
             SELECT
                 id, object_key, bucket_name, competition_id, agent_id,
                 data_type, size_bytes, content_hash, metadata,
                 event_timestamp, object_last_modified_at, created_at, updated_at
-            FROM object_index
-        "#;
+            FROM {}
+            "#,
+            self.table_name()
+        );
 
-        let objects = if let Some(ts) = since {
-            // With timestamp filter
-            let query = format!("{} WHERE object_last_modified_at > $1 ORDER BY object_last_modified_at DESC LIMIT $2", query_base);
-            match sqlx::query(&query)
-                .bind(ts)
-                .bind(i64::from(limit))
-                .fetch_all(&self.pool)
-                .await
-            {
-                Ok(rows) => rows,
-                Err(e) => {
-                    // For testing, if the object_index table doesn't exist, return an empty list
-                    if e.to_string()
-                        .contains("relation \"object_index\" does not exist")
-                    {
-                        return Ok(Vec::new());
+        let objects = match (since, after_id) {
+            (Some(ts), Some(id)) => {
+                // With both timestamp and ID filter
+                let query = format!(
+                    "{} WHERE (object_last_modified_at > $1) OR (object_last_modified_at = $1 AND id > $2) ORDER BY object_last_modified_at DESC, id ASC LIMIT $3",
+                    query_base
+                );
+                match sqlx::query(&query)
+                    .bind(ts)
+                    .bind(id)
+                    .bind(i64::from(limit))
+                    .fetch_all(&self.pool)
+                    .await
+                {
+                    Ok(rows) => rows,
+                    Err(e) => {
+                        if e.to_string().contains("does not exist") {
+                            return Ok(Vec::new());
+                        }
+                        return Err(DatabaseError::QueryError(e.to_string()));
                     }
-                    return Err(DatabaseError::QueryError(e.to_string()));
                 }
             }
-        } else {
-            // Without timestamp filter
-            let query = format!(
-                "{} ORDER BY object_last_modified_at DESC LIMIT $1",
-                query_base
-            );
-            match sqlx::query(&query)
-                .bind(i64::from(limit))
-                .fetch_all(&self.pool)
-                .await
-            {
-                Ok(rows) => rows,
-                Err(e) => {
-                    // For testing, if the object_index table doesn't exist, return an empty list
-                    if e.to_string()
-                        .contains("relation \"object_index\" does not exist")
-                    {
-                        return Ok(Vec::new());
+            (Some(ts), None) => {
+                // Only timestamp filter
+                let query = format!(
+                    "{} WHERE object_last_modified_at > $1 ORDER BY object_last_modified_at DESC, id ASC LIMIT $2",
+                    query_base
+                );
+                match sqlx::query(&query)
+                    .bind(ts)
+                    .bind(i64::from(limit))
+                    .fetch_all(&self.pool)
+                    .await
+                {
+                    Ok(rows) => rows,
+                    Err(e) => {
+                        if e.to_string().contains("does not exist") {
+                            return Ok(Vec::new());
+                        }
+                        return Err(DatabaseError::QueryError(e.to_string()));
                     }
-                    return Err(DatabaseError::QueryError(e.to_string()));
+                }
+            }
+            (None, _) => {
+                // No filters
+                let query = format!(
+                    "{} ORDER BY object_last_modified_at DESC, id ASC LIMIT $1",
+                    query_base
+                );
+                match sqlx::query(&query)
+                    .bind(i64::from(limit))
+                    .fetch_all(&self.pool)
+                    .await
+                {
+                    Ok(rows) => rows,
+                    Err(e) => {
+                        if e.to_string().contains("does not exist") {
+                            return Ok(Vec::new());
+                        }
+                        return Err(DatabaseError::QueryError(e.to_string()));
+                    }
                 }
             }
         };
 
-        // Convert rows to ObjectIndex objects using the helper function
+        // Convert rows to ObjectIndex objects
         let mut result = Vec::with_capacity(objects.len());
         for row in objects {
             result.push(self.row_to_object_index(row)?);
@@ -149,27 +249,29 @@ impl Database for PostgresDatabase {
         Ok(result)
     }
 
+    #[cfg(test)]
     async fn get_object_by_key(&self, object_key: &str) -> Result<ObjectIndex, DatabaseError> {
-        let query = r#"
+        let query = format!(
+            r#"
             SELECT
                 id, object_key, bucket_name, competition_id, agent_id,
                 data_type, size_bytes, content_hash, metadata,
                 event_timestamp, object_last_modified_at, created_at, updated_at
-            FROM object_index
+            FROM {}
             WHERE object_key = $1
-        "#;
+            "#,
+            self.table_name()
+        );
 
-        let row = match sqlx::query(query)
+        let row = match sqlx::query(&query)
             .bind(object_key)
             .fetch_optional(&self.pool)
             .await
         {
             Ok(row) => row,
             Err(e) => {
-                // For testing, if the object_index table doesn't exist, return not found
-                if e.to_string()
-                    .contains("relation \"object_index\" does not exist")
-                {
+                // For testing, if the table doesn't exist, return not found
+                if e.to_string().contains("does not exist") {
                     return Err(DatabaseError::ObjectNotFound(object_key.to_string()));
                 }
                 return Err(DatabaseError::QueryError(e.to_string()));
@@ -183,8 +285,9 @@ impl Database for PostgresDatabase {
 
     #[cfg(test)]
     async fn add_object(&self, object: ObjectIndex) -> Result<(), DatabaseError> {
-        let query = r#"
-            INSERT INTO object_index (
+        let query = format!(
+            r#"
+            INSERT INTO {} (
                 id, object_key, bucket_name, competition_id, agent_id,
                 data_type, size_bytes, content_hash, metadata,
                 event_timestamp, object_last_modified_at, created_at, updated_at
@@ -200,9 +303,11 @@ impl Database for PostgresDatabase {
                 event_timestamp = EXCLUDED.event_timestamp,
                 object_last_modified_at = EXCLUDED.object_last_modified_at,
                 updated_at = EXCLUDED.updated_at
-        "#;
+            "#,
+            self.table_name()
+        );
 
-        sqlx::query(query)
+        sqlx::query(&query)
             .bind(object.id)
             .bind(&object.object_key)
             .bind(&object.bucket_name)
@@ -225,18 +330,14 @@ impl Database for PostgresDatabase {
 
     #[cfg(test)]
     async fn clear_data(&self) -> Result<(), DatabaseError> {
-        sqlx::query("DELETE FROM object_index")
-            .execute(&self.pool)
-            .await
-            .map_err(|e| {
-                if e.to_string()
-                    .contains("relation \"object_index\" does not exist")
-                {
-                    // Table doesn't exist yet, which is fine for tests
-                    return DatabaseError::Other(anyhow::anyhow!("Table not initialized"));
-                }
-                DatabaseError::Other(e.into())
-            })?;
+        let query = format!("DELETE FROM {}", self.table_name());
+        sqlx::query(&query).execute(&self.pool).await.map_err(|e| {
+            if e.to_string().contains("does not exist") {
+                // Table doesn't exist yet, which is fine for tests
+                return DatabaseError::Other(anyhow::anyhow!("Table not initialized"));
+            }
+            DatabaseError::Other(e.into())
+        })?;
 
         Ok(())
     }
