@@ -48,6 +48,19 @@ impl SqliteSyncStorage {
                 SyncStorageError::OpenError(format!("Failed to create sync_records table: {}", e))
             })?;
 
+        // Create a table to track the last synced object ID
+        connection
+            .execute(
+                "CREATE TABLE IF NOT EXISTS sync_state (
+                    key TEXT PRIMARY KEY,
+                    value TEXT NOT NULL
+                )",
+                [],
+            )
+            .map_err(|e| {
+                SyncStorageError::OpenError(format!("Failed to create sync_state table: {}", e))
+            })?;
+
         // Create indexes for efficient querying
         connection
             .execute(
@@ -331,6 +344,64 @@ impl SyncStorage for SqliteSyncStorage {
         .map_err(|e| SyncStorageError::OperationError(format!("Task panic: {}", e)))?
     }
 
+    async fn get_last_synced_object_id(&self) -> Result<Option<Uuid>, SyncStorageError> {
+        let connection = Arc::clone(&self.connection);
+
+        task::spawn_blocking(move || {
+            let conn = match connection.lock() {
+                Ok(conn) => conn,
+                Err(_) => return Err(SyncStorageError::Locked),
+            };
+
+            let result: Option<String> = conn
+                .query_row(
+                    "SELECT value FROM sync_state WHERE key = 'last_synced_object_id'",
+                    [],
+                    |row| row.get(0),
+                )
+                .optional()
+                .map_err(|e| {
+                    SyncStorageError::OperationError(format!("Failed to query last synced ID: {}", e))
+                })?;
+
+            match result {
+                Some(id_str) => {
+                    let id = Uuid::parse_str(&id_str).map_err(|e| {
+                        SyncStorageError::OperationError(format!("Failed to parse UUID: {}", e))
+                    })?;
+                    Ok(Some(id))
+                }
+                None => Ok(None),
+            }
+        })
+        .await
+        .map_err(|e| SyncStorageError::OperationError(format!("Task panic: {}", e)))?
+    }
+
+    async fn set_last_synced_object_id(&self, id: Uuid) -> Result<(), SyncStorageError> {
+        let connection = Arc::clone(&self.connection);
+        let id_str = id.to_string();
+
+        task::spawn_blocking(move || {
+            let conn = match connection.lock() {
+                Ok(conn) => conn,
+                Err(_) => return Err(SyncStorageError::Locked),
+            };
+
+            conn.execute(
+                "INSERT OR REPLACE INTO sync_state (key, value) VALUES ('last_synced_object_id', ?1)",
+                params![id_str],
+            )
+            .map_err(|e| {
+                SyncStorageError::OperationError(format!("Failed to set last synced ID: {}", e))
+            })?;
+
+            Ok(())
+        })
+        .await
+        .map_err(|e| SyncStorageError::OperationError(format!("Task panic: {}", e)))?
+    }
+
     #[cfg(test)]
     async fn clear_data(&self) -> Result<(), SyncStorageError> {
         let connection = Arc::clone(&self.connection);
@@ -344,6 +415,11 @@ impl SyncStorage for SqliteSyncStorage {
             // Clear all records
             conn.execute("DELETE FROM sync_records", []).map_err(|e| {
                 SyncStorageError::OperationError(format!("Failed to clear records: {}", e))
+            })?;
+
+            // Clear sync state
+            conn.execute("DELETE FROM sync_state", []).map_err(|e| {
+                SyncStorageError::OperationError(format!("Failed to clear sync state: {}", e))
             })?;
 
             Ok(())

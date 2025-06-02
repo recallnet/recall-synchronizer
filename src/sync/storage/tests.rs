@@ -350,3 +350,51 @@ async fn ordering_of_records_by_timestamp() {
         assert_eq!(last_object.timestamp, base_time + Duration::hours(5));
     }
 }
+
+#[tokio::test]
+async fn get_last_synced_object_id_returns_none_when_not_set() {
+    for storage_factory in get_test_storages() {
+        let storage = storage_factory().await;
+        storage.clear_data().await.unwrap();
+
+        let last_id = storage.get_last_synced_object_id().await.unwrap();
+        assert_eq!(last_id, None);
+    }
+}
+
+#[tokio::test]
+async fn set_last_synced_object_id_overwrites_previous_value() {
+    for storage_factory in get_test_storages() {
+        let storage = storage_factory().await;
+        storage.clear_data().await.unwrap();
+
+        let first_id = Uuid::new_v4();
+        storage.set_last_synced_object_id(first_id).await.unwrap();
+
+        let retrieved_id = storage.get_last_synced_object_id().await.unwrap();
+        assert_eq!(retrieved_id, Some(first_id));
+
+        let second_id = Uuid::new_v4();
+        storage.set_last_synced_object_id(second_id).await.unwrap();
+
+        let retrieved_id = storage.get_last_synced_object_id().await.unwrap();
+        assert_eq!(retrieved_id, Some(second_id));
+        assert_ne!(retrieved_id, Some(first_id));
+    }
+}
+
+#[tokio::test]
+async fn clear_data_also_clears_last_synced_object_id() {
+    for storage_factory in get_test_storages() {
+        let storage = storage_factory().await;
+        let test_data = setup_test_data(storage.as_ref()).await;
+
+        let sync_id = test_data[5].id;
+        storage.set_last_synced_object_id(sync_id).await.unwrap();
+
+        storage.clear_data().await.unwrap();
+
+        let retrieved_id = storage.get_last_synced_object_id().await.unwrap();
+        assert_eq!(retrieved_id, None);
+    }
+}

@@ -27,6 +27,13 @@ pub trait SyncStorage: Send + Sync + 'static {
     /// This helps the synchronizer know where to start fetching next
     async fn get_last_object(&self) -> Result<Option<SyncRecord>, SyncStorageError>;
 
+    /// Get the last synced object ID
+    /// This helps handle objects with the same timestamp
+    async fn get_last_synced_object_id(&self) -> Result<Option<Uuid>, SyncStorageError>;
+
+    /// Set the last synced object ID
+    async fn set_last_synced_object_id(&self, id: Uuid) -> Result<(), SyncStorageError>;
+
     /// Clear all test data (test-only)
     #[cfg(test)]
     async fn clear_data(&self) -> Result<(), SyncStorageError>;
@@ -64,6 +71,14 @@ impl<T: SyncStorage + ?Sized> SyncStorage for Arc<T> {
 
     async fn get_last_object(&self) -> Result<Option<SyncRecord>, SyncStorageError> {
         (**self).get_last_object().await
+    }
+
+    async fn get_last_synced_object_id(&self) -> Result<Option<Uuid>, SyncStorageError> {
+        (**self).get_last_synced_object_id().await
+    }
+
+    async fn set_last_synced_object_id(&self, id: Uuid) -> Result<(), SyncStorageError> {
+        (**self).set_last_synced_object_id(id).await
     }
 
     #[cfg(test)]
