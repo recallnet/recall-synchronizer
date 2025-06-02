@@ -1,5 +1,6 @@
 // src/main.rs
-use anyhow::Result;
+use anyhow::{Context, Result};
+use chrono::{DateTime, Utc};
 use clap::Parser;
 use std::process;
 use tracing::{error, info, Level};
@@ -79,6 +80,17 @@ async fn run(
     competition_id: Option<String>,
     since: Option<String>,
 ) -> Result<()> {
+    // Parse the since parameter if provided
+    let since_time = if let Some(ts) = since {
+        Some(
+            DateTime::parse_from_rfc3339(&ts)
+                .context(format!("Failed to parse timestamp: {}", ts))?
+                .with_timezone(&Utc),
+        )
+    } else {
+        None
+    };
+
     // Create specific implementations
     let database = PostgresDatabase::new(&config.database.url).await?;
     let sync_storage = SqliteSyncStorage::new(&config.sync.state_db_path)?;
@@ -98,7 +110,7 @@ async fn run(
     info!("Synchronizer initialized successfully");
 
     // Run the synchronizer
-    if let Err(e) = synchronizer.run(competition_id, since).await {
+    if let Err(e) = synchronizer.run(competition_id, since_time).await {
         error!("Synchronizer failed: {}", e);
         process::exit(1);
     }

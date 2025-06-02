@@ -204,7 +204,7 @@ async fn when_timestamp_filter_is_applied_only_newer_objects_are_synchronized() 
 
     let filter_time = Utc::now() - Duration::days(2);
     synchronizer
-        .run(None, Some(filter_time.to_rfc3339()))
+        .run(None, Some(filter_time))
         .await
         .unwrap();
 

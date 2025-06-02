@@ -59,13 +59,13 @@ impl<D: Database, S: SyncStorage, ST: S3Storage, RS: RecallStorage> Synchronizer
         }
     }
 
-    /// Parses the provided timestamp string or gets the last sync timestamp
-    async fn get_sync_timestamp(&self, since: Option<String>) -> Result<Option<DateTime<Utc>>> {
+    /// Gets the timestamp to sync from, either the provided one or the last sync timestamp
+    async fn get_sync_timestamp(
+        &self,
+        since: Option<DateTime<Utc>>,
+    ) -> Result<Option<DateTime<Utc>>> {
         if let Some(ts) = since {
-            let timestamp = DateTime::parse_from_rfc3339(&ts)
-                .context(format!("Failed to parse provided timestamp: {}", ts))?
-                .with_timezone(&Utc);
-            Ok(Some(timestamp))
+            Ok(Some(ts))
         } else {
             // If no since parameter was provided, use the last synced object's timestamp
             if let Some(last_record) = self.sync_storage.get_last_object().await? {
@@ -129,7 +129,6 @@ impl<D: Database, S: SyncStorage, ST: S3Storage, RS: RecallStorage> Synchronizer
 
     /// Synchronizes a single object from S3 to Recall
     async fn sync_object(&self, object: &ObjectIndex) -> Result<()> {
-        // Create a record in sync storage
         let sync_record = SyncRecord::new(
             object.id,
             object.object_key.clone(),
@@ -137,18 +136,14 @@ impl<D: Database, S: SyncStorage, ST: S3Storage, RS: RecallStorage> Synchronizer
             object.object_last_modified_at,
         );
 
-        // Add the object to sync storage with PendingSync status
         self.sync_storage.add_object(sync_record).await?;
 
-        // Update status to Processing
         self.sync_storage
             .set_object_status(object.id, SyncStatus::Processing)
             .await?;
 
-        // Get the object from S3
         match self.s3_storage.get_object(&object.object_key).await {
             Ok(data) => {
-                // Submit to Recall
                 match self
                     .recall_storage
                     .add_blob(&object.object_key, data.to_vec())
@@ -157,7 +152,6 @@ impl<D: Database, S: SyncStorage, ST: S3Storage, RS: RecallStorage> Synchronizer
                     Ok(()) => {
                         info!("Successfully synchronized {} to Recall", object.object_key);
 
-                        // Update status to Complete
                         self.sync_storage
                             .set_object_status(object.id, SyncStatus::Complete)
                             .await?;
@@ -178,15 +172,17 @@ impl<D: Database, S: SyncStorage, ST: S3Storage, RS: RecallStorage> Synchronizer
     }
 
     /// Runs the synchronization process
-    pub async fn run(&self, competition_id: Option<String>, since: Option<String>) -> Result<()> {
+    pub async fn run(
+        &self,
+        competition_id: Option<String>,
+        since: Option<DateTime<Utc>>,
+    ) -> Result<()> {
         info!("Starting synchronization");
 
-        // Log parameters for debugging
         if let Some(id) = &competition_id {
             info!("Filtering by competition ID: {}", id);
         }
 
-        // Parse the since parameter
         let since_time = self.get_sync_timestamp(since).await?;
 
         if let Some(ts) = &since_time {
@@ -200,7 +196,6 @@ impl<D: Database, S: SyncStorage, ST: S3Storage, RS: RecallStorage> Synchronizer
             // TODO: Implement reset logic when integrating with sync storage
         }
 
-        // Get objects to sync
         let objects = self.fetch_objects_to_sync(since_time).await?;
 
         if objects.is_empty() {
@@ -208,12 +203,10 @@ impl<D: Database, S: SyncStorage, ST: S3Storage, RS: RecallStorage> Synchronizer
             return Ok(());
         }
 
-        // Apply competition_id filter if specified
         let filtered_objects = self.filter_objects_by_competition(objects, competition_id)?;
 
         info!("Found {} objects to synchronize", filtered_objects.len());
 
-        // Process each object
         for object in filtered_objects {
             if self.should_process_object(&object).await? {
                 self.sync_object(&object).await?;
