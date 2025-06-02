@@ -18,20 +18,6 @@ impl FakeSyncStorage {
             records: Arc::new(RwLock::new(HashMap::new())),
         }
     }
-
-    /// Clear all records (for testing)
-    #[allow(dead_code)]
-    pub fn fake_clear_records(&self) {
-        let mut records = self.records.write().unwrap();
-        records.clear();
-    }
-
-    /// Get a record by ID (for testing)
-    #[allow(dead_code)]
-    pub fn fake_get_record(&self, id: Uuid) -> Option<SyncRecord> {
-        let records = self.records.read().unwrap();
-        records.get(&id).cloned()
-    }
 }
 
 #[async_trait]
