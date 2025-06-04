@@ -49,14 +49,15 @@ impl Database for FakeDatabase {
             .cloned()
             .collect();
 
-        // Sort by last_modified_at in descending order (most recent first)
+        // Sort by last_modified_at in ascending order (oldest first)
         // For same timestamps, sort by ID ascending
-        filtered.sort_by(
-            |a, b| match b.object_last_modified_at.cmp(&a.object_last_modified_at) {
+        // This ensures we complete all objects with the same timestamp before moving to newer ones
+        filtered.sort_by(|a, b| {
+            match a.object_last_modified_at.cmp(&b.object_last_modified_at) {
                 std::cmp::Ordering::Equal => a.id.cmp(&b.id),
                 other => other,
-            },
-        );
+            }
+        });
 
         // Apply limit after sorting
         filtered.truncate(limit as usize);

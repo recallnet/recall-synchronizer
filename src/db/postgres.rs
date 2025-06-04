@@ -178,7 +178,7 @@ impl Database for PostgresDatabase {
             (Some(ts), Some(id)) => {
                 // With both timestamp and ID filter
                 let query = format!(
-                    "{} WHERE (object_last_modified_at > $1) OR (object_last_modified_at = $1 AND id > $2) ORDER BY object_last_modified_at DESC, id ASC LIMIT $3",
+                    "{} WHERE (object_last_modified_at > $1) OR (object_last_modified_at = $1 AND id > $2) ORDER BY object_last_modified_at ASC, id ASC LIMIT $3",
                     query_base
                 );
                 match sqlx::query(&query)
@@ -200,7 +200,7 @@ impl Database for PostgresDatabase {
             (Some(ts), None) => {
                 // Only timestamp filter
                 let query = format!(
-                    "{} WHERE object_last_modified_at > $1 ORDER BY object_last_modified_at DESC, id ASC LIMIT $2",
+                    "{} WHERE object_last_modified_at > $1 ORDER BY object_last_modified_at ASC, id ASC LIMIT $2",
                     query_base
                 );
                 match sqlx::query(&query)
@@ -221,7 +221,7 @@ impl Database for PostgresDatabase {
             (None, _) => {
                 // No filters
                 let query = format!(
-                    "{} ORDER BY object_last_modified_at DESC, id ASC LIMIT $1",
+                    "{} ORDER BY object_last_modified_at ASC, id ASC LIMIT $1",
                     query_base
                 );
                 match sqlx::query(&query)

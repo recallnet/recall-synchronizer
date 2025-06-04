@@ -214,17 +214,17 @@ async fn get_objects_with_limit_in_middle_of_range_returns_objects() {
             limit
         );
 
-        // Verify we got the most recent objects
+        // Verify we got the oldest objects (ascending order)
         let sorted_test_objects = {
             let mut objs = test_objects[2..].to_vec();
-            objs.sort_by(|a, b| b.object_last_modified_at.cmp(&a.object_last_modified_at));
+            objs.sort_by(|a, b| a.object_last_modified_at.cmp(&b.object_last_modified_at));
             objs
         };
 
         for i in 0..limit as usize {
             assert_eq!(
                 objects[i].object_key, sorted_test_objects[i].object_key,
-                "Objects should be returned in order of most recent first"
+                "Objects should be returned in order of oldest first"
             );
         }
     }
@@ -426,20 +426,21 @@ async fn get_objects_with_mixed_timestamps_and_after_id() {
             "Should return objects with same timestamp and greater ID, plus all newer objects"
         );
         
-        // Verify the newer timestamp object comes first (sorted by timestamp DESC)
+        // With ascending order, same-timestamp objects come first, then newer objects
+        // Verify we got the right same-timestamp objects first
         assert_eq!(
-            mixed_batch[0].id, newer_object.id,
-            "Newer timestamp object should come first"
+            mixed_batch[0].id, objects_same_time[3].id,
+            "Should get object at index 3 first"
+        );
+        assert_eq!(
+            mixed_batch[1].id, objects_same_time[4].id,
+            "Should get object at index 4 second"
         );
         
-        // Verify we got the right same-timestamp objects
+        // Verify the newer timestamp object comes last (sorted by timestamp ASC)
         assert_eq!(
-            mixed_batch[1].id, objects_same_time[3].id,
-            "Should get object at index 3"
-        );
-        assert_eq!(
-            mixed_batch[2].id, objects_same_time[4].id,
-            "Should get object at index 4"
+            mixed_batch[2].id, newer_object.id,
+            "Newer timestamp object should come last"
         );
         
         // Test 2: Verify deterministic ordering by running the same query multiple times
@@ -454,15 +455,19 @@ async fn get_objects_with_mixed_timestamps_and_after_id() {
                 .unwrap();
             
             // Should always get the same objects in the same order
-            assert_eq!(consistent_batch.len(), 4); // 1 newer + 3 same-timestamp objects
-            assert_eq!(consistent_batch[0].id, newer_object.id);
+            assert_eq!(consistent_batch.len(), 4); // 3 same-timestamp objects + 1 newer
+            
+            // With ascending order, same-timestamp objects come first
             for i in 0..3 {
                 assert_eq!(
-                    consistent_batch[i + 1].id,
+                    consistent_batch[i].id,
                     objects_same_time[i + 2].id,
                     "Same-timestamp objects should be in consistent ID order"
                 );
             }
+            
+            // Newer object comes last
+            assert_eq!(consistent_batch[3].id, newer_object.id);
         }
     }
 }
