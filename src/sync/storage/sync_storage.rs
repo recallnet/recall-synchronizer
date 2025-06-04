@@ -14,8 +14,8 @@ pub trait SyncStorage: Send + Sync + 'static {
     async fn set_object_status(&self, id: Uuid, status: SyncStatus)
         -> Result<(), SyncStorageError>;
 
-    /// Get the status of an object by its ID
-    async fn get_object_status(&self, id: Uuid) -> Result<Option<SyncStatus>, SyncStorageError>;
+    /// Get an object by its ID
+    async fn get_object(&self, id: Uuid) -> Result<Option<SyncRecord>, SyncStorageError>;
 
     /// Get all objects with a given status
     async fn get_objects_with_status(
@@ -58,8 +58,8 @@ impl<T: SyncStorage + ?Sized> SyncStorage for Arc<T> {
         (**self).set_object_status(id, status).await
     }
 
-    async fn get_object_status(&self, id: Uuid) -> Result<Option<SyncStatus>, SyncStorageError> {
-        (**self).get_object_status(id).await
+    async fn get_object(&self, id: Uuid) -> Result<Option<SyncRecord>, SyncStorageError> {
+        (**self).get_object(id).await
     }
 
     async fn get_objects_with_status(

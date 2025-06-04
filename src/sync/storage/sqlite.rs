@@ -190,7 +190,7 @@ impl SyncStorage for SqliteSyncStorage {
         .map_err(|e| SyncStorageError::OperationError(format!("Task panic: {}", e)))?
     }
 
-    async fn get_object_status(&self, id: Uuid) -> Result<Option<SyncStatus>, SyncStorageError> {
+    async fn get_object(&self, id: Uuid) -> Result<Option<SyncRecord>, SyncStorageError> {
         let connection = Arc::clone(&self.connection);
         let id_str = id.to_string();
 
@@ -200,21 +200,41 @@ impl SyncStorage for SqliteSyncStorage {
                 Err(_) => return Err(SyncStorageError::Locked),
             };
 
-            let result: Option<String> = conn
+            let result: Option<(String, String, String, String, String)> = conn
                 .query_row(
-                    "SELECT status FROM sync_records WHERE id = ?1",
+                    "SELECT id, object_key, bucket_name, timestamp, status 
+                     FROM sync_records WHERE id = ?1",
                     params![id_str],
-                    |row| row.get(0),
+                    |row| {
+                        Ok((
+                            row.get(0)?,
+                            row.get(1)?,
+                            row.get(2)?,
+                            row.get(3)?,
+                            row.get(4)?,
+                        ))
+                    },
                 )
                 .optional()
                 .map_err(|e| {
-                    SyncStorageError::OperationError(format!("Failed to query status: {}", e))
+                    SyncStorageError::OperationError(format!("Failed to query record: {}", e))
                 })?;
 
             match result {
-                Some(status_str) => {
+                Some((id_str, object_key, bucket_name, timestamp_str, status_str)) => {
+                    let id = Uuid::parse_str(&id_str).map_err(|e| {
+                        SyncStorageError::OperationError(format!("Failed to parse UUID: {}", e))
+                    })?;
+                    let timestamp = Self::string_to_datetime(&timestamp_str)?;
                     let status = Self::string_to_status(&status_str)?;
-                    Ok(Some(status))
+
+                    Ok(Some(SyncRecord::with_status(
+                        id,
+                        object_key,
+                        bucket_name,
+                        timestamp,
+                        status,
+                    )))
                 }
                 None => Ok(None),
             }
@@ -361,7 +381,10 @@ impl SyncStorage for SqliteSyncStorage {
                 )
                 .optional()
                 .map_err(|e| {
-                    SyncStorageError::OperationError(format!("Failed to query last synced ID: {}", e))
+                    SyncStorageError::OperationError(format!(
+                        "Failed to query last synced ID: {}",
+                        e
+                    ))
                 })?;
 
             match result {

@@ -80,8 +80,9 @@ async fn add_object_creates_new_record() {
         storage.add_object(record).await.unwrap();
 
         // Check that the object exists with PendingSync status
-        let status = storage.get_object_status(id).await.unwrap();
-        assert_eq!(status, Some(SyncStatus::PendingSync));
+        let retrieved = storage.get_object(id).await.unwrap();
+        assert!(retrieved.is_some());
+        assert_eq!(retrieved.unwrap().status, SyncStatus::PendingSync);
     }
 }
 
@@ -101,16 +102,18 @@ async fn set_object_status_updates_existing_record() {
             .set_object_status(id, SyncStatus::Processing)
             .await
             .unwrap();
-        let status = storage.get_object_status(id).await.unwrap();
-        assert_eq!(status, Some(SyncStatus::Processing));
+        let retrieved = storage.get_object(id).await.unwrap();
+        assert!(retrieved.is_some());
+        assert_eq!(retrieved.unwrap().status, SyncStatus::Processing);
 
         // Update status to Complete
         storage
             .set_object_status(id, SyncStatus::Complete)
             .await
             .unwrap();
-        let status = storage.get_object_status(id).await.unwrap();
-        assert_eq!(status, Some(SyncStatus::Complete));
+        let retrieved = storage.get_object(id).await.unwrap();
+        assert!(retrieved.is_some());
+        assert_eq!(retrieved.unwrap().status, SyncStatus::Complete);
     }
 }
 
@@ -134,15 +137,15 @@ async fn set_object_status_fails_for_nonexistent_record() {
 }
 
 #[tokio::test]
-async fn get_object_status_returns_none_for_nonexistent_record() {
+async fn get_object_returns_none_for_nonexistent_record() {
     for storage_factory in get_test_storages() {
         let storage = storage_factory().await;
         storage.clear_data().await.unwrap();
 
         let nonexistent_id = Uuid::new_v4();
-        let status = storage.get_object_status(nonexistent_id).await.unwrap();
+        let retrieved = storage.get_object(nonexistent_id).await.unwrap();
 
-        assert_eq!(status, None);
+        assert_eq!(retrieved, None);
     }
 }
 
@@ -245,16 +248,16 @@ async fn clear_data_removes_all_records() {
         let test_data = setup_test_data(storage.as_ref()).await;
 
         // Verify some data exists
-        let status = storage.get_object_status(test_data[0].id).await.unwrap();
-        assert!(status.is_some());
+        let retrieved = storage.get_object(test_data[0].id).await.unwrap();
+        assert!(retrieved.is_some());
 
         // Clear all data
         storage.clear_data().await.unwrap();
 
         // Verify all data is gone
         for record in &test_data {
-            let status = storage.get_object_status(record.id).await.unwrap();
-            assert_eq!(status, None);
+            let retrieved = storage.get_object(record.id).await.unwrap();
+            assert_eq!(retrieved, None);
         }
 
         // Verify get_last_object returns None
@@ -298,10 +301,10 @@ async fn concurrent_status_updates() {
         }
 
         // Verify the object still exists with a valid status
-        let final_status = storage.get_object_status(id).await.unwrap();
-        assert!(final_status.is_some());
+        let final_record = storage.get_object(id).await.unwrap();
+        assert!(final_record.is_some());
         assert!(matches!(
-            final_status.unwrap(),
+            final_record.unwrap().status,
             SyncStatus::Processing | SyncStatus::Complete
         ));
     }

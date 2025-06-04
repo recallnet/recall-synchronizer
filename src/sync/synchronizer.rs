@@ -67,21 +67,14 @@ impl<D: Database, S: SyncStorage, ST: S3Storage, RS: RecallStorage> Synchronizer
         if let Some(ts) = since {
             // If user provides a specific timestamp, start from there with no ID filter
             Ok((Some(ts), None))
-        } else {
-            if let Some(last_id) = self.sync_storage.get_last_synced_object_id().await? {
-                let completed = self
-                    .sync_storage
-                    .get_objects_with_status(SyncStatus::Complete)
-                    .await?;
-
-                if let Some(last_record) = completed.iter().find(|r| r.id == last_id) {
-                    Ok((Some(last_record.timestamp), Some(last_id)))
-                } else {
-                    Ok((None, None))
-                }
+        } else if let Some(last_id) = self.sync_storage.get_last_synced_object_id().await? {
+            if let Some(last_record) = self.sync_storage.get_object(last_id).await? {
+                Ok((Some(last_record.timestamp), Some(last_id)))
             } else {
                 Ok((None, None))
             }
+        } else {
+            Ok((None, None))
         }
     }
 
@@ -118,22 +111,25 @@ impl<D: Database, S: SyncStorage, ST: S3Storage, RS: RecallStorage> Synchronizer
 
     /// Checks if an object should be processed based on its current status
     async fn should_process_object(&self, object: &ObjectIndex) -> Result<bool> {
-        match self.sync_storage.get_object_status(object.id).await? {
-            Some(SyncStatus::Complete) => {
-                debug!(
-                    "Object {} already synchronized, skipping",
-                    object.object_key
-                );
-                Ok(false)
-            }
-            Some(SyncStatus::Processing) => {
-                debug!(
-                    "Object {} is already being processed, skipping",
-                    object.object_key
-                );
-                Ok(false)
-            }
-            _ => Ok(true),
+        match self.sync_storage.get_object(object.id).await? {
+            Some(record) => match record.status {
+                SyncStatus::Complete => {
+                    debug!(
+                        "Object {} already synchronized, skipping",
+                        object.object_key
+                    );
+                    Ok(false)
+                }
+                SyncStatus::Processing => {
+                    debug!(
+                        "Object {} is already being processed, skipping",
+                        object.object_key
+                    );
+                    Ok(false)
+                }
+                _ => Ok(true),
+            },
+            None => Ok(true),
         }
     }
 
@@ -226,10 +222,10 @@ impl<D: Database, S: SyncStorage, ST: S3Storage, RS: RecallStorage> Synchronizer
             if self.should_process_object(object).await? {
                 self.sync_object(object).await?;
 
-                if let Some(SyncStatus::Complete) =
-                    self.sync_storage.get_object_status(object.id).await?
-                {
-                    last_synced_object = Some(object);
+                if let Some(record) = self.sync_storage.get_object(object.id).await? {
+                    if record.status == SyncStatus::Complete {
+                        last_synced_object = Some(object);
+                    }
                 }
             }
         }

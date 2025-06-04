@@ -10,7 +10,6 @@ use crate::sync::{
 use crate::test_utils::create_test_object_index;
 use bytes::Bytes;
 use chrono::{Duration, Utc};
-use std::collections::HashSet;
 use std::sync::Arc;
 use uuid::Uuid;
 
@@ -31,17 +30,28 @@ struct TestEnvironment {
 impl TestEnvironment {
     /// Verify that an object has been properly synchronized
     async fn verify_object_synced(&self, object: &ObjectIndex) -> Result<(), String> {
-        let status = self
+        let record = self
             .sync_storage
-            .get_object_status(object.id)
+            .get_object(object.id)
             .await
-            .map_err(|e| format!("Failed to get object status: {}", e))?;
+            .map_err(|e| format!("Failed to get object: {}", e))?;
 
-        if status != Some(SyncStatus::Complete) {
-            return Err(format!(
-                "Object {} is not marked as complete in sync storage. Status: {:?}",
-                object.object_key, status
-            ));
+        match record {
+            Some(r) if r.status == SyncStatus::Complete => {
+                // Object is marked as complete, continue verification
+            }
+            Some(r) => {
+                return Err(format!(
+                    "Object {} is not marked as complete in sync storage. Status: {:?}",
+                    object.object_key, r.status
+                ));
+            }
+            None => {
+                return Err(format!(
+                    "Object {} not found in sync storage",
+                    object.object_key
+                ));
+            }
         }
 
         let s3_data = self
@@ -81,18 +91,20 @@ impl TestEnvironment {
         object_key: &str,
     ) -> Result<(), String> {
         // Check sync storage status
-        let status = self
+        let record = self
             .sync_storage
-            .get_object_status(object_id)
+            .get_object(object_id)
             .await
-            .map_err(|e| format!("Failed to get object status: {}", e))?;
+            .map_err(|e| format!("Failed to get object: {}", e))?;
 
-        // Object should either have no status or not be Complete
-        if status == Some(SyncStatus::Complete) {
-            return Err(format!(
-                "Object {} is unexpectedly marked as complete in sync storage",
-                object_key
-            ));
+        // Object should either not exist or not be Complete
+        if let Some(r) = record {
+            if r.status == SyncStatus::Complete {
+                return Err(format!(
+                    "Object {} is unexpectedly marked as complete in sync storage",
+                    object_key
+                ));
+            }
         }
 
         // Verify the blob does not exist in Recall
@@ -329,12 +341,12 @@ async fn when_object_is_already_being_processed_it_is_skipped() {
     env.synchronizer.run(None, None).await.unwrap();
 
     // The object should still be in Processing status since we didn't let our synchronizer complete it
-    let status = env
+    let record = env
         .sync_storage
-        .get_object_status(test_object.id)
+        .get_object(test_object.id)
         .await
         .unwrap();
-    assert_eq!(status, Some(SyncStatus::Processing));
+    assert_eq!(record.map(|r| r.status), Some(SyncStatus::Processing));
 
     // Verify the object was NOT added to Recall (since it was already processing)
     let exists_in_recall = env
@@ -355,12 +367,12 @@ async fn when_object_is_already_being_processed_it_is_skipped() {
     env.synchronizer.run(None, None).await.unwrap();
 
     // The object should still be complete (not processed again)
-    let status = env
+    let record = env
         .sync_storage
-        .get_object_status(test_object.id)
+        .get_object(test_object.id)
         .await
         .unwrap();
-    assert_eq!(status, Some(SyncStatus::Complete));
+    assert_eq!(record.map(|r| r.status), Some(SyncStatus::Complete));
 }
 
 #[tokio::test]

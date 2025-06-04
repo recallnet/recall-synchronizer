@@ -44,9 +44,9 @@ impl SyncStorage for FakeSyncStorage {
         }
     }
 
-    async fn get_object_status(&self, id: Uuid) -> Result<Option<SyncStatus>, SyncStorageError> {
+    async fn get_object(&self, id: Uuid) -> Result<Option<SyncRecord>, SyncStorageError> {
         let records = self.records.read().unwrap();
-        Ok(records.get(&id).map(|record| record.status))
+        Ok(records.get(&id).cloned())
     }
 
     async fn get_objects_with_status(
