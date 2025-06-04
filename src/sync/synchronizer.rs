@@ -59,19 +59,28 @@ impl<D: Database, S: SyncStorage, ST: S3Storage, RS: RecallStorage> Synchronizer
         }
     }
 
-    /// Gets the timestamp to sync from, either the provided one or the last sync timestamp
-    async fn get_sync_timestamp(
+    /// Gets the timestamp and ID to sync from
+    async fn get_sync_state(
         &self,
         since: Option<DateTime<Utc>>,
-    ) -> Result<Option<DateTime<Utc>>> {
+    ) -> Result<(Option<DateTime<Utc>>, Option<uuid::Uuid>)> {
         if let Some(ts) = since {
-            Ok(Some(ts))
+            // If user provides a specific timestamp, start from there with no ID filter
+            Ok((Some(ts), None))
         } else {
-            // If no since parameter was provided, use the last synced object's timestamp
-            if let Some(last_record) = self.sync_storage.get_last_object().await? {
-                Ok(Some(last_record.timestamp))
+            if let Some(last_id) = self.sync_storage.get_last_synced_object_id().await? {
+                let completed = self
+                    .sync_storage
+                    .get_objects_with_status(SyncStatus::Complete)
+                    .await?;
+
+                if let Some(last_record) = completed.iter().find(|r| r.id == last_id) {
+                    Ok((Some(last_record.timestamp), Some(last_id)))
+                } else {
+                    Ok((None, None))
+                }
             } else {
-                Ok(None)
+                Ok((None, None))
             }
         }
     }
@@ -80,10 +89,11 @@ impl<D: Database, S: SyncStorage, ST: S3Storage, RS: RecallStorage> Synchronizer
     async fn fetch_objects_to_sync(
         &self,
         since_time: Option<DateTime<Utc>>,
+        after_id: Option<uuid::Uuid>,
     ) -> Result<Vec<ObjectIndex>> {
         let batch_size = self.config.sync.batch_size as u32;
         self.database
-            .get_objects_to_sync(batch_size, since_time)
+            .get_objects_to_sync_with_id(batch_size, since_time, after_id)
             .await
             .map_err(|e| anyhow::anyhow!("Failed to fetch objects to sync: {}", e))
     }
@@ -183,7 +193,7 @@ impl<D: Database, S: SyncStorage, ST: S3Storage, RS: RecallStorage> Synchronizer
             info!("Filtering by competition ID: {}", id);
         }
 
-        let since_time = self.get_sync_timestamp(since).await?;
+        let (since_time, after_id) = self.get_sync_state(since).await?;
 
         if let Some(ts) = &since_time {
             info!("Synchronizing data since: {}", ts);
@@ -196,7 +206,7 @@ impl<D: Database, S: SyncStorage, ST: S3Storage, RS: RecallStorage> Synchronizer
             // TODO: Implement reset logic when integrating with sync storage
         }
 
-        let objects = self.fetch_objects_to_sync(since_time).await?;
+        let objects = self.fetch_objects_to_sync(since_time, after_id).await?;
 
         if objects.is_empty() {
             info!("No objects found to synchronize");
@@ -207,10 +217,27 @@ impl<D: Database, S: SyncStorage, ST: S3Storage, RS: RecallStorage> Synchronizer
 
         info!("Found {} objects to synchronize", filtered_objects.len());
 
-        for object in filtered_objects {
-            if self.should_process_object(&object).await? {
-                self.sync_object(&object).await?;
+        // Process objects and track the last successfully synced object
+        // We need to track the last object we processed to properly continue
+        // from where we left off, especially when multiple objects have the same timestamp
+        let mut last_synced_object: Option<&ObjectIndex> = None;
+
+        for object in &filtered_objects {
+            if self.should_process_object(object).await? {
+                self.sync_object(object).await?;
+
+                if let Some(SyncStatus::Complete) =
+                    self.sync_storage.get_object_status(object.id).await?
+                {
+                    last_synced_object = Some(object);
+                }
             }
+        }
+
+        if let Some(last_object) = last_synced_object {
+            self.sync_storage
+                .set_last_synced_object_id(last_object.id)
+                .await?;
         }
 
         info!("Synchronization completed");

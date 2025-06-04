@@ -14,36 +14,9 @@ use std::collections::HashSet;
 use std::sync::Arc;
 use uuid::Uuid;
 
-/// Extract object keys from a vector of ObjectIndex
-fn obj_to_keys(objects: Vec<ObjectIndex>) -> Vec<String> {
-    objects.into_iter().map(|obj| obj.object_key).collect()
-}
-
 /// Extract object keys from a vector of SyncRecord
 fn rec_to_keys(records: Vec<SyncRecord>) -> Vec<String> {
     records.into_iter().map(|rec| rec.object_key).collect()
-}
-
-/// Assert that subset is a subset of superset
-fn assert_subset(superset: Vec<String>, subset: Vec<String>) {
-    let superset_set: HashSet<String> = superset.into_iter().collect();
-    let subset_set: HashSet<String> = subset.into_iter().collect();
-
-    let missing: Vec<String> = subset_set.difference(&superset_set).cloned().collect();
-
-    assert!(
-        missing.is_empty(),
-        "Subset contains elements not in superset: {:?}",
-        missing
-    );
-}
-
-/// Return elements that are in the first vector but not in the second
-fn vec_difference(first: Vec<String>, second: Vec<String>) -> Vec<String> {
-    let first_set: HashSet<String> = first.into_iter().collect();
-    let second_set: HashSet<String> = second.into_iter().collect();
-
-    first_set.difference(&second_set).cloned().collect()
 }
 
 /// Test environment that holds all storage implementations and the synchronizer
@@ -226,7 +199,11 @@ async fn setup_with_config(config: Config) -> TestEnvironment {
 #[tokio::test]
 async fn when_no_filters_applied_all_objects_are_synchronized() {
     let env = setup().await;
-    let objects = env.database.get_objects_to_sync(100, None).await.unwrap();
+    let objects = env
+        .database
+        .get_objects_to_sync_with_id(100, None, None)
+        .await
+        .unwrap();
     let num_objects = objects.len();
 
     env.synchronizer.run(None, None).await.unwrap();
@@ -274,7 +251,11 @@ async fn when_competition_id_filter_is_applied_only_matching_objects_are_synchro
             )
         });
 
-    let all_objects = env.database.get_objects_to_sync(100, None).await.unwrap();
+    let all_objects = env
+        .database
+        .get_objects_to_sync_with_id(100, None, None)
+        .await
+        .unwrap();
     for obj in all_objects {
         if obj.competition_id != Some(competition_id) {
             env.verify_object_not_synced(&obj)
@@ -310,7 +291,11 @@ async fn when_timestamp_filter_is_applied_only_newer_objects_are_synchronized() 
             )
         });
 
-    let all_objects = env.database.get_objects_to_sync(100, None).await.unwrap();
+    let all_objects = env
+        .database
+        .get_objects_to_sync_with_id(100, None, None)
+        .await
+        .unwrap();
     for obj in all_objects {
         if obj.object_last_modified_at > filter_time {
             env.verify_object_synced(&obj).await.unwrap_or_else(|e| {
@@ -392,11 +377,11 @@ async fn batch_size_limits_database_fetch() {
     env.sync_storage.clear_data().await.unwrap();
 
     // Add 10 objects to the database and S3
-    let now = Utc::now();
+    let base_time = Utc::now() - Duration::hours(24);
     for i in 0..10 {
         let object = create_test_object_index(
             &format!("test/batch-{}.jsonl", i),
-            now - Duration::minutes(i as i64), // Older objects have lower indices
+            base_time + Duration::hours(i as i64),
         );
         env.add_object_to_db_and_s3(object, &format!("Test data {}", i))
             .await;
@@ -427,15 +412,10 @@ async fn batch_size_limits_database_fetch() {
 
 #[tokio::test]
 async fn multiple_sync_runs_with_new_objects() {
-    // This test demonstrates that the current implementation has an issue with objects
-    // that have the same timestamp. It only tracks the last timestamp, not the object ID,
-    // which can cause objects to be skipped when they share timestamps.
-
     let mut config = create_test_config();
-    config.sync.batch_size = 3; // Process only 3 objects at a time
+    config.sync.batch_size = 3;
     let env = setup_with_config(config).await;
 
-    // Clear initial test data
     env.database.clear_data().await.unwrap();
     env.sync_storage.clear_data().await.unwrap();
 
@@ -451,26 +431,14 @@ async fn multiple_sync_runs_with_new_objects() {
             .await;
     }
 
-    // First sync - should process 2 objects (batch_size)
-
-    // Debug: Check what objects are available
-    let all_objects_before = env.database.get_objects_to_sync(100, None).await.unwrap();
-    println!("All objects before sync:");
-    for obj in &all_objects_before {
-        println!(
-            "  - {} (timestamp: {}, id: {})",
-            obj.object_key, obj.object_last_modified_at, obj.id
-        );
-    }
-
     env.synchronizer.run(None, None).await.unwrap();
 
-    let completed_run1 = env
+    let synced_records = env
         .sync_storage
         .get_objects_with_status(SyncStatus::Complete)
         .await
         .unwrap();
-    assert_eq!(completed_run1.len(), 3, "First run should sync 3 objects");
+    assert_eq!(synced_records.len(), 3, "First run should sync 3 objects");
 
     // Add second batch of 3 objects with a newer but also same timestamp
     let batch2_time = base_time - Duration::hours(1);
@@ -484,26 +452,33 @@ async fn multiple_sync_runs_with_new_objects() {
 
     env.synchronizer.run(None, None).await.unwrap();
 
-    let completed_run2 = env
+    let synced_records = env
         .sync_storage
         .get_objects_with_status(SyncStatus::Complete)
         .await
         .unwrap();
+    assert_eq!(synced_records.len(), 6, "Should have 6 synced objects");
 
-    assert_eq!(completed_run2.len(), 6, "Should have 6 synced objects");
+    let synced_keys = rec_to_keys(synced_records.clone());
 
-    // All 5 objects from batch 1 should be in completed_run2
-    assert_subset(
-        rec_to_keys(completed_run2.clone()),
-        obj_to_keys(batch1_objects.clone()),
+    let batch1_synced_count = batch1_objects
+        .iter()
+        .filter(|obj| synced_keys.contains(&obj.object_key))
+        .count();
+    let batch2_synced_count = batch2_objects
+        .iter()
+        .filter(|obj| synced_keys.contains(&obj.object_key))
+        .count();
+
+    assert_eq!(
+        batch1_synced_count, 5,
+        "5 objects from batch1 should be synced, got {}",
+        batch1_synced_count
     );
 
-    // Get the 6th remaining object that was synced
-    let synced_batch2_keys = vec_difference(
-        rec_to_keys(completed_run2.clone()),
-        obj_to_keys(batch1_objects.clone()),
+    assert_eq!(
+        batch2_synced_count, 1,
+        "1 object from batch2 should be synced, got {}",
+        batch2_synced_count
     );
-
-    // Assert it is from the second batch
-    assert_subset(obj_to_keys(batch2_objects.clone()), synced_batch2_keys);
 }
