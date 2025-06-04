@@ -27,12 +27,23 @@ pub trait SyncStorage: Send + Sync + 'static {
     /// This helps the synchronizer know where to start fetching next
     async fn get_last_object(&self) -> Result<Option<SyncRecord>, SyncStorageError>;
 
-    /// Get the last synced object ID
+    /// Get the last synced object ID for a competition or globally
     /// This helps handle objects with the same timestamp
-    async fn get_last_synced_object_id(&self) -> Result<Option<Uuid>, SyncStorageError>;
+    /// - When competition_id is None, returns the global last synced ID
+    /// - When competition_id is Some, returns the last synced ID for that competition
+    async fn get_last_synced_object_id(
+        &self,
+        competition_id: Option<Uuid>,
+    ) -> Result<Option<Uuid>, SyncStorageError>;
 
-    /// Set the last synced object ID
-    async fn set_last_synced_object_id(&self, id: Uuid) -> Result<(), SyncStorageError>;
+    /// Set the last synced object ID for a competition or globally
+    /// - When competition_id is None, sets the global last synced ID
+    /// - When competition_id is Some, sets the last synced ID for that competition
+    async fn set_last_synced_object_id(
+        &self,
+        id: Uuid,
+        competition_id: Option<Uuid>,
+    ) -> Result<(), SyncStorageError>;
 
     /// Clear all test data (test-only)
     #[cfg(test)]
@@ -73,12 +84,19 @@ impl<T: SyncStorage + ?Sized> SyncStorage for Arc<T> {
         (**self).get_last_object().await
     }
 
-    async fn get_last_synced_object_id(&self) -> Result<Option<Uuid>, SyncStorageError> {
-        (**self).get_last_synced_object_id().await
+    async fn get_last_synced_object_id(
+        &self,
+        competition_id: Option<Uuid>,
+    ) -> Result<Option<Uuid>, SyncStorageError> {
+        (**self).get_last_synced_object_id(competition_id).await
     }
 
-    async fn set_last_synced_object_id(&self, id: Uuid) -> Result<(), SyncStorageError> {
-        (**self).set_last_synced_object_id(id).await
+    async fn set_last_synced_object_id(
+        &self,
+        id: Uuid,
+        competition_id: Option<Uuid>,
+    ) -> Result<(), SyncStorageError> {
+        (**self).set_last_synced_object_id(id, competition_id).await
     }
 
     #[cfg(test)]

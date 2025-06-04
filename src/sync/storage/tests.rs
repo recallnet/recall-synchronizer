@@ -267,7 +267,7 @@ async fn clear_data_removes_all_records() {
 }
 
 #[tokio::test]
-async fn concurrent_status_updates() {
+async fn concurrent_status_updates_do_not_corrupt_data() {
     use tokio::task::JoinSet;
 
     for storage_factory in get_test_storages() {
@@ -311,7 +311,7 @@ async fn concurrent_status_updates() {
 }
 
 #[tokio::test]
-async fn ordering_of_records_by_timestamp() {
+async fn get_objects_with_status_returns_records_ordered_by_timestamp() {
     for storage_factory in get_test_storages() {
         let storage = storage_factory().await;
         storage.clear_data().await.unwrap();
@@ -360,7 +360,7 @@ async fn get_last_synced_object_id_returns_none_when_not_set() {
         let storage = storage_factory().await;
         storage.clear_data().await.unwrap();
 
-        let last_id = storage.get_last_synced_object_id().await.unwrap();
+        let last_id = storage.get_last_synced_object_id(None).await.unwrap();
         assert_eq!(last_id, None);
     }
 }
@@ -372,32 +372,146 @@ async fn set_last_synced_object_id_overwrites_previous_value() {
         storage.clear_data().await.unwrap();
 
         let first_id = Uuid::new_v4();
-        storage.set_last_synced_object_id(first_id).await.unwrap();
+        storage
+            .set_last_synced_object_id(first_id, None)
+            .await
+            .unwrap();
 
-        let retrieved_id = storage.get_last_synced_object_id().await.unwrap();
+        let retrieved_id = storage.get_last_synced_object_id(None).await.unwrap();
         assert_eq!(retrieved_id, Some(first_id));
 
         let second_id = Uuid::new_v4();
-        storage.set_last_synced_object_id(second_id).await.unwrap();
+        storage
+            .set_last_synced_object_id(second_id, None)
+            .await
+            .unwrap();
 
-        let retrieved_id = storage.get_last_synced_object_id().await.unwrap();
+        let retrieved_id = storage.get_last_synced_object_id(None).await.unwrap();
         assert_eq!(retrieved_id, Some(second_id));
         assert_ne!(retrieved_id, Some(first_id));
     }
 }
 
 #[tokio::test]
-async fn clear_data_also_clears_last_synced_object_id() {
+async fn clear_data_removes_all_last_synced_object_ids() {
     for storage_factory in get_test_storages() {
         let storage = storage_factory().await;
-        let test_data = setup_test_data(storage.as_ref()).await;
-
-        let sync_id = test_data[5].id;
-        storage.set_last_synced_object_id(sync_id).await.unwrap();
-
         storage.clear_data().await.unwrap();
 
-        let retrieved_id = storage.get_last_synced_object_id().await.unwrap();
-        assert_eq!(retrieved_id, None);
+        let comp1_id = Uuid::new_v4();
+        let comp2_id = Uuid::new_v4();
+
+        // Set multiple competition and global last synced IDs
+        storage
+            .set_last_synced_object_id(Uuid::new_v4(), None)
+            .await
+            .unwrap();
+        storage
+            .set_last_synced_object_id(Uuid::new_v4(), Some(comp1_id))
+            .await
+            .unwrap();
+        storage
+            .set_last_synced_object_id(Uuid::new_v4(), Some(comp2_id))
+            .await
+            .unwrap();
+
+        // Clear all data
+        storage.clear_data().await.unwrap();
+
+        // All should be cleared
+        assert_eq!(storage.get_last_synced_object_id(None).await.unwrap(), None);
+        assert_eq!(
+            storage
+                .get_last_synced_object_id(Some(comp1_id))
+                .await
+                .unwrap(),
+            None
+        );
+        assert_eq!(
+            storage
+                .get_last_synced_object_id(Some(comp2_id))
+                .await
+                .unwrap(),
+            None
+        );
+    }
+}
+
+#[tokio::test]
+async fn set_last_synced_object_id_with_competition_stores_separately() {
+    for storage_factory in get_test_storages() {
+        let storage = storage_factory().await;
+        storage.clear_data().await.unwrap();
+
+        let comp1_id = Uuid::new_v4();
+        let comp2_id = Uuid::new_v4();
+        let obj1_id = Uuid::new_v4();
+        let obj2_id = Uuid::new_v4();
+        let obj3_id = Uuid::new_v4();
+
+        storage
+            .set_last_synced_object_id(obj1_id, None)
+            .await
+            .unwrap();
+        storage
+            .set_last_synced_object_id(obj2_id, Some(comp1_id))
+            .await
+            .unwrap();
+        storage
+            .set_last_synced_object_id(obj3_id, Some(comp2_id))
+            .await
+            .unwrap();
+
+        assert_eq!(
+            storage
+                .get_last_synced_object_id(Some(Uuid::new_v4()))
+                .await
+                .unwrap(),
+            None
+        );
+        assert_eq!(
+            storage.get_last_synced_object_id(None).await.unwrap(),
+            Some(obj1_id)
+        );
+        assert_eq!(
+            storage
+                .get_last_synced_object_id(Some(comp1_id))
+                .await
+                .unwrap(),
+            Some(obj2_id)
+        );
+        assert_eq!(
+            storage
+                .get_last_synced_object_id(Some(comp2_id))
+                .await
+                .unwrap(),
+            Some(obj3_id)
+        );
+
+        // Update one competition's ID shouldn't affect others
+        let new_obj_id = Uuid::new_v4();
+        storage
+            .set_last_synced_object_id(new_obj_id, Some(comp1_id))
+            .await
+            .unwrap();
+
+        assert_eq!(
+            storage.get_last_synced_object_id(None).await.unwrap(),
+            Some(obj1_id)
+        );
+        assert_eq!(
+            storage
+                .get_last_synced_object_id(Some(comp1_id))
+                .await
+                .unwrap(),
+            Some(new_obj_id)
+        );
+        assert_eq!(
+            storage
+                .get_last_synced_object_id(Some(comp2_id))
+                .await
+                .unwrap(),
+            Some(obj3_id)
+        );
     }
 }

@@ -364,8 +364,15 @@ impl SyncStorage for SqliteSyncStorage {
         .map_err(|e| SyncStorageError::OperationError(format!("Task panic: {}", e)))?
     }
 
-    async fn get_last_synced_object_id(&self) -> Result<Option<Uuid>, SyncStorageError> {
+    async fn get_last_synced_object_id(
+        &self,
+        competition_id: Option<Uuid>,
+    ) -> Result<Option<Uuid>, SyncStorageError> {
         let connection = Arc::clone(&self.connection);
+        let key = match competition_id {
+            None => "last_synced_object_id".to_string(),
+            Some(comp_id) => format!("last_synced_object_id:{}", comp_id),
+        };
 
         task::spawn_blocking(move || {
             let conn = match connection.lock() {
@@ -375,8 +382,8 @@ impl SyncStorage for SqliteSyncStorage {
 
             let result: Option<String> = conn
                 .query_row(
-                    "SELECT value FROM sync_state WHERE key = 'last_synced_object_id'",
-                    [],
+                    "SELECT value FROM sync_state WHERE key = ?1",
+                    params![key],
                     |row| row.get(0),
                 )
                 .optional()
@@ -401,9 +408,17 @@ impl SyncStorage for SqliteSyncStorage {
         .map_err(|e| SyncStorageError::OperationError(format!("Task panic: {}", e)))?
     }
 
-    async fn set_last_synced_object_id(&self, id: Uuid) -> Result<(), SyncStorageError> {
+    async fn set_last_synced_object_id(
+        &self,
+        id: Uuid,
+        competition_id: Option<Uuid>,
+    ) -> Result<(), SyncStorageError> {
         let connection = Arc::clone(&self.connection);
         let id_str = id.to_string();
+        let key = match competition_id {
+            None => "last_synced_object_id".to_string(),
+            Some(comp_id) => format!("last_synced_object_id:{}", comp_id),
+        };
 
         task::spawn_blocking(move || {
             let conn = match connection.lock() {
@@ -412,8 +427,8 @@ impl SyncStorage for SqliteSyncStorage {
             };
 
             conn.execute(
-                "INSERT OR REPLACE INTO sync_state (key, value) VALUES ('last_synced_object_id', ?1)",
-                params![id_str],
+                "INSERT OR REPLACE INTO sync_state (key, value) VALUES (?1, ?2)",
+                params![key, id_str],
             )
             .map_err(|e| {
                 SyncStorageError::OperationError(format!("Failed to set last synced ID: {}", e))
@@ -435,12 +450,10 @@ impl SyncStorage for SqliteSyncStorage {
                 Err(_) => return Err(SyncStorageError::Locked),
             };
 
-            // Clear all records
             conn.execute("DELETE FROM sync_records", []).map_err(|e| {
                 SyncStorageError::OperationError(format!("Failed to clear records: {}", e))
             })?;
 
-            // Clear sync state
             conn.execute("DELETE FROM sync_state", []).map_err(|e| {
                 SyncStorageError::OperationError(format!("Failed to clear sync state: {}", e))
             })?;
