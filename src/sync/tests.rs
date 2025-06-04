@@ -341,11 +341,7 @@ async fn when_object_is_already_being_processed_it_is_skipped() {
     env.synchronizer.run(None, None).await.unwrap();
 
     // The object should still be in Processing status since we didn't let our synchronizer complete it
-    let record = env
-        .sync_storage
-        .get_object(test_object.id)
-        .await
-        .unwrap();
+    let record = env.sync_storage.get_object(test_object.id).await.unwrap();
     assert_eq!(record.map(|r| r.status), Some(SyncStatus::Processing));
 
     // Verify the object was NOT added to Recall (since it was already processing)
@@ -367,11 +363,7 @@ async fn when_object_is_already_being_processed_it_is_skipped() {
     env.synchronizer.run(None, None).await.unwrap();
 
     // The object should still be complete (not processed again)
-    let record = env
-        .sync_storage
-        .get_object(test_object.id)
-        .await
-        .unwrap();
+    let record = env.sync_storage.get_object(test_object.id).await.unwrap();
     assert_eq!(record.map(|r| r.status), Some(SyncStatus::Complete));
 }
 
@@ -493,4 +485,443 @@ async fn multiple_sync_runs_with_new_objects() {
         "1 object from batch2 should be synced, got {}",
         batch2_synced_count
     );
+}
+
+#[tokio::test]
+async fn when_since_param_includes_already_synced_objects_they_are_skipped() {
+    let mut config = create_test_config();
+    config.sync.batch_size = 3;
+    let env = setup_with_config(config).await;
+    env.database.clear_data().await.unwrap();
+    env.sync_storage.clear_data().await.unwrap();
+
+    let base_time = Utc::now() - Duration::hours(24);
+    let mut objects = Vec::new();
+
+    for i in 0..5 {
+        let object = create_test_object_index(
+            &format!("test/obj-{}.jsonl", i),
+            base_time + Duration::hours(i as i64),
+        );
+        objects.push(object.clone());
+        env.add_object_to_db_and_s3(object, &format!("Test data {}", i))
+            .await;
+    }
+
+    // Sync twice to ensure all objects are processed
+    env.synchronizer.run(None, None).await.unwrap();
+    env.synchronizer.run(None, None).await.unwrap();
+
+    let synced = env
+        .sync_storage
+        .get_objects_with_status(SyncStatus::Complete)
+        .await
+        .unwrap();
+    assert_eq!(synced.len(), 5, "All 5 objects should be synced");
+
+    for i in 5..10 {
+        let object = create_test_object_index(
+            &format!("test/obj-{}.jsonl", i),
+            base_time + Duration::hours(i as i64),
+        );
+        objects.push(object.clone());
+        env.add_object_to_db_and_s3(object, &format!("Test data {}", i))
+            .await;
+    }
+
+    // Sync with 'since' that includes already synced objects starting from the 3rd object
+    let since_time = base_time + Duration::hours(2) + Duration::minutes(30);
+    env.synchronizer.run(None, Some(since_time)).await.unwrap();
+
+    for i in 0..8 {
+        env.verify_object_synced(&objects[i])
+            .await
+            .unwrap_or_else(|e| panic!("Object {} should be synced: {}", i, e));
+    }
+
+    for i in 8..10 {
+        env.verify_object_not_synced(&objects[i])
+            .await
+            .unwrap_or_else(|e| panic!("Object {} should not be synced: {}", i, e));
+    }
+}
+
+#[tokio::test]
+async fn when_since_param_skips_unsynced_objects_they_remain_unsynced() {
+    let mut config = create_test_config();
+    config.sync.batch_size = 3;
+    let env = setup_with_config(config).await;
+    env.database.clear_data().await.unwrap();
+    env.sync_storage.clear_data().await.unwrap();
+
+    let base_time = Utc::now() - Duration::hours(10);
+    let mut objects = Vec::new();
+
+    for i in 0..8 {
+        let object = create_test_object_index(
+            &format!("test/obj-{}.jsonl", i),
+            base_time + Duration::hours(i as i64),
+        );
+        objects.push(object.clone());
+        env.add_object_to_db_and_s3(object, &format!("Test data {}", i))
+            .await;
+    }
+
+    // Sync with 'since' that skips first 3 objects
+    let since_time = base_time + Duration::hours(3) - Duration::minutes(30);
+    env.synchronizer.run(None, Some(since_time)).await.unwrap();
+
+    for i in 0..3 {
+        env.verify_object_not_synced(&objects[i])
+            .await
+            .unwrap_or_else(|e| panic!("Object {} should not be synced: {}", i, e));
+    }
+
+    for i in 3..6 {
+        env.verify_object_synced(&objects[i])
+            .await
+            .unwrap_or_else(|e| panic!("Object {} should be synced: {}", i, e));
+    }
+
+    for i in 6..8 {
+        env.verify_object_not_synced(&objects[i])
+            .await
+            .unwrap_or_else(|e| panic!("Object {} should not be synced: {}", i, e));
+    }
+
+    env.synchronizer.run(None, None).await.unwrap();
+
+    for i in 0..3 {
+        env.verify_object_not_synced(&objects[i])
+            .await
+            .unwrap_or_else(|e| panic!("Object {} should still not be synced: {}", i, e));
+    }
+
+    for i in 3..8 {
+        env.verify_object_synced(&objects[i])
+            .await
+            .unwrap_or_else(|e| panic!("Object {} should be synced: {}", i, e));
+    }
+}
+
+#[tokio::test]
+async fn sync_with_same_competition_id_continues_from_where_it_left_off() {
+    let mut config = create_test_config();
+    config.sync.batch_size = 3;
+    let env = setup_with_config(config).await;
+    env.database.clear_data().await.unwrap();
+    env.sync_storage.clear_data().await.unwrap();
+
+    let base_time = Utc::now() - Duration::hours(10);
+    let comp1_id = Uuid::new_v4();
+    let comp2_id = Uuid::new_v4();
+
+    for i in 0..5 {
+        let mut object = create_test_object_index(
+            &format!("comp1/obj-{}.jsonl", i),
+            base_time + Duration::minutes(i as i64),
+        );
+        object.competition_id = Some(comp1_id);
+        env.add_object_to_db_and_s3(object, &format!("Comp1 data {}", i))
+            .await;
+    }
+
+    for i in 0..4 {
+        let mut object = create_test_object_index(
+            &format!("comp2/obj-{}.jsonl", i),
+            base_time + Duration::minutes((i + 10) as i64),
+        );
+        object.competition_id = Some(comp2_id);
+        env.add_object_to_db_and_s3(object, &format!("Comp2 data {}", i))
+            .await;
+    }
+
+    env.synchronizer
+        .run(Some(comp1_id.to_string()), None)
+        .await
+        .unwrap();
+
+    let synced = env
+        .sync_storage
+        .get_objects_with_status(SyncStatus::Complete)
+        .await
+        .unwrap();
+    assert_eq!(synced.len(), 3, "Should sync 3 objects from comp1");
+
+    // Verify all synced objects are from competition 1
+    for record in &synced {
+        assert!(record.object_key.starts_with("comp1/"));
+    }
+
+    // Second sync for competition 1 - should sync remaining 2 objects
+    env.synchronizer
+        .run(Some(comp1_id.to_string()), None)
+        .await
+        .unwrap();
+
+    let synced = env
+        .sync_storage
+        .get_objects_with_status(SyncStatus::Complete)
+        .await
+        .unwrap();
+    assert_eq!(synced.len(), 5, "Should have all 5 comp1 objects synced");
+
+    let comp1_synced = synced
+        .iter()
+        .filter(|r| r.object_key.starts_with("comp1/"))
+        .count();
+    let comp2_synced = synced
+        .iter()
+        .filter(|r| r.object_key.starts_with("comp2/"))
+        .count();
+
+    assert_eq!(comp1_synced, 5, "All comp1 objects should be synced");
+    assert_eq!(comp2_synced, 0, "No comp2 objects should be synced");
+}
+
+#[tokio::test]
+async fn sync_with_different_competitions_maintains_separate_progress() {
+    let mut config = create_test_config();
+    config.sync.batch_size = 2;
+    let env = setup_with_config(config).await;
+    env.database.clear_data().await.unwrap();
+    env.sync_storage.clear_data().await.unwrap();
+
+    let base_time = Utc::now() - Duration::hours(10);
+    let comp1_id = Uuid::new_v4();
+    let comp2_id = Uuid::new_v4();
+
+    // Add 4 objects for each competition
+    for i in 0..4 {
+        let mut obj1 = create_test_object_index(
+            &format!("comp1/obj-{}.jsonl", i),
+            base_time + Duration::minutes(i as i64),
+        );
+        obj1.competition_id = Some(comp1_id);
+        env.add_object_to_db_and_s3(obj1, &format!("Comp1 data {}", i))
+            .await;
+
+        let mut obj2 = create_test_object_index(
+            &format!("comp2/obj-{}.jsonl", i),
+            base_time + Duration::minutes((i + 10) as i64),
+        );
+        obj2.competition_id = Some(comp2_id);
+        env.add_object_to_db_and_s3(obj2, &format!("Comp2 data {}", i))
+            .await;
+    }
+
+    // Sync comp1 - should sync 2 objects
+    env.synchronizer
+        .run(Some(comp1_id.to_string()), None)
+        .await
+        .unwrap();
+
+    let synced = env
+        .sync_storage
+        .get_objects_with_status(SyncStatus::Complete)
+        .await
+        .unwrap();
+    assert_eq!(synced.len(), 2);
+    assert!(synced.iter().all(|r| r.object_key.starts_with("comp1/")));
+
+    // Sync comp2 - should sync 2 objects
+    env.synchronizer
+        .run(Some(comp2_id.to_string()), None)
+        .await
+        .unwrap();
+
+    let synced = env
+        .sync_storage
+        .get_objects_with_status(SyncStatus::Complete)
+        .await
+        .unwrap();
+    assert_eq!(synced.len(), 4); // 2 from comp1 + 2 from comp2
+
+    // Continue syncing comp1 - should sync remaining 2 objects
+    env.synchronizer
+        .run(Some(comp1_id.to_string()), None)
+        .await
+        .unwrap();
+
+    let synced = env
+        .sync_storage
+        .get_objects_with_status(SyncStatus::Complete)
+        .await
+        .unwrap();
+    assert_eq!(synced.len(), 6); // 4 from comp1 + 2 from comp2
+    assert_eq!(
+        synced
+            .iter()
+            .filter(|r| r.object_key.starts_with("comp1/"))
+            .count(),
+        4,
+        "All comp1 objects should be synced"
+    );
+
+    // Continue syncing comp2 - should sync remaining 2 objects
+    env.synchronizer
+        .run(Some(comp2_id.to_string()), None)
+        .await
+        .unwrap();
+
+    let synced = env
+        .sync_storage
+        .get_objects_with_status(SyncStatus::Complete)
+        .await
+        .unwrap();
+    assert_eq!(synced.len(), 8); // 4 from comp1 + 4 from comp2
+}
+
+#[tokio::test]
+async fn regular_sync_processes_all_unsynced_objects_from_all_competitions() {
+    let mut config = create_test_config();
+    config.sync.batch_size = 3;
+    let env = setup_with_config(config).await;
+    env.database.clear_data().await.unwrap();
+    env.sync_storage.clear_data().await.unwrap();
+
+    let base_time = Utc::now() - Duration::hours(10);
+    let comp1_id = Uuid::new_v4();
+    let comp2_id = Uuid::new_v4();
+
+    for i in 0..3 {
+        let mut object = create_test_object_index(
+            &format!("comp1/obj-{}.jsonl", i),
+            base_time + Duration::minutes(i as i64),
+        );
+        object.competition_id = Some(comp1_id);
+        env.add_object_to_db_and_s3(object, &format!("Comp1 data {}", i))
+            .await;
+
+        let mut object = create_test_object_index(
+            &format!("comp2/obj-{}.jsonl", i),
+            base_time + Duration::minutes((i + 5) as i64),
+        );
+        object.competition_id = Some(comp2_id);
+        env.add_object_to_db_and_s3(object, &format!("Comp2 data {}", i))
+            .await;
+    }
+
+    // Sync only comp1 objects (batch size 3)
+    env.synchronizer
+        .run(Some(comp1_id.to_string()), None)
+        .await
+        .unwrap();
+
+    let synced = env
+        .sync_storage
+        .get_objects_with_status(SyncStatus::Complete)
+        .await
+        .unwrap();
+    assert_eq!(synced.len(), 3);
+    assert!(synced.iter().all(|r| r.object_key.starts_with("comp1/")));
+
+    // Regular sync (no competition filter) should sync comp2 objects
+    env.synchronizer.run(None, None).await.unwrap();
+
+    let synced = env
+        .sync_storage
+        .get_objects_with_status(SyncStatus::Complete)
+        .await
+        .unwrap();
+    assert_eq!(synced.len(), 6, "Should have 6 synced objects");
+
+    let comp1_synced = synced
+        .iter()
+        .filter(|r| r.object_key.starts_with("comp1/"))
+        .count();
+    let comp2_synced = synced
+        .iter()
+        .filter(|r| r.object_key.starts_with("comp2/"))
+        .count();
+
+    assert_eq!(comp1_synced, 3);
+    assert_eq!(comp2_synced, 3);
+}
+
+#[tokio::test]
+async fn regular_sync_continues_regardless_of_competition_specific_progress() {
+    let mut config = create_test_config();
+    config.sync.batch_size = 2;
+    let env = setup_with_config(config).await;
+    env.database.clear_data().await.unwrap();
+    env.sync_storage.clear_data().await.unwrap();
+
+    let base_time = Utc::now() - Duration::hours(10);
+    let comp1_id = Uuid::new_v4();
+    let comp2_id = Uuid::new_v4();
+
+    // Add objects with interleaved timestamps
+    let mut all_objects = Vec::new();
+
+    // comp1/obj-0 at time 0
+    let mut obj = create_test_object_index("comp1/obj-0.jsonl", base_time);
+    obj.competition_id = Some(comp1_id);
+    all_objects.push(obj.clone());
+    env.add_object_to_db_and_s3(obj, "Comp1 data 0").await;
+
+    // comp2/obj-0 at time 1
+    let mut obj = create_test_object_index("comp2/obj-0.jsonl", base_time + Duration::minutes(1));
+    obj.competition_id = Some(comp2_id);
+    all_objects.push(obj.clone());
+    env.add_object_to_db_and_s3(obj, "Comp2 data 0").await;
+
+    // comp1/obj-1 at time 2
+    let mut obj = create_test_object_index("comp1/obj-1.jsonl", base_time + Duration::minutes(2));
+    obj.competition_id = Some(comp1_id);
+    all_objects.push(obj.clone());
+    env.add_object_to_db_and_s3(obj, "Comp1 data 1").await;
+
+    // comp2/obj-1 at time 3
+    let mut obj = create_test_object_index("comp2/obj-1.jsonl", base_time + Duration::minutes(3));
+    obj.competition_id = Some(comp2_id);
+    all_objects.push(obj.clone());
+    env.add_object_to_db_and_s3(obj, "Comp2 data 1").await;
+
+    // comp1/obj-2 at time 4
+    let mut obj = create_test_object_index("comp1/obj-2.jsonl", base_time + Duration::minutes(4));
+    obj.competition_id = Some(comp1_id);
+    all_objects.push(obj.clone());
+    env.add_object_to_db_and_s3(obj, "Comp1 data 2").await;
+
+    // Sync comp1 with batch size 2 - should sync comp1/obj-0 and comp1/obj-1
+    env.synchronizer
+        .run(Some(comp1_id.to_string()), None)
+        .await
+        .unwrap();
+
+    let synced = env
+        .sync_storage
+        .get_objects_with_status(SyncStatus::Complete)
+        .await
+        .unwrap();
+    assert_eq!(synced.len(), 2);
+    assert!(synced.iter().all(|r| r.object_key.starts_with("comp1/")));
+
+    // Regular sync should start from beginning and sync oldest unsynced objects
+    // Should sync comp2/obj-0 and comp2/obj-1 (batch size 2)
+    env.synchronizer.run(None, None).await.unwrap();
+
+    let synced = env
+        .sync_storage
+        .get_objects_with_status(SyncStatus::Complete)
+        .await
+        .unwrap();
+    assert_eq!(synced.len(), 4);
+
+    // Another regular sync should continue and sync comp1/obj-2
+    env.synchronizer.run(None, None).await.unwrap();
+
+    let synced = env
+        .sync_storage
+        .get_objects_with_status(SyncStatus::Complete)
+        .await
+        .unwrap();
+    assert_eq!(synced.len(), 5); // All objects synced
+
+    for obj in &all_objects {
+        env.verify_object_synced(obj)
+            .await
+            .unwrap_or_else(|e| panic!("Object {} should be synced: {}", obj.object_key, e));
+    }
 }
