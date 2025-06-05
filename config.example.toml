@@ -22,4 +22,7 @@ config_path = "networks.toml"                # Path to network configuration fil
 # Synchronization settings
 [sync]
 batch_size = 100
-state_db_path = "./sync_state.db"
+
+# Synchronization storage settings
+[sync_storage]
+db_path = "./sync_state.db"

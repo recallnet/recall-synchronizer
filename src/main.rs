@@ -93,13 +93,18 @@ async fn run(
 
     // Create specific implementations
     let database = PostgresDatabase::new(&config.database.url).await?;
-    let sync_storage = SqliteSyncStorage::new(&config.sync.state_db_path)?;
+    let sync_storage = SqliteSyncStorage::new(&config.sync_storage.db_path)?;
     let s3_storage = crate::s3::S3Storage::new(&config.s3).await?;
     let recall_storage = RecallBlockchain::new(&config.recall).await?;
 
     // Create the synchronizer with specific implementations
-    let synchronizer =
-        Synchronizer::new(database, sync_storage, s3_storage, recall_storage, config);
+    let synchronizer = Synchronizer::new(
+        database,
+        sync_storage,
+        s3_storage,
+        recall_storage,
+        config.sync,
+    );
 
     info!("Synchronizer initialized successfully");
 

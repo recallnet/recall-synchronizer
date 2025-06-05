@@ -3,7 +3,7 @@ use chrono::{DateTime, Utc};
 use std::sync::Arc;
 use tracing::{debug, error, info};
 
-use crate::config::Config;
+use crate::config::SyncConfig;
 use crate::db::{Database, ObjectIndex};
 use crate::recall::Storage as RecallStorage;
 use crate::s3::Storage as S3Storage;
@@ -15,7 +15,7 @@ pub struct Synchronizer<D: Database, S: SyncStorage, ST: S3Storage, RS: RecallSt
     sync_storage: Arc<S>,
     s3_storage: Arc<ST>,
     recall_storage: Arc<RS>,
-    config: Config,
+    config: SyncConfig,
 }
 
 impl<D: Database, S: SyncStorage, ST: S3Storage, RS: RecallStorage> Synchronizer<D, S, ST, RS> {
@@ -25,14 +25,14 @@ impl<D: Database, S: SyncStorage, ST: S3Storage, RS: RecallStorage> Synchronizer
         sync_storage: S,
         s3_storage: ST,
         recall_storage: RS,
-        config: Config,
+        sync_config: SyncConfig,
     ) -> Self {
         Synchronizer {
             database: Arc::new(database),
             sync_storage: Arc::new(sync_storage),
             s3_storage: Arc::new(s3_storage),
             recall_storage: Arc::new(recall_storage),
-            config,
+            config: sync_config,
         }
     }
 
@@ -43,14 +43,14 @@ impl<D: Database, S: SyncStorage, ST: S3Storage, RS: RecallStorage> Synchronizer
         sync_storage: Arc<S>,
         s3_storage: Arc<ST>,
         recall_storage: Arc<RS>,
-        config: Config,
+        sync_config: SyncConfig,
     ) -> Self {
         Synchronizer {
             database,
             sync_storage,
             s3_storage,
             recall_storage,
-            config,
+            config: sync_config,
         }
     }
 
@@ -89,7 +89,7 @@ impl<D: Database, S: SyncStorage, ST: S3Storage, RS: RecallStorage> Synchronizer
         limit: Option<u32>,
         competition_id: Option<uuid::Uuid>,
     ) -> Result<Vec<ObjectIndex>> {
-        let batch_size = limit.unwrap_or(self.config.sync.batch_size as u32);
+        let batch_size = limit.unwrap_or(self.config.batch_size as u32);
         self.database
             .get_objects(batch_size, since_time, after_id, competition_id)
             .await
@@ -221,7 +221,7 @@ impl<D: Database, S: SyncStorage, ST: S3Storage, RS: RecallStorage> Synchronizer
             info!("No previous sync timestamp found, syncing all objects");
         }
 
-        let batch_size = self.config.sync.batch_size;
+        let batch_size = self.config.batch_size;
         let mut total_processed = 0;
 
         loop {

@@ -9,6 +9,7 @@ pub struct Config {
     pub s3: S3Config,
     pub recall: RecallConfig,
     pub sync: SyncConfig,
+    pub sync_storage: SyncStorageConfig,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -34,10 +35,14 @@ pub struct RecallConfig {
     pub bucket: Option<String>,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct SyncConfig {
     pub batch_size: usize,
-    pub state_db_path: String,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct SyncStorageConfig {
+    pub db_path: String,
 }
 
 pub fn load_config(path: &str) -> Result<Config> {

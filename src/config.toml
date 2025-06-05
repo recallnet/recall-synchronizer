@@ -16,4 +16,6 @@ prefix = "competitions/data"  # Optional prefix for all keys stored in Recall
 
 [sync]
 batch_size = 100
-state_db_path = "sync_state.db"
+
+[sync_storage]
+db_path = "sync_state.db"

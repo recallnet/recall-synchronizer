@@ -1,4 +1,6 @@
-use crate::config::{Config, DatabaseConfig, RecallConfig, S3Config, SyncConfig};
+use crate::config::{
+    Config, DatabaseConfig, RecallConfig, S3Config, SyncConfig, SyncStorageConfig,
+};
 use crate::db::{Database, FakeDatabase, ObjectIndex};
 use crate::recall::fake::FakeRecallStorage;
 use crate::recall::Storage as RecallStorage;
@@ -154,9 +156,9 @@ fn create_test_config() -> Config {
             config_path: Some("networks.toml".to_string()),
             bucket: None,
         },
-        sync: SyncConfig {
-            batch_size: 10,
-            state_db_path: ":memory:".to_string(),
+        sync: SyncConfig { batch_size: 10 },
+        sync_storage: SyncStorageConfig {
+            db_path: ":memory:".to_string(),
         },
     }
 }
@@ -178,7 +180,7 @@ async fn setup_with_config(config: Config) -> TestEnvironment {
         sync_storage.clone(),
         s3_storage.clone(),
         recall_storage.clone(),
-        config,
+        config.sync,
     );
 
     TestEnvironment {
