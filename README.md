@@ -70,7 +70,16 @@ Where:
 - `<timestamp_or_uuid>`: An ISO8601 timestamp (e.g., `2025-05-05T16_30_00Z`) or a unique ID related to the event, ensuring object key uniqueness and allowing chronological sorting if a timestamp is used.
 - `<format_extension>`: The file extension indicating the data format (e.g., `jsonl`, `json`, `log`, `bin`).
 
-### 5.3. Data Format on Recall Network
+### 5.3. Synchronization State Management
+
+The synchronizer maintains its own state in a local SQLite database to track:
+
+- **Per-object sync status**: Each object has a status (PendingSync, Processing, Complete)
+- **Competition-specific progress**: Separate tracking of the last synced object ID per competition
+- **Global progress**: Overall last synced object ID when no competition filter is applied
+- **Reset capability**: The synchronizer can clear all state to force re-synchronization
+
+### 5.4. Data Format on Recall Network
 
 When data is written to the Recall Network:
 
@@ -160,10 +169,25 @@ cargo run -- --config config.toml
 
 Additional options:
 
-- `--reset` - Reset synchronization state
-- `--competition-id <ID>` - Filter by competition ID
+- `--reset` - Reset synchronization state (clears all sync records)
+- `--competition-id <ID>` - Filter by competition ID (maintains separate progress per competition)
 - `--since <TIMESTAMP>` - Synchronize data since timestamp (RFC3339 format)
 - `--verbose` - Show verbose output
+
+#### Reset Functionality
+
+The `--reset` flag clears all synchronization state, allowing you to re-sync all data. This is useful when:
+
+- The Recall network has been reset or data has been lost
+- You need to force re-synchronization of all objects
+- Testing synchronization from a clean state
+
+Example:
+
+```bash
+# Reset and re-sync all data
+cargo run -- --config config.toml --reset
+```
 
 ### Docker Compose Commands
 
