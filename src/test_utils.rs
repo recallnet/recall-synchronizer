@@ -6,32 +6,31 @@ use uuid::Uuid;
 pub mod wallet_pool;
 pub use wallet_pool::get_next_wallet;
 
-/// Check if database tests are enabled via environment variable
-pub fn is_db_enabled() -> bool {
-    std::env::var("ENABLE_DB_TESTS")
+/// Check if a test is enabled via environment variable
+fn is_test_enabled(env_var: &str) -> bool {
+    std::env::var(env_var)
         .map(|v| v.to_lowercase() == "true")
         .unwrap_or(false)
+}
+
+/// Check if database tests are enabled via environment variable
+pub fn is_db_enabled() -> bool {
+    is_test_enabled("ENABLE_DB_TESTS")
 }
 
 /// Check if SQLite tests are enabled via environment variable
 pub fn is_sqlite_enabled() -> bool {
-    std::env::var("ENABLE_SQLITE_TESTS")
-        .map(|v| v.to_lowercase() == "true")
-        .unwrap_or(false)
+    is_test_enabled("ENABLE_SQLITE_TESTS")
 }
 
 /// Check if S3 tests are enabled via environment variable
 pub fn is_s3_enabled() -> bool {
-    std::env::var("ENABLE_S3_TESTS")
-        .map(|v| v.to_lowercase() == "true")
-        .unwrap_or(false)
+    is_test_enabled("ENABLE_S3_TESTS")
 }
 
 /// Check if Recall tests are enabled via environment variable
 pub fn is_recall_enabled() -> bool {
-    std::env::var("ENABLE_RECALL_TESTS")
-        .map(|v| v.to_lowercase() == "true")
-        .unwrap_or(false)
+    is_test_enabled("ENABLE_RECALL_TESTS")
 }
 
 /// Load test configuration from test_config.toml
