@@ -155,11 +155,7 @@ fn create_test_config() -> Config {
             bucket: None,
         },
         sync: SyncConfig {
-            interval_seconds: 60,
             batch_size: 10,
-            workers: 2,
-            retry_limit: 3,
-            retry_delay_seconds: 5,
             state_db_path: ":memory:".to_string(),
         },
     }

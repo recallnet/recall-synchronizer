@@ -25,9 +25,5 @@ config_path = "networks.toml"
 
 # Synchronization settings
 [sync]
-interval_seconds = 60
 batch_size = 100
-workers = 2
-retry_limit = 3
-retry_delay_seconds = 5
 state_db_path = "./sync_state.db"

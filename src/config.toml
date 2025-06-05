@@ -15,7 +15,5 @@ private_key = "your-private-key-hex"
 prefix = "competitions/data"  # Optional prefix for all keys stored in Recall
 
 [sync]
-interval_seconds = 60
 batch_size = 100
-workers = 5
 state_db_path = "sync_state.db"

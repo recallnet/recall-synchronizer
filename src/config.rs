@@ -36,11 +36,7 @@ pub struct RecallConfig {
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct SyncConfig {
-    pub interval_seconds: u64,
     pub batch_size: usize,
-    pub workers: usize,
-    pub retry_limit: usize,
-    pub retry_delay_seconds: u64,
     pub state_db_path: String,
 }
 

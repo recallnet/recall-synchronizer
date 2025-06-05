@@ -15,8 +15,6 @@ struct BatchProcessingState {
     batch_size: usize,
     current_since_time: Option<DateTime<Utc>>,
     current_after_id: Option<uuid::Uuid>,
-    attempts_without_progress: usize,
-    max_attempts: usize,
 }
 
 /// Main synchronizer that orchestrates the data synchronization process
@@ -216,7 +214,6 @@ impl<D: Database, S: SyncStorage, ST: S3Storage, RS: RecallStorage> Synchronizer
     fn should_continue_to_next_batch(
         &self,
         state: &mut BatchProcessingState,
-        batch_processed: usize,
         last_object_in_batch: Option<ObjectIndex>,
     ) -> bool {
         // Check if we've filled our batch quota
@@ -228,20 +225,6 @@ impl<D: Database, S: SyncStorage, ST: S3Storage, RS: RecallStorage> Synchronizer
         if let Some(last_obj) = last_object_in_batch {
             state.current_since_time = Some(last_obj.object_last_modified_at);
             state.current_after_id = Some(last_obj.id);
-
-            // Check if we've made any progress at all
-            if batch_processed == 0 {
-                state.attempts_without_progress += 1;
-                if state.attempts_without_progress >= state.max_attempts {
-                    info!(
-                        "No more objects found after {} attempts",
-                        state.max_attempts
-                    );
-                    return false;
-                }
-            } else {
-                state.attempts_without_progress = 0;
-            }
 
             debug!(
                 "Total processed: {}, continuing to fill batch of {}",
@@ -276,8 +259,6 @@ impl<D: Database, S: SyncStorage, ST: S3Storage, RS: RecallStorage> Synchronizer
             batch_size: self.config.sync.batch_size,
             current_since_time: initial_sync_state.0,
             current_after_id: initial_sync_state.1,
-            attempts_without_progress: 0,
-            max_attempts: 10,
         };
 
         loop {
@@ -318,7 +299,6 @@ impl<D: Database, S: SyncStorage, ST: S3Storage, RS: RecallStorage> Synchronizer
             let last_object_in_batch = objects.last().cloned();
 
             info!("Found {} objects to synchronize", objects.len());
-            state.attempts_without_progress = 0; // Reset counter when we find matching objects
 
             // Process the batch of objects
             let (last_synced_object, batch_processed) = self.process_object_batch(&objects).await?;
@@ -331,8 +311,7 @@ impl<D: Database, S: SyncStorage, ST: S3Storage, RS: RecallStorage> Synchronizer
             }
 
             // Determine whether to continue to the next batch
-            if self.should_continue_to_next_batch(&mut state, batch_processed, last_object_in_batch)
-            {
+            if self.should_continue_to_next_batch(&mut state, last_object_in_batch) {
                 continue;
             } else {
                 break;
