@@ -10,18 +10,14 @@ use std::sync::{Arc, Mutex};
 pub struct FakeRecallStorage {
     data: Arc<Mutex<HashMap<String, Vec<u8>>>>,
     fail_blobs: Arc<Mutex<HashSet<String>>>,
-    #[cfg_attr(not(test), allow(dead_code))]
-    prefixes: Arc<Mutex<HashSet<String>>>,
 }
 
-#[allow(dead_code)]
 impl FakeRecallStorage {
     /// Create a new empty FakeRecallStorage instance
     pub fn new() -> Self {
         FakeRecallStorage {
             data: Arc::new(Mutex::new(HashMap::new())),
             fail_blobs: Arc::new(Mutex::new(HashSet::new())),
-            prefixes: Arc::new(Mutex::new(HashSet::new())),
         }
     }
 
@@ -38,38 +34,6 @@ impl FakeRecallStorage {
         fail_blobs.remove(key);
     }
 
-    /// Test-only helper to mark a blob as failed (synchronous version)
-    #[cfg(test)]
-    pub fn mark_blob_failed(&self, key: &str) {
-        self.fake_fail_blob(key);
-    }
-
-    /// Test-only helper to clear a blob failure (synchronous version)
-    #[cfg(test)]
-    pub fn clear_blob_failure(&self, key: &str) {
-        self.fake_reset_blob(key);
-    }
-
-    /// Test-only helper to add a prefix
-    #[cfg(test)]
-    pub fn add_prefix(&self, prefix: &str) {
-        let mut prefixes = self.prefixes.lock().unwrap();
-        prefixes.insert(prefix.to_string());
-    }
-
-    /// Test-only helper to check if a prefix exists
-    #[cfg(test)]
-    pub fn has_prefix(&self, prefix: &str) -> bool {
-        let prefixes = self.prefixes.lock().unwrap();
-        prefixes.contains(prefix)
-    }
-
-    /// Test-only helper to clear all prefixes
-    #[cfg(test)]
-    pub fn clear_prefixes(&self) {
-        let mut prefixes = self.prefixes.lock().unwrap();
-        prefixes.clear();
-    }
 }
 
 #[async_trait]
@@ -86,12 +50,6 @@ impl Storage for FakeRecallStorage {
 
         let mut storage_data = self.data.lock().unwrap();
         storage_data.insert(key.to_string(), data);
-
-        // Track prefix
-        let mut prefixes = self.prefixes.lock().unwrap();
-        if let Some(pos) = key.rfind('/') {
-            prefixes.insert(key[..=pos].to_string());
-        }
 
         Ok(())
     }

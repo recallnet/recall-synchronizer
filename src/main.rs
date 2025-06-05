@@ -104,10 +104,15 @@ async fn run(
         s3_storage,
         recall_storage,
         config,
-        reset,
     );
 
     info!("Synchronizer initialized successfully");
+
+    // If reset flag is set, reset the synchronizer state
+    if reset {
+        info!("Reset flag is set, clearing synchronization state");
+        synchronizer.reset().await?;
+    }
 
     // Run the synchronizer
     if let Err(e) = synchronizer.run(competition_id, since_time).await {

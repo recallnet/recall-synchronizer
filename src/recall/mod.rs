@@ -1,4 +1,5 @@
 pub mod error;
+#[cfg(test)]
 pub mod fake;
 #[allow(clippy::module_inception)]
 pub mod recall;

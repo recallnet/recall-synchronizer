@@ -26,7 +26,6 @@ pub struct Synchronizer<D: Database, S: SyncStorage, ST: S3Storage, RS: RecallSt
     s3_storage: Arc<ST>,
     recall_storage: Arc<RS>,
     config: Config,
-    reset: bool,
 }
 
 impl<D: Database, S: SyncStorage, ST: S3Storage, RS: RecallStorage> Synchronizer<D, S, ST, RS> {
@@ -37,7 +36,6 @@ impl<D: Database, S: SyncStorage, ST: S3Storage, RS: RecallStorage> Synchronizer
         s3_storage: ST,
         recall_storage: RS,
         config: Config,
-        reset: bool,
     ) -> Self {
         Synchronizer {
             database: Arc::new(database),
@@ -45,7 +43,6 @@ impl<D: Database, S: SyncStorage, ST: S3Storage, RS: RecallStorage> Synchronizer
             s3_storage: Arc::new(s3_storage),
             recall_storage: Arc::new(recall_storage),
             config,
-            reset,
         }
     }
 
@@ -57,7 +54,6 @@ impl<D: Database, S: SyncStorage, ST: S3Storage, RS: RecallStorage> Synchronizer
         s3_storage: Arc<ST>,
         recall_storage: Arc<RS>,
         config: Config,
-        reset: bool,
     ) -> Self {
         Synchronizer {
             database,
@@ -65,7 +61,6 @@ impl<D: Database, S: SyncStorage, ST: S3Storage, RS: RecallStorage> Synchronizer
             s3_storage,
             recall_storage,
             config,
-            reset,
         }
     }
 
@@ -110,7 +105,6 @@ impl<D: Database, S: SyncStorage, ST: S3Storage, RS: RecallStorage> Synchronizer
             .await
             .map_err(|e| anyhow::anyhow!("Failed to fetch objects to sync: {}", e))
     }
-
 
     /// Checks if an object should be processed based on its current status
     async fn should_process_object(&self, object: &ObjectIndex) -> Result<bool> {
@@ -193,7 +187,6 @@ impl<D: Database, S: SyncStorage, ST: S3Storage, RS: RecallStorage> Synchronizer
             None => Ok(None),
         }
     }
-
 
     /// Process a batch of objects and return the last synced object and count
     async fn process_object_batch<'a>(
@@ -278,11 +271,6 @@ impl<D: Database, S: SyncStorage, ST: S3Storage, RS: RecallStorage> Synchronizer
             info!("No previous sync timestamp found, syncing all objects");
         }
 
-        if self.reset {
-            info!("Reset mode is enabled, clearing synchronization state");
-            // TODO: Implement reset logic when integrating with sync storage
-        }
-
         let mut state = BatchProcessingState {
             total_processed: 0,
             batch_size: self.config.sync.batch_size,
@@ -333,8 +321,7 @@ impl<D: Database, S: SyncStorage, ST: S3Storage, RS: RecallStorage> Synchronizer
             state.attempts_without_progress = 0; // Reset counter when we find matching objects
 
             // Process the batch of objects
-            let (last_synced_object, batch_processed) =
-                self.process_object_batch(&objects).await?;
+            let (last_synced_object, batch_processed) = self.process_object_batch(&objects).await?;
             state.total_processed += batch_processed;
 
             if let Some(last_object) = last_synced_object {
@@ -353,6 +340,14 @@ impl<D: Database, S: SyncStorage, ST: S3Storage, RS: RecallStorage> Synchronizer
         }
 
         info!("Synchronization completed");
+        Ok(())
+    }
+
+    /// Resets the synchronization state by clearing all sync records
+    pub async fn reset(&self) -> Result<()> {
+        info!("Resetting synchronization state");
+        self.sync_storage.clear_all().await?;
+        info!("Synchronization state has been reset");
         Ok(())
     }
 }

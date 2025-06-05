@@ -183,40 +183,31 @@ async fn setup_with_config(config: Config) -> TestEnvironment {
         s3_storage.clone(),
         recall_storage.clone(),
         config,
-        false,
     );
 
-    let env = TestEnvironment {
+    TestEnvironment {
         database,
         sync_storage,
         s3_storage,
         recall_storage,
         synchronizer,
-    };
-
-    // Add initial test data
-    let now = Utc::now();
-    let object1 = create_test_object_index("test/object1.jsonl", now);
-    let mut object2 = create_test_object_index("test/object2.jsonl", now + Duration::hours(1));
-    object2.size_bytes = Some(2048);
-
-    env.add_object_to_db_and_s3(object1, "Test data for object1")
-        .await;
-    env.add_object_to_db_and_s3(object2, "Test data for object2")
-        .await;
-
-    env
+    }
 }
 
 #[tokio::test]
 async fn when_no_filters_applied_all_objects_are_synchronized() {
     let env = setup().await;
-    let objects = env
-        .database
-        .get_objects(100, None, None, None)
-        .await
-        .unwrap();
-    let num_objects = objects.len();
+
+    let now = Utc::now();
+    let object1 = create_test_object_index("test/object1.jsonl", now);
+    let object2 = create_test_object_index("test/object2.jsonl", now + Duration::hours(1));
+
+    env.add_object_to_db_and_s3(object1.clone(), "Test data for object1")
+        .await;
+    env.add_object_to_db_and_s3(object2.clone(), "Test data for object2")
+        .await;
+
+    let objects = vec![object1, object2];
 
     env.synchronizer.run(None, None).await.unwrap();
 
@@ -233,7 +224,7 @@ async fn when_no_filters_applied_all_objects_are_synchronized() {
         .unwrap();
     assert_eq!(
         completed_objects.len(),
-        num_objects,
+        objects.len(),
         "All objects should be synchronized"
     );
 }
@@ -244,9 +235,15 @@ async fn when_competition_id_filter_is_applied_only_matching_objects_are_synchro
 
     let competition_id = uuid::Uuid::new_v4();
     let now = Utc::now();
+
     let mut filtered_object = create_test_object_index("test/filtered.jsonl", now);
     filtered_object.competition_id = Some(competition_id);
+
+    let other_object = create_test_object_index("test/other.jsonl", now + Duration::hours(1));
+
     env.add_object_to_db_and_s3(filtered_object.clone(), "Filtered test data")
+        .await;
+    env.add_object_to_db_and_s3(other_object.clone(), "Other test data")
         .await;
 
     env.synchronizer
@@ -263,23 +260,14 @@ async fn when_competition_id_filter_is_applied_only_matching_objects_are_synchro
             )
         });
 
-    let all_objects = env
-        .database
-        .get_objects(100, None, None, None)
+    env.verify_object_not_synced(&other_object)
         .await
-        .unwrap();
-    for obj in all_objects {
-        if obj.competition_id != Some(competition_id) {
-            env.verify_object_not_synced(&obj)
-                .await
-                .unwrap_or_else(|e| {
-                    panic!(
-                        "Object {} should not be synchronized: {}",
-                        obj.object_key, e
-                    )
-                });
-        }
-    }
+        .unwrap_or_else(|e| {
+            panic!(
+                "Object {} should not be synchronized: {}",
+                other_object.object_key, e
+            )
+        });
 }
 
 #[tokio::test]
@@ -287,8 +275,14 @@ async fn when_timestamp_filter_is_applied_only_newer_objects_are_synchronized() 
     let env = setup().await;
 
     let old_time = Utc::now() - Duration::days(7);
+    let recent_time = Utc::now() - Duration::hours(1);
+
     let old_object = create_test_object_index("test/old.jsonl", old_time);
+    let new_object = create_test_object_index("test/new.jsonl", recent_time);
+
     env.add_object_to_db_and_s3(old_object.clone(), "Old test data")
+        .await;
+    env.add_object_to_db_and_s3(new_object.clone(), "New test data")
         .await;
 
     let filter_time = Utc::now() - Duration::days(2);
@@ -303,18 +297,14 @@ async fn when_timestamp_filter_is_applied_only_newer_objects_are_synchronized() 
             )
         });
 
-    let all_objects = env
-        .database
-        .get_objects(100, None, None, None)
+    env.verify_object_synced(&new_object)
         .await
-        .unwrap();
-    for obj in all_objects {
-        if obj.object_last_modified_at > filter_time {
-            env.verify_object_synced(&obj).await.unwrap_or_else(|e| {
-                panic!("Newer object {} verification failed: {}", obj.object_key, e)
-            });
-        }
-    }
+        .unwrap_or_else(|e| {
+            panic!(
+                "Newer object {} verification failed: {}",
+                new_object.object_key, e
+            )
+        });
 }
 
 #[tokio::test]
@@ -344,7 +334,6 @@ async fn when_object_is_already_being_processed_it_is_skipped() {
     let record = env.sync_storage.get_object(test_object.id).await.unwrap();
     assert_eq!(record.map(|r| r.status), Some(SyncStatus::Processing));
 
-    // Verify the object was NOT added to Recall (since it was already processing)
     let exists_in_recall = env
         .recall_storage
         .has_blob(&test_object.object_key)
@@ -362,23 +351,19 @@ async fn when_object_is_already_being_processed_it_is_skipped() {
         .unwrap();
     env.synchronizer.run(None, None).await.unwrap();
 
-    // The object should still be complete (not processed again)
     let record = env.sync_storage.get_object(test_object.id).await.unwrap();
-    assert_eq!(record.map(|r| r.status), Some(SyncStatus::Complete));
+    assert_eq!(
+        record.map(|r| r.status),
+        Some(SyncStatus::Complete),
+        "Object should remain complete after re-running synchronizer"
+    );
 }
 
 #[tokio::test]
-async fn batch_size_limits_database_fetch() {
-    // This test verifies that the synchronizer fetches only batch_size objects
-    // from the database at a time, even if more objects are available.
-
+async fn with_batch_size_should_limits_database_fetch() {
     let mut config = create_test_config();
     config.sync.batch_size = 3;
     let env = setup_with_config(config).await;
-
-    // Clear initial test data
-    env.database.clear_data().await.unwrap();
-    env.sync_storage.clear_data().await.unwrap();
 
     // Add 10 objects to the database and S3
     let base_time = Utc::now() - Duration::hours(24);
@@ -391,10 +376,8 @@ async fn batch_size_limits_database_fetch() {
             .await;
     }
 
-    // First sync run
     env.synchronizer.run(None, None).await.unwrap();
 
-    // Should have processed exactly 3 objects (batch_size)
     let completed = env
         .sync_storage
         .get_objects_with_status(SyncStatus::Complete)
@@ -407,7 +390,6 @@ async fn batch_size_limits_database_fetch() {
         "Should process exactly batch_size (3) objects"
     );
 
-    // The 3 newest objects should be synced (test/batch-0.jsonl, test/batch-1.jsonl, test/batch-2.jsonl)
     let synced_keys: Vec<String> = completed.iter().map(|r| r.object_key.clone()).collect();
     assert!(synced_keys.contains(&"test/batch-0.jsonl".to_string()));
     assert!(synced_keys.contains(&"test/batch-1.jsonl".to_string()));
@@ -419,9 +401,6 @@ async fn multiple_sync_runs_with_new_objects() {
     let mut config = create_test_config();
     config.sync.batch_size = 3;
     let env = setup_with_config(config).await;
-
-    env.database.clear_data().await.unwrap();
-    env.sync_storage.clear_data().await.unwrap();
 
     let base_time = Utc::now();
 
@@ -492,8 +471,6 @@ async fn when_since_param_includes_already_synced_objects_they_are_skipped() {
     let mut config = create_test_config();
     config.sync.batch_size = 3;
     let env = setup_with_config(config).await;
-    env.database.clear_data().await.unwrap();
-    env.sync_storage.clear_data().await.unwrap();
 
     let base_time = Utc::now() - Duration::hours(24);
     let mut objects = Vec::new();
@@ -551,8 +528,6 @@ async fn when_since_param_skips_unsynced_objects_they_remain_unsynced() {
     let mut config = create_test_config();
     config.sync.batch_size = 3;
     let env = setup_with_config(config).await;
-    env.database.clear_data().await.unwrap();
-    env.sync_storage.clear_data().await.unwrap();
 
     let base_time = Utc::now() - Duration::hours(10);
     let mut objects = Vec::new();
@@ -609,8 +584,6 @@ async fn sync_with_same_competition_id_continues_from_where_it_left_off() {
     let mut config = create_test_config();
     config.sync.batch_size = 3;
     let env = setup_with_config(config).await;
-    env.database.clear_data().await.unwrap();
-    env.sync_storage.clear_data().await.unwrap();
 
     let base_time = Utc::now() - Duration::hours(10);
     let comp1_id = Uuid::new_v4();
@@ -684,8 +657,6 @@ async fn sync_with_different_competitions_maintains_separate_progress() {
     let mut config = create_test_config();
     config.sync.batch_size = 2;
     let env = setup_with_config(config).await;
-    env.database.clear_data().await.unwrap();
-    env.sync_storage.clear_data().await.unwrap();
 
     let base_time = Utc::now() - Duration::hours(10);
     let comp1_id = Uuid::new_v4();
@@ -777,8 +748,6 @@ async fn regular_sync_processes_all_unsynced_objects_from_all_competitions() {
     let mut config = create_test_config();
     config.sync.batch_size = 3;
     let env = setup_with_config(config).await;
-    env.database.clear_data().await.unwrap();
-    env.sync_storage.clear_data().await.unwrap();
 
     let base_time = Utc::now() - Duration::hours(10);
     let comp1_id = Uuid::new_v4();
@@ -844,8 +813,6 @@ async fn regular_sync_continues_regardless_of_competition_specific_progress() {
     let mut config = create_test_config();
     config.sync.batch_size = 2;
     let env = setup_with_config(config).await;
-    env.database.clear_data().await.unwrap();
-    env.sync_storage.clear_data().await.unwrap();
 
     let base_time = Utc::now() - Duration::hours(10);
     let comp1_id = Uuid::new_v4();
@@ -923,5 +890,69 @@ async fn regular_sync_continues_regardless_of_competition_specific_progress() {
         env.verify_object_synced(obj)
             .await
             .unwrap_or_else(|e| panic!("Object {} should be synced: {}", obj.object_key, e));
+    }
+}
+
+#[tokio::test]
+async fn reset_clears_sync_state_and_allows_resyncing() {
+    let env = setup().await;
+
+    let mut objects = Vec::new();
+    for i in 0..3 {
+        let object = create_test_object_index(
+            &format!("test/reset-{}.jsonl", i),
+            Utc::now() - Duration::hours(i as i64),
+        );
+        objects.push(object.clone());
+        env.add_object_to_db_and_s3(object, &format!("Test data {}", i))
+            .await;
+    }
+
+    env.synchronizer.run(None, None).await.unwrap();
+
+    for obj in &objects {
+        env.verify_object_synced(obj)
+            .await
+            .unwrap_or_else(|e| panic!("Initial sync failed for {}: {}", obj.object_key, e));
+    }
+
+    // Delete blobs one-by-one to simulate network reset
+    for obj in &objects {
+        env.recall_storage
+            .delete_blob(&obj.object_key)
+            .await
+            .unwrap_or_else(|e| panic!("Failed to delete blob {}: {}", obj.object_key, e));
+    }
+
+    // Verify sync doesn't re-upload (sync state still shows complete)
+    env.synchronizer.run(None, None).await.unwrap();
+    for obj in &objects {
+        let exists = env.recall_storage.has_blob(&obj.object_key).await.unwrap();
+        assert!(
+            !exists,
+            "Object {} should not be re-synced before reset",
+            obj.object_key
+        );
+    }
+
+    env.synchronizer.reset().await.unwrap();
+
+    let synced = env
+        .sync_storage
+        .get_objects_with_status(SyncStatus::Complete)
+        .await
+        .unwrap();
+    assert_eq!(synced.len(), 0, "Sync state should be empty after reset");
+
+    // Run sync again - should re-sync all objects
+    env.synchronizer.run(None, None).await.unwrap();
+
+    for obj in &objects {
+        env.verify_object_synced(obj).await.unwrap_or_else(|e| {
+            panic!(
+                "Object {} should be re-synced after reset: {}",
+                obj.object_key, e
+            )
+        });
     }
 }

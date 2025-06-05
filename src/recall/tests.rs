@@ -283,7 +283,7 @@ async fn error_handling_works_correctly() {
     let storage = FakeRecallStorage::new();
     let key = format!("test-error-{}", Uuid::new_v4());
 
-    storage.mark_blob_failed(&key);
+    storage.fake_fail_blob(&key);
 
     let add_result = storage.add_blob(&key, b"data".to_vec()).await;
     assert!(add_result.is_err(), "Add should fail for failed blob");
@@ -291,7 +291,7 @@ async fn error_handling_works_correctly() {
     let has_result = storage.has_blob(&key).await;
     assert!(has_result.is_err(), "Has should fail for failed blob");
 
-    storage.clear_blob_failure(&key);
+    storage.fake_reset_blob(&key);
 
     let add_result = storage.add_blob(&key, b"data".to_vec()).await;
     assert!(
@@ -312,7 +312,7 @@ async fn fake_storage_failure_simulation() {
     let key = "fail-test";
     let data = b"test data".to_vec();
 
-    storage.mark_blob_failed(key);
+    storage.fake_fail_blob(key);
 
     // Operations should fail with Operation error
     let add_result = storage.add_blob(key, data.clone()).await;
@@ -321,35 +321,13 @@ async fn fake_storage_failure_simulation() {
     let has_result = storage.has_blob(key).await;
     assert!(matches!(has_result, Err(RecallError::Operation(_))));
 
-    // Clear failure
-    storage.clear_blob_failure(key);
+    storage.fake_reset_blob(key);
 
     // Now operations should succeed
     storage.add_blob(key, data).await.unwrap();
 
     let exists = storage.has_blob(key).await.unwrap();
     assert!(exists);
-}
-
-#[tokio::test]
-async fn fake_storage_prefix_tracking() {
-    let storage = FakeRecallStorage::new();
-
-    // Add some prefixes
-    storage.add_prefix("prefix1/");
-    storage.add_prefix("prefix2/");
-
-    // Check prefixes exist
-    assert!(storage.has_prefix("prefix1/"));
-    assert!(storage.has_prefix("prefix2/"));
-    assert!(!storage.has_prefix("prefix3/"));
-
-    // Clear a prefix
-    storage.clear_prefixes();
-
-    // All prefixes should be gone
-    assert!(!storage.has_prefix("prefix1/"));
-    assert!(!storage.has_prefix("prefix2/"));
 }
 
 #[tokio::test]
