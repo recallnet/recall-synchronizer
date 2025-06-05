@@ -9,14 +9,6 @@ use crate::recall::Storage as RecallStorage;
 use crate::s3::Storage as S3Storage;
 use crate::sync::storage::{SyncRecord, SyncStatus, SyncStorage};
 
-/// State for tracking batch processing progress
-struct BatchProcessingState {
-    total_processed: usize,
-    batch_size: usize,
-    current_since_time: Option<DateTime<Utc>>,
-    current_after_id: Option<uuid::Uuid>,
-}
-
 /// Main synchronizer that orchestrates the data synchronization process
 pub struct Synchronizer<D: Database, S: SyncStorage, ST: S3Storage, RS: RecallStorage> {
     database: Arc<D>,
@@ -210,32 +202,6 @@ impl<D: Database, S: SyncStorage, ST: S3Storage, RS: RecallStorage> Synchronizer
         Ok((last_synced_object, batch_processed))
     }
 
-    /// Determine whether to continue to the next batch
-    fn should_continue_to_next_batch(
-        &self,
-        state: &mut BatchProcessingState,
-        last_object_in_batch: Option<ObjectIndex>,
-    ) -> bool {
-        // Check if we've filled our batch quota
-        if state.total_processed >= state.batch_size {
-            return false;
-        }
-
-        // Check if there are more objects to process
-        if let Some(last_obj) = last_object_in_batch {
-            state.current_since_time = Some(last_obj.object_last_modified_at);
-            state.current_after_id = Some(last_obj.id);
-
-            debug!(
-                "Total processed: {}, continuing to fill batch of {}",
-                state.total_processed, state.batch_size
-            );
-            true
-        } else {
-            false
-        }
-    }
-
     /// Runs the synchronization process
     pub async fn run(
         &self,
@@ -246,63 +212,54 @@ impl<D: Database, S: SyncStorage, ST: S3Storage, RS: RecallStorage> Synchronizer
 
         let competition_uuid = Self::parse_competition_id(&competition_id)?;
 
-        let initial_sync_state = self.get_sync_state(since, competition_uuid).await?;
+        let (mut current_since_time, mut current_after_id) =
+            self.get_sync_state(since, competition_uuid).await?;
 
-        if let Some(ts) = &initial_sync_state.0 {
+        if let Some(ts) = current_since_time {
             info!("Synchronizing data since: {}", ts);
         } else {
             info!("No previous sync timestamp found, syncing all objects");
         }
 
-        let mut state = BatchProcessingState {
-            total_processed: 0,
-            batch_size: self.config.sync.batch_size,
-            current_since_time: initial_sync_state.0,
-            current_after_id: initial_sync_state.1,
-        };
+        let batch_size = self.config.sync.batch_size;
+        let mut total_processed = 0;
 
         loop {
             // Calculate how many more objects we can process
-            let remaining_quota = state.batch_size.saturating_sub(state.total_processed);
+            let remaining_quota = batch_size.saturating_sub(total_processed);
             if remaining_quota == 0 {
-                debug!(
-                    "Batch quota filled. Total processed: {}",
-                    state.total_processed
-                );
+                debug!("Batch quota filled. Total processed: {}", total_processed);
                 break;
             }
 
             // Fetch objects, but limit to our remaining quota
-            let fetch_limit =
-                std::cmp::min(self.config.sync.batch_size as u32, remaining_quota as u32);
+            let fetch_limit = std::cmp::min(batch_size as u32, remaining_quota as u32);
             let objects = self
                 .fetch_objects_to_sync(
-                    state.current_since_time,
-                    state.current_after_id,
+                    current_since_time,
+                    current_after_id,
                     Some(fetch_limit),
                     competition_uuid,
                 )
                 .await?;
 
             if objects.is_empty() {
-                if state.total_processed == 0 {
+                if total_processed == 0 {
                     info!("No objects found to synchronize");
                 } else {
                     info!(
                         "Synchronization completed. Processed {} objects",
-                        state.total_processed
+                        total_processed
                     );
                 }
                 return Ok(());
             }
 
-            let last_object_in_batch = objects.last().cloned();
-
             info!("Found {} objects to synchronize", objects.len());
 
             // Process the batch of objects
             let (last_synced_object, batch_processed) = self.process_object_batch(&objects).await?;
-            state.total_processed += batch_processed;
+            total_processed += batch_processed;
 
             if let Some(last_object) = last_synced_object {
                 self.sync_storage
@@ -310,9 +267,20 @@ impl<D: Database, S: SyncStorage, ST: S3Storage, RS: RecallStorage> Synchronizer
                     .await?;
             }
 
-            // Determine whether to continue to the next batch
-            if self.should_continue_to_next_batch(&mut state, last_object_in_batch) {
-                continue;
+            // Check if we should continue to the next batch
+            if total_processed >= batch_size {
+                break;
+            }
+
+            // Update state for next iteration if there might be more objects
+            if let Some(last_obj) = objects.last() {
+                current_since_time = Some(last_obj.object_last_modified_at);
+                current_after_id = Some(last_obj.id);
+
+                debug!(
+                    "Total processed: {}, continuing to fill batch of {}",
+                    total_processed, batch_size
+                );
             } else {
                 break;
             }
