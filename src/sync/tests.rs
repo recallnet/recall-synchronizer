@@ -213,7 +213,7 @@ async fn when_no_filters_applied_all_objects_are_synchronized() {
     let env = setup().await;
     let objects = env
         .database
-        .get_objects_to_sync_with_id(100, None, None)
+        .get_objects(100, None, None, None)
         .await
         .unwrap();
     let num_objects = objects.len();
@@ -265,7 +265,7 @@ async fn when_competition_id_filter_is_applied_only_matching_objects_are_synchro
 
     let all_objects = env
         .database
-        .get_objects_to_sync_with_id(100, None, None)
+        .get_objects(100, None, None, None)
         .await
         .unwrap();
     for obj in all_objects {
@@ -305,7 +305,7 @@ async fn when_timestamp_filter_is_applied_only_newer_objects_are_synchronized() 
 
     let all_objects = env
         .database
-        .get_objects_to_sync_with_id(100, None, None)
+        .get_objects(100, None, None, None)
         .await
         .unwrap();
     for obj in all_objects {

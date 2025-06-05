@@ -102,31 +102,15 @@ impl<D: Database, S: SyncStorage, ST: S3Storage, RS: RecallStorage> Synchronizer
         since_time: Option<DateTime<Utc>>,
         after_id: Option<uuid::Uuid>,
         limit: Option<u32>,
+        competition_id: Option<uuid::Uuid>,
     ) -> Result<Vec<ObjectIndex>> {
         let batch_size = limit.unwrap_or(self.config.sync.batch_size as u32);
         self.database
-            .get_objects_to_sync_with_id(batch_size, since_time, after_id)
+            .get_objects(batch_size, since_time, after_id, competition_id)
             .await
             .map_err(|e| anyhow::anyhow!("Failed to fetch objects to sync: {}", e))
     }
 
-    /// Filters objects by competition ID if specified
-    fn filter_objects_by_competition(
-        &self,
-        objects: Vec<ObjectIndex>,
-        competition_id: Option<String>,
-    ) -> Result<Vec<ObjectIndex>> {
-        if let Some(comp_id) = competition_id {
-            let comp_uuid = uuid::Uuid::parse_str(&comp_id)
-                .context(format!("Invalid competition ID format: {}", comp_id))?;
-            Ok(objects
-                .into_iter()
-                .filter(|obj| obj.competition_id == Some(comp_uuid))
-                .collect())
-        } else {
-            Ok(objects)
-        }
-    }
 
     /// Checks if an object should be processed based on its current status
     async fn should_process_object(&self, object: &ObjectIndex) -> Result<bool> {
@@ -210,35 +194,6 @@ impl<D: Database, S: SyncStorage, ST: S3Storage, RS: RecallStorage> Synchronizer
         }
     }
 
-    /// Handle the case where no objects matched the competition filter
-    fn handle_empty_competition_batch(
-        &self,
-        last_object_in_batch: Option<ObjectIndex>,
-        state: &mut BatchProcessingState,
-    ) -> bool {
-        if let Some(last_obj) = last_object_in_batch {
-            state.current_since_time = Some(last_obj.object_last_modified_at);
-            state.current_after_id = Some(last_obj.id);
-            state.attempts_without_progress += 1;
-
-            if state.attempts_without_progress >= state.max_attempts {
-                info!(
-                    "No more objects found for competition after {} attempts",
-                    state.max_attempts
-                );
-                return false;
-            }
-
-            debug!(
-                "No matching objects in batch, continuing from object {}",
-                last_obj.id
-            );
-            true
-        } else {
-            info!("No objects matching filter criteria");
-            false
-        }
-    }
 
     /// Process a batch of objects and return the last synced object and count
     async fn process_object_batch<'a>(
@@ -356,6 +311,7 @@ impl<D: Database, S: SyncStorage, ST: S3Storage, RS: RecallStorage> Synchronizer
                     state.current_since_time,
                     state.current_after_id,
                     Some(fetch_limit),
+                    competition_uuid,
                 )
                 .await?;
 
@@ -372,24 +328,13 @@ impl<D: Database, S: SyncStorage, ST: S3Storage, RS: RecallStorage> Synchronizer
             }
 
             let last_object_in_batch = objects.last().cloned();
-            let filtered_objects =
-                self.filter_objects_by_competition(objects, competition_id.clone())?;
 
-            if filtered_objects.is_empty() && competition_id.is_some() {
-                // Handle the case where no objects matched the competition filter
-                if self.handle_empty_competition_batch(last_object_in_batch, &mut state) {
-                    continue;
-                } else {
-                    return Ok(());
-                }
-            }
-
-            info!("Found {} objects to synchronize", filtered_objects.len());
+            info!("Found {} objects to synchronize", objects.len());
             state.attempts_without_progress = 0; // Reset counter when we find matching objects
 
             // Process the batch of objects
             let (last_synced_object, batch_processed) =
-                self.process_object_batch(&filtered_objects).await?;
+                self.process_object_batch(&objects).await?;
             state.total_processed += batch_processed;
 
             if let Some(last_object) = last_synced_object {

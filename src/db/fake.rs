@@ -24,17 +24,24 @@ impl FakeDatabase {
 
 #[async_trait]
 impl Database for FakeDatabase {
-    async fn get_objects_to_sync_with_id(
+    async fn get_objects(
         &self,
         limit: u32,
         since: Option<DateTime<Utc>>,
         after_id: Option<Uuid>,
+        competition_id: Option<Uuid>,
     ) -> Result<Vec<ObjectIndex>, DatabaseError> {
         let objects = self.objects.read().unwrap();
 
         let mut filtered: Vec<ObjectIndex> = objects
             .values()
             .filter(|obj| {
+                if let Some(comp_id) = competition_id {
+                    if obj.competition_id != Some(comp_id) {
+                        return false;
+                    }
+                }
+
                 match (since, after_id) {
                     (Some(ts), Some(id)) => {
                         // For objects with timestamp > since OR (timestamp == since AND id > after_id)
@@ -52,12 +59,12 @@ impl Database for FakeDatabase {
         // Sort by last_modified_at in ascending order (oldest first)
         // For same timestamps, sort by ID ascending
         // This ensures we complete all objects with the same timestamp before moving to newer ones
-        filtered.sort_by(|a, b| {
-            match a.object_last_modified_at.cmp(&b.object_last_modified_at) {
+        filtered.sort_by(
+            |a, b| match a.object_last_modified_at.cmp(&b.object_last_modified_at) {
                 std::cmp::Ordering::Equal => a.id.cmp(&b.id),
                 other => other,
-            }
-        });
+            },
+        );
 
         // Apply limit after sorting
         filtered.truncate(limit as usize);

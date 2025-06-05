@@ -157,11 +157,12 @@ impl PostgresDatabase {
 
 #[async_trait]
 impl Database for PostgresDatabase {
-    async fn get_objects_to_sync_with_id(
+    async fn get_objects(
         &self,
         limit: u32,
         since: Option<DateTime<Utc>>,
         after_id: Option<uuid::Uuid>,
+        competition_id: Option<uuid::Uuid>,
     ) -> Result<Vec<ObjectIndex>, DatabaseError> {
         let query_base = format!(
             r#"
@@ -174,69 +175,82 @@ impl Database for PostgresDatabase {
             self.table_name()
         );
 
-        let objects = match (since, after_id) {
-            (Some(ts), Some(id)) => {
-                // With both timestamp and ID filter
-                let query = format!(
-                    "{} WHERE (object_last_modified_at > $1) OR (object_last_modified_at = $1 AND id > $2) ORDER BY object_last_modified_at ASC, id ASC LIMIT $3",
-                    query_base
-                );
-                match sqlx::query(&query)
-                    .bind(ts)
-                    .bind(id)
-                    .bind(i64::from(limit))
-                    .fetch_all(&self.pool)
-                    .await
-                {
-                    Ok(rows) => rows,
-                    Err(e) => {
-                        if e.to_string().contains("does not exist") {
-                            return Ok(Vec::new());
-                        }
-                        return Err(DatabaseError::QueryError(e.to_string()));
-                    }
-                }
+        // Build WHERE clause dynamically based on provided filters
+        let mut where_clauses = Vec::new();
+        let mut bind_params: Vec<String> = Vec::new();
+        let mut param_count = 1;
+
+        // Competition ID filter
+        if competition_id.is_some() {
+            where_clauses.push(format!("competition_id = ${}", param_count));
+            bind_params.push("competition_id".to_string());
+            param_count += 1;
+        }
+
+        // Timestamp and after_id filters
+        match (since, after_id) {
+            (Some(_), Some(_)) => {
+                where_clauses.push(format!(
+                    "(object_last_modified_at > ${} OR (object_last_modified_at = ${} AND id > ${}))",
+                    param_count,
+                    param_count,
+                    param_count + 1
+                ));
+                bind_params.push("since".to_string());
+                bind_params.push("after_id".to_string());
+                param_count += 2;
             }
-            (Some(ts), None) => {
-                // Only timestamp filter
-                let query = format!(
-                    "{} WHERE object_last_modified_at > $1 ORDER BY object_last_modified_at ASC, id ASC LIMIT $2",
-                    query_base
-                );
-                match sqlx::query(&query)
-                    .bind(ts)
-                    .bind(i64::from(limit))
-                    .fetch_all(&self.pool)
-                    .await
-                {
-                    Ok(rows) => rows,
-                    Err(e) => {
-                        if e.to_string().contains("does not exist") {
-                            return Ok(Vec::new());
-                        }
-                        return Err(DatabaseError::QueryError(e.to_string()));
-                    }
-                }
+            (Some(_), None) => {
+                where_clauses.push(format!("object_last_modified_at > ${}", param_count));
+                bind_params.push("since".to_string());
+                param_count += 1;
             }
-            (None, _) => {
-                // No filters
-                let query = format!(
-                    "{} ORDER BY object_last_modified_at ASC, id ASC LIMIT $1",
-                    query_base
-                );
-                match sqlx::query(&query)
-                    .bind(i64::from(limit))
-                    .fetch_all(&self.pool)
-                    .await
-                {
-                    Ok(rows) => rows,
-                    Err(e) => {
-                        if e.to_string().contains("does not exist") {
-                            return Ok(Vec::new());
-                        }
-                        return Err(DatabaseError::QueryError(e.to_string()));
-                    }
+            _ => {}
+        }
+
+        // Build final query
+        let query = if where_clauses.is_empty() {
+            format!(
+                "{} ORDER BY object_last_modified_at ASC, id ASC LIMIT ${}",
+                query_base, param_count
+            )
+        } else {
+            format!(
+                "{} WHERE {} ORDER BY object_last_modified_at ASC, id ASC LIMIT ${}",
+                query_base,
+                where_clauses.join(" AND "),
+                param_count
+            )
+        };
+
+        // Execute query with appropriate bindings
+        let mut query_builder = sqlx::query(&query);
+        
+        // Bind parameters in the correct order
+        for param in &bind_params {
+            match param.as_str() {
+                "competition_id" => {
+                    query_builder = query_builder.bind(competition_id.unwrap());
                 }
+                "since" => {
+                    query_builder = query_builder.bind(since.unwrap());
+                }
+                "after_id" => {
+                    query_builder = query_builder.bind(after_id.unwrap());
+                }
+                _ => {}
+            }
+        }
+        
+        query_builder = query_builder.bind(i64::from(limit));
+
+        let objects = match query_builder.fetch_all(&self.pool).await {
+            Ok(rows) => rows,
+            Err(e) => {
+                if e.to_string().contains("does not exist") {
+                    return Ok(Vec::new());
+                }
+                return Err(DatabaseError::QueryError(e.to_string()));
             }
         };
 

@@ -8,16 +8,18 @@ use uuid::Uuid;
 /// Database trait defining the interface for reading object metadata
 #[async_trait]
 pub trait Database: Send + Sync + 'static {
-    /// Query for objects that need to be synchronized with ID-based filtering
+    /// Query for objects that need to be synchronized with filtering options
     ///
     /// * `limit` - Maximum number of objects to return
     /// * `since` - Only return objects modified after this timestamp
     /// * `after_id` - For objects with the same timestamp as `since`, only return those with ID > after_id
-    async fn get_objects_to_sync_with_id(
+    /// * `competition_id` - Filter objects by competition ID if provided
+    async fn get_objects(
         &self,
         limit: u32,
         since: Option<DateTime<Utc>>,
         after_id: Option<Uuid>,
+        competition_id: Option<Uuid>,
     ) -> Result<Vec<ObjectIndex>, DatabaseError>;
 
     /// Get a specific object by its key
@@ -40,14 +42,15 @@ pub trait Database: Send + Sync + 'static {
 /// parts of the application to share the same database instance.
 #[async_trait]
 impl<T: Database + ?Sized> Database for Arc<T> {
-    async fn get_objects_to_sync_with_id(
+    async fn get_objects(
         &self,
         limit: u32,
         since: Option<DateTime<Utc>>,
         after_id: Option<Uuid>,
+        competition_id: Option<Uuid>,
     ) -> Result<Vec<ObjectIndex>, DatabaseError> {
         (**self)
-            .get_objects_to_sync_with_id(limit, since, after_id)
+            .get_objects(limit, since, after_id, competition_id)
             .await
     }
 

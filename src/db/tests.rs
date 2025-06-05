@@ -1,8 +1,8 @@
 use crate::db::{postgres::PostgresDatabase, Database, DatabaseError, FakeDatabase, ObjectIndex};
 use crate::test_utils::{create_test_object_index, load_test_config};
 use chrono::{Duration, Utc};
-use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::Arc;
 
 // Type alias to simplify the complex type for database factory functions
 type DatabaseFactory =
@@ -66,7 +66,6 @@ async fn setup_test_database_with_prefix(
     objects
 }
 
-
 // Helper function to create test databases
 fn get_test_databases() -> Vec<DatabaseFactory> {
     let mut databases: Vec<DatabaseFactory> = vec![
@@ -104,10 +103,7 @@ async fn get_objects_with_no_timestamp_filter_returns_all_objects() {
         let db = db_factory().await;
         let test_objects = setup_test_database(db.as_ref()).await;
 
-        let objects = db
-            .get_objects_to_sync_with_id(20, None, None)
-            .await
-            .unwrap();
+        let objects = db.get_objects(20, None, None, None).await.unwrap();
 
         assert_eq!(
             objects.len(),
@@ -127,7 +123,7 @@ async fn get_objects_with_future_timestamp_returns_empty() {
 
         let future_time = Utc::now() + Duration::days(1);
         let objects = db
-            .get_objects_to_sync_with_id(20, Some(future_time), None)
+            .get_objects(20, Some(future_time), None, None)
             .await
             .unwrap();
 
@@ -148,7 +144,7 @@ async fn get_objects_with_past_timestamp_returns_recent_objects() {
         // Use a timestamp that's 5 hours ago (halfway through our test data)
         let midpoint_time = Utc::now() - Duration::hours(5);
         let objects = db
-            .get_objects_to_sync_with_id(20, Some(midpoint_time), None)
+            .get_objects(20, Some(midpoint_time), None, None)
             .await
             .unwrap();
 
@@ -182,7 +178,7 @@ async fn get_objects_with_limit_at_beginning_of_range_returns_objects() {
         let db = db_factory().await;
         let _ = setup_test_database(db.as_ref()).await;
 
-        let objects = db.get_objects_to_sync_with_id(3, None, None).await.unwrap();
+        let objects = db.get_objects(3, None, None, None).await.unwrap();
 
         assert_eq!(
             objects.len(),
@@ -202,7 +198,12 @@ async fn get_objects_with_limit_in_middle_of_range_returns_objects() {
         let objects = db
             // Use the second object as a cutoff point
             // This should return the 8 most recent objects after the second one
-            .get_objects_to_sync_with_id(limit, Some(test_objects[1].object_last_modified_at), None)
+            .get_objects(
+                limit,
+                Some(test_objects[1].object_last_modified_at),
+                None,
+                None,
+            )
             .await
             .unwrap();
 
@@ -236,10 +237,7 @@ async fn get_objects_with_limit_beyond_available_records_returns_objects_up_to_l
         let db = db_factory().await;
         let test_objects = setup_test_database(db.as_ref()).await;
 
-        let objects = db
-            .get_objects_to_sync_with_id(100, None, None)
-            .await
-            .unwrap();
+        let objects = db.get_objects(100, None, None, None).await.unwrap();
 
         assert_eq!(
             objects.len(),
@@ -294,11 +292,11 @@ async fn get_object_by_nonexistent_key_returns_error() {
 async fn get_objects_with_same_timestamp_paginate_by_id() {
     for db_factory in get_test_databases() {
         let db = db_factory().await;
-        
+
         // Create objects with the same timestamp to test ID-based ordering
         let shared_timestamp = Utc::now() - Duration::hours(5);
         let mut objects_same_time = Vec::new();
-        
+
         // Create 7 objects with the exact same timestamp
         for i in 0..7 {
             let mut object = create_test_object_index(
@@ -310,15 +308,15 @@ async fn get_objects_with_same_timestamp_paginate_by_id() {
             db.add_object(object.clone()).await.unwrap();
             objects_same_time.push(object);
         }
-        
+
         // Sort objects by ID to match expected database behavior
         objects_same_time.sort_by(|a, b| a.id.cmp(&b.id));
-        
+
         // Get first batch without after_id
-        let batch1 = db.get_objects_to_sync_with_id(3, None, None).await.unwrap();
-        
+        let batch1 = db.get_objects(3, None, None, None).await.unwrap();
+
         assert_eq!(batch1.len(), 3, "First batch should contain 3 objects");
-        
+
         // Verify the objects are sorted by ID when timestamps are equal
         for i in 0..3 {
             assert_eq!(
@@ -326,16 +324,16 @@ async fn get_objects_with_same_timestamp_paginate_by_id() {
                 "Objects should be returned in ID order"
             );
         }
-        
+
         // Get second batch using after_id from first batch
         let last_id_batch1 = batch1.last().unwrap().id;
         let batch2 = db
-            .get_objects_to_sync_with_id(3, Some(shared_timestamp), Some(last_id_batch1))
+            .get_objects(3, Some(shared_timestamp), Some(last_id_batch1), None)
             .await
             .unwrap();
-        
+
         assert_eq!(batch2.len(), 3, "Second batch should contain 3 objects");
-        
+
         // Verify we got the next 3 objects in ID order
         for i in 0..3 {
             assert_eq!(
@@ -344,14 +342,14 @@ async fn get_objects_with_same_timestamp_paginate_by_id() {
                 "Second batch should continue from where first batch ended"
             );
         }
-        
+
         // Get third batch (should only have 1 remaining object)
         let last_id_batch2 = batch2.last().unwrap().id;
         let batch3 = db
-            .get_objects_to_sync_with_id(3, Some(shared_timestamp), Some(last_id_batch2))
+            .get_objects(3, Some(shared_timestamp), Some(last_id_batch2), None)
             .await
             .unwrap();
-        
+
         assert_eq!(
             batch3.len(),
             1,
@@ -361,14 +359,14 @@ async fn get_objects_with_same_timestamp_paginate_by_id() {
             batch3[0].id, objects_same_time[6].id,
             "Third batch should contain the last object"
         );
-        
+
         // Verify no more objects after the last one
         let last_id_batch3 = batch3.last().unwrap().id;
         let batch4 = db
-            .get_objects_to_sync_with_id(3, Some(shared_timestamp), Some(last_id_batch3))
+            .get_objects(3, Some(shared_timestamp), Some(last_id_batch3), None)
             .await
             .unwrap();
-        
+
         assert_eq!(
             batch4.len(),
             0,
@@ -381,11 +379,11 @@ async fn get_objects_with_same_timestamp_paginate_by_id() {
 async fn get_objects_with_mixed_timestamps_and_after_id() {
     for db_factory in get_test_databases() {
         let db = db_factory().await;
-        
+
         // Create objects with the same timestamp
         let shared_timestamp = Utc::now() - Duration::hours(5);
         let mut objects_same_time = Vec::new();
-        
+
         for i in 0..5 {
             let mut object = create_test_object_index(
                 &format!("test/same_time_{:02}.jsonl", i),
@@ -395,28 +393,33 @@ async fn get_objects_with_mixed_timestamps_and_after_id() {
             db.add_object(object.clone()).await.unwrap();
             objects_same_time.push(object);
         }
-        
+
         // Sort objects by ID to match expected database behavior
         objects_same_time.sort_by(|a, b| a.id.cmp(&b.id));
-        
+
         // Add objects with different timestamps
         let newer_timestamp = shared_timestamp + Duration::hours(1);
         let older_timestamp = shared_timestamp - Duration::hours(1);
-        
+
         let mut newer_object = create_test_object_index("test/newer.jsonl", newer_timestamp);
         newer_object.id = uuid::Uuid::new_v4();
         db.add_object(newer_object.clone()).await.unwrap();
-        
+
         let mut older_object = create_test_object_index("test/older.jsonl", older_timestamp);
         older_object.id = uuid::Uuid::new_v4();
         db.add_object(older_object).await.unwrap();
-        
+
         // Test 1: Verify timestamp + ID filtering works correctly
         let mixed_batch = db
-            .get_objects_to_sync_with_id(10, Some(shared_timestamp), Some(objects_same_time[2].id))
+            .get_objects(
+                10,
+                Some(shared_timestamp),
+                Some(objects_same_time[2].id),
+                None,
+            )
             .await
             .unwrap();
-        
+
         // Should get: remaining objects with shared_timestamp AND id > objects_same_time[2].id
         // PLUS the newer object (but NOT the older object)
         let expected_count = 2 + 1; // 2 remaining same-timestamp objects + 1 newer object
@@ -425,7 +428,7 @@ async fn get_objects_with_mixed_timestamps_and_after_id() {
             expected_count,
             "Should return objects with same timestamp and greater ID, plus all newer objects"
         );
-        
+
         // With ascending order, same-timestamp objects come first, then newer objects
         // Verify we got the right same-timestamp objects first
         assert_eq!(
@@ -436,27 +439,28 @@ async fn get_objects_with_mixed_timestamps_and_after_id() {
             mixed_batch[1].id, objects_same_time[4].id,
             "Should get object at index 4 second"
         );
-        
+
         // Verify the newer timestamp object comes last (sorted by timestamp ASC)
         assert_eq!(
             mixed_batch[2].id, newer_object.id,
             "Newer timestamp object should come last"
         );
-        
+
         // Test 2: Verify deterministic ordering by running the same query multiple times
         for _ in 0..3 {
             let consistent_batch = db
-                .get_objects_to_sync_with_id(
+                .get_objects(
                     5,
                     Some(shared_timestamp),
                     Some(objects_same_time[1].id),
+                    None,
                 )
                 .await
                 .unwrap();
-            
+
             // Should always get the same objects in the same order
             assert_eq!(consistent_batch.len(), 4); // 3 same-timestamp objects + 1 newer
-            
+
             // With ascending order, same-timestamp objects come first
             for i in 0..3 {
                 assert_eq!(
@@ -465,9 +469,167 @@ async fn get_objects_with_mixed_timestamps_and_after_id() {
                     "Same-timestamp objects should be in consistent ID order"
                 );
             }
-            
+
             // Newer object comes last
             assert_eq!(consistent_batch[3].id, newer_object.id);
+        }
+    }
+}
+
+#[tokio::test]
+async fn get_objects_filters_by_competition_id() {
+    for db_factory in get_test_databases() {
+        let db = db_factory().await;
+
+        // Create objects for different competitions
+        let comp1_id = uuid::Uuid::new_v4();
+        let comp2_id = uuid::Uuid::new_v4();
+        let base_time = Utc::now() - Duration::hours(10);
+
+        // Create 5 objects for competition 1
+        for i in 0..5 {
+            let mut object = create_test_object_index(
+                &format!("test/comp1_object_{:02}.jsonl", i),
+                base_time + Duration::minutes(i * 10),
+            );
+            object.competition_id = Some(comp1_id);
+            db.add_object(object).await.unwrap();
+        }
+
+        // Create 3 objects for competition 2
+        for i in 0..3 {
+            let mut object = create_test_object_index(
+                &format!("test/comp2_object_{:02}.jsonl", i),
+                base_time + Duration::minutes(i * 10),
+            );
+            object.competition_id = Some(comp2_id);
+            db.add_object(object).await.unwrap();
+        }
+
+        // Create 2 objects with no competition
+        for i in 0..2 {
+            let mut object = create_test_object_index(
+                &format!("test/no_comp_object_{:02}.jsonl", i),
+                base_time + Duration::minutes(i * 10),
+            );
+            object.competition_id = None;
+            db.add_object(object).await.unwrap();
+        }
+
+        // Test 1: Filter by competition 1
+        let comp1_objects = db
+            .get_objects(20, None, None, Some(comp1_id))
+            .await
+            .unwrap();
+        assert_eq!(
+            comp1_objects.len(),
+            5,
+            "Should return exactly 5 objects for competition 1"
+        );
+        for obj in &comp1_objects {
+            assert_eq!(
+                obj.competition_id,
+                Some(comp1_id),
+                "All returned objects should belong to competition 1"
+            );
+        }
+
+        // Test 2: Filter by competition 2
+        let comp2_objects = db
+            .get_objects(20, None, None, Some(comp2_id))
+            .await
+            .unwrap();
+        assert_eq!(
+            comp2_objects.len(),
+            3,
+            "Should return exactly 3 objects for competition 2"
+        );
+        for obj in &comp2_objects {
+            assert_eq!(
+                obj.competition_id,
+                Some(comp2_id),
+                "All returned objects should belong to competition 2"
+            );
+        }
+
+        // Test 3: No competition filter returns all objects
+        let all_objects = db.get_objects(20, None, None, None).await.unwrap();
+        assert_eq!(
+            all_objects.len(),
+            10,
+            "Should return all 10 objects when no competition filter is provided"
+        );
+    }
+}
+
+#[tokio::test]
+async fn get_objects_filters_by_competition_id_with_pagination() {
+    for db_factory in get_test_databases() {
+        let db = db_factory().await;
+
+        let comp_id = uuid::Uuid::new_v4();
+        let base_time = Utc::now() - Duration::hours(10);
+
+        // Create 8 objects for a specific competition
+        let mut comp_objects = Vec::new();
+        for i in 0..8 {
+            let mut object = create_test_object_index(
+                &format!("test/comp_object_{:02}.jsonl", i),
+                base_time + Duration::minutes(i * 10),
+            );
+            object.competition_id = Some(comp_id);
+            db.add_object(object.clone()).await.unwrap();
+            comp_objects.push(object);
+        }
+
+        // Create 4 objects for other competitions to ensure filtering works
+        for i in 0..4 {
+            let mut object = create_test_object_index(
+                &format!("test/other_object_{:02}.jsonl", i),
+                base_time + Duration::minutes(i * 10),
+            );
+            object.competition_id = Some(uuid::Uuid::new_v4());
+            db.add_object(object).await.unwrap();
+        }
+
+        let batch1 = db.get_objects(3, None, None, Some(comp_id)).await.unwrap();
+        assert_eq!(batch1.len(), 3, "First batch should contain 3 objects");
+
+        for obj in &batch1 {
+            assert_eq!(
+                obj.competition_id,
+                Some(comp_id),
+                "All objects in first batch should belong to the specified competition"
+            );
+        }
+
+        // Get second batch using pagination
+        let last_object = batch1.last().unwrap();
+        let batch2 = db
+            .get_objects(
+                3,
+                Some(last_object.object_last_modified_at),
+                Some(last_object.id),
+                Some(comp_id),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(batch2.len(), 3, "Second batch should contain 3 objects");
+
+        let batch1_ids: std::collections::HashSet<_> = batch1.iter().map(|o| o.id).collect();
+        let batch2_ids: std::collections::HashSet<_> = batch2.iter().map(|o| o.id).collect();
+        assert!(
+            batch1_ids.is_disjoint(&batch2_ids),
+            "Batches should not overlap"
+        );
+
+        for obj in &batch2 {
+            assert_eq!(
+                obj.competition_id,
+                Some(comp_id),
+                "All objects in second batch should belong to the specified competition"
+            );
         }
     }
 }
