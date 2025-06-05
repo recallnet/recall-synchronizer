@@ -98,13 +98,8 @@ async fn run(
     let recall_storage = RecallBlockchain::new(&config.recall).await?;
 
     // Create the synchronizer with specific implementations
-    let synchronizer = Synchronizer::new(
-        database,
-        sync_storage,
-        s3_storage,
-        recall_storage,
-        config,
-    );
+    let synchronizer =
+        Synchronizer::new(database, sync_storage, s3_storage, recall_storage, config);
 
     info!("Synchronizer initialized successfully");
 

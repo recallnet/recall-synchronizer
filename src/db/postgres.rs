@@ -225,7 +225,7 @@ impl Database for PostgresDatabase {
 
         // Execute query with appropriate bindings
         let mut query_builder = sqlx::query(&query);
-        
+
         // Bind parameters in the correct order
         for param in &bind_params {
             match param.as_str() {
@@ -241,7 +241,7 @@ impl Database for PostgresDatabase {
                 _ => {}
             }
         }
-        
+
         query_builder = query_builder.bind(i64::from(limit));
 
         let objects = match query_builder.fetch_all(&self.pool).await {

@@ -33,7 +33,6 @@ impl FakeRecallStorage {
         let mut fail_blobs = self.fail_blobs.lock().unwrap();
         fail_blobs.remove(key);
     }
-
 }
 
 #[async_trait]

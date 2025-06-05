@@ -33,7 +33,6 @@ impl FakeStorage {
         let mut fail_objects = self.fail_objects.lock().await;
         fail_objects.insert(key.to_string(), true);
     }
-
 }
 
 #[async_trait]
