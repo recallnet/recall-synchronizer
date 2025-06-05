@@ -2,7 +2,7 @@ use crate::config::RecallConfig;
 use crate::recall::error::RecallError;
 use crate::recall::fake::FakeRecallStorage;
 use crate::recall::{RecallBlockchain, Storage};
-use crate::test_utils::{get_next_wallet, load_test_config};
+use crate::test_utils::{get_next_wallet, is_recall_enabled, load_test_config};
 use std::sync::Arc;
 use uuid::Uuid;
 
@@ -21,19 +21,19 @@ fn get_test_storages() -> Vec<(&'static str, StorageFactory)> {
     ));
 
     // Conditionally add real Recall
-    let config = load_test_config();
-    if config.recall.enabled {
+    if is_recall_enabled() {
         storages.push((
             "real_recall",
             Box::new(|| {
                 Box::pin(async {
-                    let config = load_test_config();
+                    let config = load_test_config()
+                        .expect("Failed to load test config");
 
                     // Get a unique wallet for this test
                     let test_wallet = get_next_wallet();
                     println!("Using test wallet: {}", test_wallet.address);
 
-                    let network = config.recall.network.clone().unwrap_or_else(|| "localnet".to_string());
+                    let network = config.recall.network.clone();
                     let config_path = config.recall.config_path.clone().unwrap_or_else(|| "networks.toml".to_string());
                     let recall_config = RecallConfig {
                         private_key: test_wallet.private_key.clone(),

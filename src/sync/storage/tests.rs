@@ -1,6 +1,6 @@
 use crate::sync::storage::models::{SyncRecord, SyncStatus};
 use crate::sync::storage::{FakeSyncStorage, SqliteSyncStorage, SyncStorage};
-use crate::test_utils::load_test_config;
+use crate::test_utils::is_sqlite_enabled;
 use chrono::{Duration, Utc};
 use std::sync::Arc;
 use uuid::Uuid;
@@ -51,9 +51,7 @@ fn get_test_storages() -> Vec<StorageFactory> {
         }),
     ];
 
-    let test_config = load_test_config();
-
-    if test_config.sqlite.enabled {
+    if is_sqlite_enabled() {
         storages.push(Box::new(|| {
             Box::pin(async move {
                 // Create an in-memory SQLite storage for testing

@@ -1,147 +1,45 @@
+use crate::config::{load_config, Config};
 use crate::db::ObjectIndex;
 use chrono::{DateTime, Utc};
-use serde::Deserialize;
-use std::fs;
-use std::path::Path;
 use uuid::Uuid;
 
-// Re-export wallet pool functionality
-#[cfg(test)]
 pub mod wallet_pool;
-#[cfg(test)]
 pub use wallet_pool::get_next_wallet;
 
-#[derive(Debug, Deserialize)]
-pub struct TestConfig {
-    pub database: DatabaseTestConfig,
-    pub sqlite: SqliteTestConfig,
-    #[allow(dead_code)]
-    pub s3: S3TestConfig,
-    #[allow(dead_code)]
-    pub recall: RecallTestConfig,
+/// Check if database tests are enabled via environment variable
+pub fn is_db_enabled() -> bool {
+    std::env::var("ENABLE_DB_TESTS")
+        .map(|v| v.to_lowercase() == "true")
+        .unwrap_or(false)
 }
 
-#[derive(Debug, Deserialize)]
-pub struct DatabaseTestConfig {
-    pub enabled: bool,
-    pub url: String,
+/// Check if SQLite tests are enabled via environment variable
+pub fn is_sqlite_enabled() -> bool {
+    std::env::var("ENABLE_SQLITE_TESTS")
+        .map(|v| v.to_lowercase() == "true")
+        .unwrap_or(false)
 }
 
-#[derive(Debug, Deserialize)]
-pub struct SqliteTestConfig {
-    pub enabled: bool,
-    #[allow(dead_code)]
-    pub path: String,
+/// Check if S3 tests are enabled via environment variable
+pub fn is_s3_enabled() -> bool {
+    std::env::var("ENABLE_S3_TESTS")
+        .map(|v| v.to_lowercase() == "true")
+        .unwrap_or(false)
 }
 
-#[derive(Debug, Deserialize)]
-pub struct S3TestConfig {
-    #[allow(dead_code)]
-    pub enabled: bool,
-    #[allow(dead_code)]
-    pub endpoint: String,
-    #[allow(dead_code)]
-    pub region: String,
-    #[allow(dead_code)]
-    pub bucket: String,
-    #[allow(dead_code)]
-    pub access_key_id: String,
-    #[allow(dead_code)]
-    pub secret_access_key: String,
-}
-
-#[derive(Debug, Deserialize)]
-pub struct RecallTestConfig {
-    #[allow(dead_code)]
-    pub enabled: bool,
-    #[allow(dead_code)]
-    pub network: Option<String>,
-    #[allow(dead_code)]
-    pub config_path: Option<String>,
-    #[allow(dead_code)]
-    pub private_key: Option<String>,
-    #[allow(dead_code)]
-    pub bucket: Option<String>,
+/// Check if Recall tests are enabled via environment variable
+pub fn is_recall_enabled() -> bool {
+    std::env::var("ENABLE_RECALL_TESTS")
+        .map(|v| v.to_lowercase() == "true")
+        .unwrap_or(false)
 }
 
 /// Load test configuration from test_config.toml
-/// Environment variables will override config file settings
-pub fn load_test_config() -> TestConfig {
-    let config_path = Path::new("test_config.toml");
+pub fn load_test_config() -> Result<Config, anyhow::Error> {
+    let config_path = "test_config.toml";
 
-    // Start with file-based config or default
-    let mut config = if !config_path.exists() {
-        default_test_config()
-    } else {
-        // Read the config file
-        let config_content = match fs::read_to_string(config_path) {
-            Ok(content) => content,
-            Err(_) => {
-                println!("Warning: Failed to read test_config.toml, using default config");
-                return default_test_config();
-            }
-        };
-
-        // Parse the config file
-        match toml::from_str(&config_content) {
-            Ok(config) => config,
-            Err(e) => {
-                println!("Warning: Failed to parse test_config.toml: {}", e);
-                default_test_config()
-            }
-        }
-    };
-
-    // Override with environment variables if present
-    if let Ok(val) = std::env::var("ENABLE_DB_TESTS") {
-        config.database.enabled = val.to_lowercase() == "true";
-    }
-
-    if let Ok(val) = std::env::var("ENABLE_SQLITE_TESTS") {
-        config.sqlite.enabled = val.to_lowercase() == "true";
-    }
-
-    if let Ok(val) = std::env::var("ENABLE_S3_TESTS") {
-        config.s3.enabled = val.to_lowercase() == "true";
-    }
-
-    if let Ok(val) = std::env::var("ENABLE_RECALL_TESTS") {
-        config.recall.enabled = val.to_lowercase() == "true";
-    }
-
-    config
-}
-
-/// Default test configuration when file is missing or invalid
-fn default_test_config() -> TestConfig {
-    TestConfig {
-        database: DatabaseTestConfig {
-            enabled: false,
-            url: "postgresql://recall:recall_password@localhost:5432/recall_competitions"
-                .to_string(),
-        },
-        sqlite: SqliteTestConfig {
-            enabled: false,
-            path: "".to_string(),
-        },
-        s3: S3TestConfig {
-            enabled: false,
-            endpoint: "http://localhost:9000".to_string(),
-            region: "us-east-1".to_string(),
-            bucket: "test-bucket".to_string(),
-            access_key_id: "minioadmin".to_string(),
-            secret_access_key: "minioadmin".to_string(),
-        },
-        recall: RecallTestConfig {
-            enabled: false,
-            network: Some("localnet".to_string()),
-            config_path: Some("networks.toml".to_string()),
-            private_key: Some(
-                "ac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80".to_string(),
-            ),
-            bucket: None,
-        },
-    }
+    // Load the config file using the standard config loader
+    load_config(config_path).map_err(|e| anyhow::anyhow!("Failed to load test_config.toml: {}", e))
 }
 
 /// Creates a test ObjectIndex with default values

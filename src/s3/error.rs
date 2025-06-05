@@ -2,7 +2,6 @@ use thiserror::Error;
 
 /// Errors that can occur when interacting with S3 storage
 #[derive(Error, Debug)]
-#[allow(dead_code)]
 pub enum StorageError {
     #[error("Failed to connect to storage: {0}")]
     ConnectionError(String),

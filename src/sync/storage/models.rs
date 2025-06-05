@@ -30,7 +30,6 @@ pub struct SyncRecord {
 
 impl SyncRecord {
     /// Create a new SyncRecord with PendingSync status
-    #[allow(dead_code)]
     pub fn new(
         id: Uuid,
         object_key: String,

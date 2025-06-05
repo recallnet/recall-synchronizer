@@ -82,14 +82,6 @@ impl WalletPool {
         self.wallets[index].clone()
     }
 
-    /// Get a specific wallet by index
-    ///
-    /// Returns None if the index is out of bounds
-    #[allow(dead_code)]
-    pub fn get_wallet_by_index(&self, index: usize) -> Option<TestWallet> {
-        self.wallets.get(index).cloned()
-    }
-
     /// Get the total number of wallets in the pool
     pub fn wallet_count(&self) -> usize {
         self.wallets.len()
@@ -135,7 +127,6 @@ mod tests {
         use std::thread;
 
         let pool = WalletPool::instance();
-        let wallet_count = pool.wallet_count();
 
         // Spawn multiple threads that get wallets
         let handles: Vec<_> = (0..10).map(|_| thread::spawn(get_next_wallet)).collect();
@@ -146,17 +137,14 @@ mod tests {
         // We should have gotten different wallets (modulo the pool size)
         assert_eq!(wallets.len(), 10);
 
-        // Check that we're cycling through wallets properly
-        for (i, wallet) in wallets.iter().enumerate() {
-            let expected_index = i % wallet_count;
-            if let Some(_expected_wallet) = pool.get_wallet_by_index(expected_index) {
-                // Note: This might not match exactly due to concurrent access,
-                // but we can at least verify all wallets are valid
-                assert!(pool
-                    .all_wallets()
-                    .iter()
-                    .any(|w| w.address == wallet.address));
-            }
+        // Check that all returned wallets are valid wallets from the pool
+        let all_pool_wallets = pool.all_wallets();
+        for wallet in &wallets {
+            assert!(
+                all_pool_wallets.iter().any(|w| w.address == wallet.address),
+                "Wallet {} not found in pool",
+                wallet.address
+            );
         }
     }
 }

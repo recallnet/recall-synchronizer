@@ -12,11 +12,9 @@ use tokio::sync::Mutex;
 pub struct FakeStorage {
     data: Arc<Mutex<HashMap<String, Bytes>>>,
     fail_objects: Arc<Mutex<HashMap<String, bool>>>,
-    #[cfg_attr(not(test), allow(dead_code))]
     buckets: Arc<Mutex<HashSet<String>>>,
 }
 
-#[allow(dead_code)]
 impl FakeStorage {
     /// Create a new empty FakeStorage instance
     pub fn new() -> Self {

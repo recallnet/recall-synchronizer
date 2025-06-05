@@ -1,13 +1,8 @@
 [database]
-enabled = false
 url = "postgresql://recall:recall_password@localhost:5432/recall_competitions"
-
-[sqlite]
-enabled = false
-path = ""
+max_connections = 5
 
 [s3]
-enabled = false
 endpoint = "http://localhost:9000"
 region = "us-east-1"
 bucket = "test-bucket"
@@ -15,7 +10,12 @@ access_key_id = "minioadmin"
 secret_access_key = "minioadmin"
 
 [recall]
-enabled = false
 network = "localnet"
 config_path = "networks.toml"
 private_key = "ac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80"
+
+[sync]
+batch_size = 100
+
+[sync_storage]
+db_path = ":memory:"

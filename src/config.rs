@@ -3,7 +3,7 @@ use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::Path;
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct Config {
     pub database: DatabaseConfig,
     pub s3: S3Config,
@@ -12,13 +12,13 @@ pub struct Config {
     pub sync_storage: SyncStorageConfig,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct DatabaseConfig {
     pub url: String,
     pub max_connections: u32,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct S3Config {
     pub endpoint: Option<String>,
     pub region: String,
@@ -40,7 +40,7 @@ pub struct SyncConfig {
     pub batch_size: usize,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct SyncStorageConfig {
     pub db_path: String,
 }

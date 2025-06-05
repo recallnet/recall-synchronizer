@@ -2,7 +2,6 @@ use thiserror::Error;
 
 /// Errors related to Recall blockchain storage operations
 #[derive(Error, Debug)]
-#[allow(dead_code)]
 pub enum RecallError {
     /// A blob was not found
     #[error("Blob not found: {0}")]

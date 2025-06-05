@@ -1,5 +1,5 @@
 use crate::db::{postgres::PostgresDatabase, Database, DatabaseError, FakeDatabase, ObjectIndex};
-use crate::test_utils::{create_test_object_index, load_test_config};
+use crate::test_utils::{create_test_object_index, is_db_enabled, load_test_config};
 use chrono::{Duration, Utc};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
@@ -21,8 +21,8 @@ fn generate_test_schema() -> String {
 /// Creates a new PostgreSQL database connection with a unique schema for test isolation
 async fn create_postgres_with_schema() -> Result<Arc<PostgresDatabase>, String> {
     // Get database URL from test config
-    let test_config = load_test_config();
-    let db_url = test_config.database.url;
+    let config = load_test_config().map_err(|e| format!("Failed to load test config: {}", e))?;
+    let db_url = config.database.url;
     let schema = generate_test_schema();
 
     let pg_db = PostgresDatabase::new_with_schema(&db_url, Some(schema))
@@ -75,10 +75,8 @@ fn get_test_databases() -> Vec<DatabaseFactory> {
         }),
     ];
 
-    let test_config = load_test_config();
-
     // Conditionally add the real PostgreSQL implementation when enabled
-    if test_config.database.enabled {
+    if is_db_enabled() {
         databases.push(Box::new(|| {
             Box::pin(async {
                 match create_postgres_with_schema().await {

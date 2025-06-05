@@ -3,7 +3,7 @@ use crate::s3::error::StorageError;
 use crate::s3::fake::FakeStorage;
 use crate::s3::s3::S3Storage;
 use crate::s3::storage::Storage;
-use crate::test_utils;
+use crate::test_utils::{is_s3_enabled, load_test_config};
 use bytes::Bytes;
 use std::sync::Arc;
 
@@ -31,34 +31,17 @@ fn get_test_storages() -> Vec<(&'static str, StorageFactory)> {
     ));
 
     // Conditionally include real S3 if configured
-    let config = test_utils::load_test_config();
-    if config.s3.enabled {
-        // Clone the config values we need before moving into the closure
-        let endpoint = config.s3.endpoint.clone();
-        let region = config.s3.region.clone();
-        let bucket = config.s3.bucket.clone();
-        let access_key_id = config.s3.access_key_id.clone();
-        let secret_access_key = config.s3.secret_access_key.clone();
+    if is_s3_enabled() {
+        let config = load_test_config().expect("Failed to load test config");
+        // Clone the S3 config we need before moving into the closure
+        let s3_config = config.s3.clone();
 
         storages.push((
             "s3",
             Box::new(move || {
-                let endpoint = endpoint.clone();
-                let region = region.clone();
-                let bucket = bucket.clone();
-                let access_key_id = access_key_id.clone();
-                let secret_access_key = secret_access_key.clone();
+                let s3_config = s3_config.clone();
 
                 Box::pin(async move {
-                    // Convert test config to real S3Config
-                    let s3_config = crate::config::S3Config {
-                        endpoint: Some(endpoint),
-                        region,
-                        bucket,
-                        access_key_id: Some(access_key_id),
-                        secret_access_key: Some(secret_access_key),
-                    };
-
                     match S3Storage::new(&s3_config).await {
                         Ok(storage) => {
                             let real_storage = Arc::new(storage);

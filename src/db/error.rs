@@ -10,7 +10,6 @@ pub enum DatabaseError {
     QueryError(String),
 
     #[error("Object with key {0} not found")]
-    #[allow(dead_code)] // Used in test implementations
     ObjectNotFound(String),
 
     #[error("Failed to deserialize database row: {0}")]
