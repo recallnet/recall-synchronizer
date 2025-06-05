@@ -91,8 +91,7 @@ impl SyncStorage for FakeSyncStorage {
         Ok(())
     }
 
-    #[cfg(test)]
-    async fn clear_data(&self) -> Result<(), SyncStorageError> {
+    async fn clear_all(&self) -> Result<(), SyncStorageError> {
         let mut records = self.records.write().unwrap();
         records.clear();
         let mut last_ids = self.last_synced_ids.write().unwrap();

@@ -440,8 +440,7 @@ impl SyncStorage for SqliteSyncStorage {
         .map_err(|e| SyncStorageError::OperationError(format!("Task panic: {}", e)))?
     }
 
-    #[cfg(test)]
-    async fn clear_data(&self) -> Result<(), SyncStorageError> {
+    async fn clear_all(&self) -> Result<(), SyncStorageError> {
         let connection = Arc::clone(&self.connection);
 
         task::spawn_blocking(move || {

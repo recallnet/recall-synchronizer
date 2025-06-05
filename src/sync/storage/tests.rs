@@ -25,7 +25,7 @@ async fn setup_test_data(storage: &dyn SyncStorage) -> Vec<SyncRecord> {
     let mut test_data = Vec::new();
 
     // Clear any existing data
-    storage.clear_data().await.unwrap();
+    storage.clear_all().await.unwrap();
 
     // Create 15 records with different timestamps
     for i in 0..15 {
@@ -72,7 +72,7 @@ fn get_test_storages() -> Vec<StorageFactory> {
 async fn add_object_creates_new_record() {
     for storage_factory in get_test_storages() {
         let storage = storage_factory().await;
-        storage.clear_data().await.unwrap();
+        storage.clear_all().await.unwrap();
 
         let record = create_test_record("test/object.jsonl", Utc::now());
         let id = record.id;
@@ -90,7 +90,7 @@ async fn add_object_creates_new_record() {
 async fn set_object_status_updates_existing_record() {
     for storage_factory in get_test_storages() {
         let storage = storage_factory().await;
-        storage.clear_data().await.unwrap();
+        storage.clear_all().await.unwrap();
 
         let record = create_test_record("test/object.jsonl", Utc::now());
         let id = record.id;
@@ -121,7 +121,7 @@ async fn set_object_status_updates_existing_record() {
 async fn set_object_status_fails_for_nonexistent_record() {
     for storage_factory in get_test_storages() {
         let storage = storage_factory().await;
-        storage.clear_data().await.unwrap();
+        storage.clear_all().await.unwrap();
 
         let nonexistent_id = Uuid::new_v4();
         let result = storage
@@ -140,7 +140,7 @@ async fn set_object_status_fails_for_nonexistent_record() {
 async fn get_object_returns_none_for_nonexistent_record() {
     for storage_factory in get_test_storages() {
         let storage = storage_factory().await;
-        storage.clear_data().await.unwrap();
+        storage.clear_all().await.unwrap();
 
         let nonexistent_id = Uuid::new_v4();
         let retrieved = storage.get_object(nonexistent_id).await.unwrap();
@@ -208,7 +208,7 @@ async fn get_objects_with_status_returns_matching_records() {
 async fn get_last_object_returns_most_recent_by_timestamp() {
     for storage_factory in get_test_storages() {
         let storage = storage_factory().await;
-        storage.clear_data().await.unwrap();
+        storage.clear_all().await.unwrap();
 
         let base_time = Utc::now() - Duration::hours(5);
 
@@ -234,7 +234,7 @@ async fn get_last_object_returns_most_recent_by_timestamp() {
 async fn get_last_object_returns_none_when_empty() {
     for storage_factory in get_test_storages() {
         let storage = storage_factory().await;
-        storage.clear_data().await.unwrap();
+        storage.clear_all().await.unwrap();
 
         let last_object = storage.get_last_object().await.unwrap();
         assert!(last_object.is_none());
@@ -242,7 +242,7 @@ async fn get_last_object_returns_none_when_empty() {
 }
 
 #[tokio::test]
-async fn clear_data_removes_all_records() {
+async fn clear_all_removes_all_records() {
     for storage_factory in get_test_storages() {
         let storage = storage_factory().await;
         let test_data = setup_test_data(storage.as_ref()).await;
@@ -252,7 +252,7 @@ async fn clear_data_removes_all_records() {
         assert!(retrieved.is_some());
 
         // Clear all data
-        storage.clear_data().await.unwrap();
+        storage.clear_all().await.unwrap();
 
         // Verify all data is gone
         for record in &test_data {
@@ -272,7 +272,7 @@ async fn concurrent_status_updates_do_not_corrupt_data() {
 
     for storage_factory in get_test_storages() {
         let storage = Arc::new(storage_factory().await);
-        storage.clear_data().await.unwrap();
+        storage.clear_all().await.unwrap();
 
         // Create a single record
         let record = create_test_record("test/concurrent.jsonl", Utc::now());
@@ -314,7 +314,7 @@ async fn concurrent_status_updates_do_not_corrupt_data() {
 async fn get_objects_with_status_returns_records_ordered_by_timestamp() {
     for storage_factory in get_test_storages() {
         let storage = storage_factory().await;
-        storage.clear_data().await.unwrap();
+        storage.clear_all().await.unwrap();
 
         let base_time = Utc::now() - Duration::hours(10);
         let mut records = Vec::new();
@@ -358,7 +358,7 @@ async fn get_objects_with_status_returns_records_ordered_by_timestamp() {
 async fn get_last_synced_object_id_returns_none_when_not_set() {
     for storage_factory in get_test_storages() {
         let storage = storage_factory().await;
-        storage.clear_data().await.unwrap();
+        storage.clear_all().await.unwrap();
 
         let last_id = storage.get_last_synced_object_id(None).await.unwrap();
         assert_eq!(last_id, None);
@@ -369,7 +369,7 @@ async fn get_last_synced_object_id_returns_none_when_not_set() {
 async fn set_last_synced_object_id_overwrites_previous_value() {
     for storage_factory in get_test_storages() {
         let storage = storage_factory().await;
-        storage.clear_data().await.unwrap();
+        storage.clear_all().await.unwrap();
 
         let first_id = Uuid::new_v4();
         storage
@@ -393,10 +393,10 @@ async fn set_last_synced_object_id_overwrites_previous_value() {
 }
 
 #[tokio::test]
-async fn clear_data_removes_all_last_synced_object_ids() {
+async fn clear_all_removes_all_last_synced_object_ids() {
     for storage_factory in get_test_storages() {
         let storage = storage_factory().await;
-        storage.clear_data().await.unwrap();
+        storage.clear_all().await.unwrap();
 
         let comp1_id = Uuid::new_v4();
         let comp2_id = Uuid::new_v4();
@@ -416,7 +416,7 @@ async fn clear_data_removes_all_last_synced_object_ids() {
             .unwrap();
 
         // Clear all data
-        storage.clear_data().await.unwrap();
+        storage.clear_all().await.unwrap();
 
         // All should be cleared
         assert_eq!(storage.get_last_synced_object_id(None).await.unwrap(), None);
@@ -441,7 +441,7 @@ async fn clear_data_removes_all_last_synced_object_ids() {
 async fn set_last_synced_object_id_with_competition_stores_separately() {
     for storage_factory in get_test_storages() {
         let storage = storage_factory().await;
-        storage.clear_data().await.unwrap();
+        storage.clear_all().await.unwrap();
 
         let comp1_id = Uuid::new_v4();
         let comp2_id = Uuid::new_v4();

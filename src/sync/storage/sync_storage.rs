@@ -45,9 +45,8 @@ pub trait SyncStorage: Send + Sync + 'static {
         competition_id: Option<Uuid>,
     ) -> Result<(), SyncStorageError>;
 
-    /// Clear all test data (test-only)
-    #[cfg(test)]
-    async fn clear_data(&self) -> Result<(), SyncStorageError>;
+    /// Clear all data
+    async fn clear_all(&self) -> Result<(), SyncStorageError>;
 }
 
 /// Implementation of SyncStorage trait for Arc<T> where T implements SyncStorage
@@ -99,8 +98,7 @@ impl<T: SyncStorage + ?Sized> SyncStorage for Arc<T> {
         (**self).set_last_synced_object_id(id, competition_id).await
     }
 
-    #[cfg(test)]
-    async fn clear_data(&self) -> Result<(), SyncStorageError> {
-        (**self).clear_data().await
+    async fn clear_all(&self) -> Result<(), SyncStorageError> {
+        (**self).clear_all().await
     }
 }
