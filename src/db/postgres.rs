@@ -8,6 +8,14 @@ use sqlx::{PgPool, Row as _};
 use std::time::Duration;
 use tracing::{debug, error, info, warn};
 
+/// Macro to extract a field from a database row with error handling
+macro_rules! get_field {
+    ($row:expr, $field:expr) => {
+        $row.try_get($field)
+            .map_err(|e| DatabaseError::DeserializationError(e.to_string()))?
+    };
+}
+
 /// A PostgreSQL implementation of the Database trait
 pub struct PostgresDatabase {
     pool: PgPool,
@@ -140,46 +148,21 @@ impl PostgresDatabase {
         &self,
         row: sqlx::postgres::PgRow,
     ) -> Result<ObjectIndex, DatabaseError> {
+        debug!("Converting database row to ObjectIndex");
         Ok(ObjectIndex {
-            id: row
-                .try_get("id")
-                .map_err(|e| DatabaseError::DeserializationError(e.to_string()))?,
-            object_key: row
-                .try_get("object_key")
-                .map_err(|e| DatabaseError::DeserializationError(e.to_string()))?,
-            bucket_name: row
-                .try_get("bucket_name")
-                .map_err(|e| DatabaseError::DeserializationError(e.to_string()))?,
-            competition_id: row
-                .try_get("competition_id")
-                .map_err(|e| DatabaseError::DeserializationError(e.to_string()))?,
-            agent_id: row
-                .try_get("agent_id")
-                .map_err(|e| DatabaseError::DeserializationError(e.to_string()))?,
-            data_type: row
-                .try_get("data_type")
-                .map_err(|e| DatabaseError::DeserializationError(e.to_string()))?,
-            size_bytes: row
-                .try_get("size_bytes")
-                .map_err(|e| DatabaseError::DeserializationError(e.to_string()))?,
-            content_hash: row
-                .try_get("content_hash")
-                .map_err(|e| DatabaseError::DeserializationError(e.to_string()))?,
-            metadata: row
-                .try_get("metadata")
-                .map_err(|e| DatabaseError::DeserializationError(e.to_string()))?,
-            event_timestamp: row
-                .try_get("event_timestamp")
-                .map_err(|e| DatabaseError::DeserializationError(e.to_string()))?,
-            object_last_modified_at: row
-                .try_get("object_last_modified_at")
-                .map_err(|e| DatabaseError::DeserializationError(e.to_string()))?,
-            created_at: row
-                .try_get("created_at")
-                .map_err(|e| DatabaseError::DeserializationError(e.to_string()))?,
-            updated_at: row
-                .try_get("updated_at")
-                .map_err(|e| DatabaseError::DeserializationError(e.to_string()))?,
+            id: get_field!(row, "id"),
+            object_key: get_field!(row, "object_key"),
+            bucket_name: get_field!(row, "bucket_name"),
+            competition_id: get_field!(row, "competition_id"),
+            agent_id: get_field!(row, "agent_id"),
+            data_type: get_field!(row, "data_type"),
+            size_bytes: get_field!(row, "size_bytes"),
+            content_hash: get_field!(row, "content_hash"),
+            metadata: get_field!(row, "metadata"),
+            event_timestamp: get_field!(row, "event_timestamp"),
+            object_last_modified_at: get_field!(row, "object_last_modified_at"),
+            created_at: get_field!(row, "created_at"),
+            updated_at: get_field!(row, "updated_at"),
         })
     }
 }
