@@ -20,7 +20,6 @@ fn generate_test_schema() -> String {
 
 /// Creates a new PostgreSQL database connection with a unique schema for test isolation
 async fn create_postgres_with_schema() -> Result<Arc<PostgresDatabase>, String> {
-    // Get database URL from test config
     let config = load_test_config().map_err(|e| format!("Failed to load test config: {}", e))?;
     let db_url = config.database.url;
     let schema = generate_test_schema();
@@ -33,15 +32,7 @@ async fn create_postgres_with_schema() -> Result<Arc<PostgresDatabase>, String> 
 }
 
 /// Setup a test database with a specific prefix for test isolation
-async fn setup_test_database(db: &(dyn Database + Send + Sync)) -> Vec<ObjectIndex> {
-    setup_test_database_with_prefix(db, "test").await
-}
-
-/// Setup a test database with a custom prefix for better test isolation
-async fn setup_test_database_with_prefix(
-    db: &(dyn Database + Send + Sync),
-    prefix: &str,
-) -> Vec<ObjectIndex> {
+async fn add_test_objects(db: &(dyn Database + Send + Sync)) -> Vec<ObjectIndex> {
     let base_time = Utc::now() - Duration::hours(10);
     let mut objects = Vec::new();
 
@@ -49,7 +40,7 @@ async fn setup_test_database_with_prefix(
     for i in 0..15 {
         let modified_at = base_time + Duration::minutes(i * 30);
         let mut object =
-            create_test_object_index(&format!("{}/object_{:02}.jsonl", prefix, i), modified_at);
+            create_test_object_index(&format!("test/object_{:02}.jsonl", i), modified_at);
 
         // Vary other attributes for realistic testing
         object.size_bytes = Some(1024 * (i + 1));
@@ -68,14 +59,10 @@ async fn setup_test_database_with_prefix(
 
 // Helper function to create test databases
 fn get_test_databases() -> Vec<DatabaseFactory> {
-    let mut databases: Vec<DatabaseFactory> = vec![
-        // Always include the FakeDatabase
-        Box::new(|| {
-            Box::pin(async { Box::new(FakeDatabase::new()) as Box<dyn Database + Send + Sync> })
-        }),
-    ];
+    let mut databases: Vec<DatabaseFactory> = vec![Box::new(|| {
+        Box::pin(async { Box::new(FakeDatabase::new()) as Box<dyn Database + Send + Sync> })
+    })];
 
-    // Conditionally add the real PostgreSQL implementation when enabled
     if is_db_enabled() {
         databases.push(Box::new(|| {
             Box::pin(async {
@@ -99,7 +86,7 @@ fn get_test_databases() -> Vec<DatabaseFactory> {
 async fn get_objects_with_no_timestamp_filter_returns_all_objects() {
     for db_factory in get_test_databases() {
         let db = db_factory().await;
-        let test_objects = setup_test_database(db.as_ref()).await;
+        let test_objects = add_test_objects(db.as_ref()).await;
 
         let objects = db.get_objects(20, None, None, None).await.unwrap();
 
@@ -117,7 +104,7 @@ async fn get_objects_with_no_timestamp_filter_returns_all_objects() {
 async fn get_objects_with_future_timestamp_returns_empty() {
     for db_factory in get_test_databases() {
         let db = db_factory().await;
-        let _ = setup_test_database(db.as_ref()).await;
+        let _ = add_test_objects(db.as_ref()).await;
 
         let future_time = Utc::now() + Duration::days(1);
         let objects = db
@@ -137,7 +124,7 @@ async fn get_objects_with_future_timestamp_returns_empty() {
 async fn get_objects_with_past_timestamp_returns_recent_objects() {
     for db_factory in get_test_databases() {
         let db = db_factory().await;
-        let test_objects = setup_test_database(db.as_ref()).await;
+        let test_objects = add_test_objects(db.as_ref()).await;
 
         // Use a timestamp that's 5 hours ago (halfway through our test data)
         let midpoint_time = Utc::now() - Duration::hours(5);
@@ -146,7 +133,6 @@ async fn get_objects_with_past_timestamp_returns_recent_objects() {
             .await
             .unwrap();
 
-        // Count objects that should be returned based on our test data
         let expected_count = test_objects
             .iter()
             .filter(|o| o.object_last_modified_at > midpoint_time)
@@ -159,7 +145,6 @@ async fn get_objects_with_past_timestamp_returns_recent_objects() {
             expected_count
         );
 
-        // Verify all returned objects are newer than the timestamp
         for obj in &objects {
             assert!(
                 obj.object_last_modified_at > midpoint_time,
@@ -174,7 +159,7 @@ async fn get_objects_with_past_timestamp_returns_recent_objects() {
 async fn get_objects_with_limit_at_beginning_of_range_returns_objects() {
     for db_factory in get_test_databases() {
         let db = db_factory().await;
-        let _ = setup_test_database(db.as_ref()).await;
+        let _ = add_test_objects(db.as_ref()).await;
 
         let objects = db.get_objects(3, None, None, None).await.unwrap();
 
@@ -190,7 +175,7 @@ async fn get_objects_with_limit_at_beginning_of_range_returns_objects() {
 async fn get_objects_with_limit_in_middle_of_range_returns_objects() {
     for db_factory in get_test_databases() {
         let db = db_factory().await;
-        let test_objects = setup_test_database(db.as_ref()).await;
+        let test_objects = add_test_objects(db.as_ref()).await;
 
         let limit = 8;
         let objects = db
@@ -233,7 +218,7 @@ async fn get_objects_with_limit_in_middle_of_range_returns_objects() {
 async fn get_objects_with_limit_beyond_available_records_returns_objects_up_to_last_one() {
     for db_factory in get_test_databases() {
         let db = db_factory().await;
-        let test_objects = setup_test_database(db.as_ref()).await;
+        let test_objects = add_test_objects(db.as_ref()).await;
 
         let objects = db.get_objects(100, None, None, None).await.unwrap();
 
@@ -246,27 +231,23 @@ async fn get_objects_with_limit_beyond_available_records_returns_objects_up_to_l
 }
 
 #[tokio::test]
-async fn get_objects_with_same_timestamp_paginate_by_id() {
+async fn get_objects_with_same_timestamp_and_after_id_should_paginate() {
     for db_factory in get_test_databases() {
         let db = db_factory().await;
 
-        // Create objects with the same timestamp to test ID-based ordering
         let shared_timestamp = Utc::now() - Duration::hours(5);
         let mut objects_same_time = Vec::new();
 
-        // Create 7 objects with the exact same timestamp
         for i in 0..7 {
             let mut object = create_test_object_index(
                 &format!("test/same_time_{:02}.jsonl", i),
                 shared_timestamp,
             );
-            // Ensure each object has a unique ID
             object.id = uuid::Uuid::new_v4();
             db.add_object(object.clone()).await.unwrap();
             objects_same_time.push(object);
         }
 
-        // Sort objects by ID to match expected database behavior
         objects_same_time.sort_by(|a, b| a.id.cmp(&b.id));
 
         // Get first batch without after_id
@@ -291,7 +272,6 @@ async fn get_objects_with_same_timestamp_paginate_by_id() {
 
         assert_eq!(batch2.len(), 3, "Second batch should contain 3 objects");
 
-        // Verify we got the next 3 objects in ID order
         for i in 0..3 {
             assert_eq!(
                 batch2[i].id,
@@ -300,7 +280,6 @@ async fn get_objects_with_same_timestamp_paginate_by_id() {
             );
         }
 
-        // Get third batch (should only have 1 remaining object)
         let last_id_batch2 = batch2.last().unwrap().id;
         let batch3 = db
             .get_objects(3, Some(shared_timestamp), Some(last_id_batch2), None)
@@ -317,7 +296,6 @@ async fn get_objects_with_same_timestamp_paginate_by_id() {
             "Third batch should contain the last object"
         );
 
-        // Verify no more objects after the last one
         let last_id_batch3 = batch3.last().unwrap().id;
         let batch4 = db
             .get_objects(3, Some(shared_timestamp), Some(last_id_batch3), None)
@@ -333,11 +311,10 @@ async fn get_objects_with_same_timestamp_paginate_by_id() {
 }
 
 #[tokio::test]
-async fn get_objects_with_mixed_timestamps_and_after_id() {
+async fn get_objects_with_mixed_timestamps_and_after_id_filters_correctly() {
     for db_factory in get_test_databases() {
         let db = db_factory().await;
 
-        // Create objects with the same timestamp
         let shared_timestamp = Utc::now() - Duration::hours(5);
         let mut objects_same_time = Vec::new();
 
@@ -351,10 +328,8 @@ async fn get_objects_with_mixed_timestamps_and_after_id() {
             objects_same_time.push(object);
         }
 
-        // Sort objects by ID to match expected database behavior
         objects_same_time.sort_by(|a, b| a.id.cmp(&b.id));
 
-        // Add objects with different timestamps
         let newer_timestamp = shared_timestamp + Duration::hours(1);
         let older_timestamp = shared_timestamp - Duration::hours(1);
 
@@ -366,7 +341,7 @@ async fn get_objects_with_mixed_timestamps_and_after_id() {
         older_object.id = uuid::Uuid::new_v4();
         db.add_object(older_object).await.unwrap();
 
-        // Test 1: Verify timestamp + ID filtering works correctly
+        // Query with timestamp and after_id
         let mixed_batch = db
             .get_objects(
                 10,
@@ -402,9 +377,37 @@ async fn get_objects_with_mixed_timestamps_and_after_id() {
             mixed_batch[2].id, newer_object.id,
             "Newer timestamp object should come last"
         );
+    }
+}
 
-        // Test 2: Verify deterministic ordering by running the same query multiple times
-        for _ in 0..3 {
+#[tokio::test]
+async fn get_objects_with_after_id_returns_with_consistent_ordering() {
+    for db_factory in get_test_databases() {
+        let db = db_factory().await;
+
+        let shared_timestamp = Utc::now() - Duration::hours(5);
+        let mut objects_same_time = Vec::new();
+
+        // Create 5 objects with the same timestamp
+        for i in 0..5 {
+            let mut object = create_test_object_index(
+                &format!("test/same_time_{:02}.jsonl", i),
+                shared_timestamp,
+            );
+            object.id = uuid::Uuid::new_v4();
+            db.add_object(object.clone()).await.unwrap();
+            objects_same_time.push(object);
+        }
+
+        objects_same_time.sort_by(|a, b| a.id.cmp(&b.id));
+
+        let newer_timestamp = shared_timestamp + Duration::hours(1);
+        let mut newer_object = create_test_object_index("test/newer.jsonl", newer_timestamp);
+        newer_object.id = uuid::Uuid::new_v4();
+        db.add_object(newer_object.clone()).await.unwrap();
+
+        // Verify deterministic ordering by running the same query multiple times
+        for run in 0..3 {
             let consistent_batch = db
                 .get_objects(
                     5,
@@ -416,25 +419,37 @@ async fn get_objects_with_mixed_timestamps_and_after_id() {
                 .unwrap();
 
             // Should always get the same objects in the same order
-            assert_eq!(consistent_batch.len(), 4); // 3 same-timestamp objects + 1 newer
+            assert_eq!(
+                consistent_batch.len(),
+                4,
+                "Run {}: Should return 3 same-timestamp objects + 1 newer",
+                run + 1
+            );
 
             // With ascending order, same-timestamp objects come first
             for i in 0..3 {
                 assert_eq!(
                     consistent_batch[i].id,
                     objects_same_time[i + 2].id,
-                    "Same-timestamp objects should be in consistent ID order"
+                    "Run {}: Same-timestamp objects should be in consistent ID order at position {}",
+                    run + 1,
+                    i
                 );
             }
 
             // Newer object comes last
-            assert_eq!(consistent_batch[3].id, newer_object.id);
+            assert_eq!(
+                consistent_batch[3].id,
+                newer_object.id,
+                "Run {}: Newer object should always be last",
+                run + 1
+            );
         }
     }
 }
 
 #[tokio::test]
-async fn get_objects_filters_by_competition_id() {
+async fn get_objects_with_competition_id_should_filter() {
     for db_factory in get_test_databases() {
         let db = db_factory().await;
 
@@ -473,7 +488,7 @@ async fn get_objects_filters_by_competition_id() {
             db.add_object(object).await.unwrap();
         }
 
-        // Test 1: Filter by competition 1
+        // Filter by competition 1
         let comp1_objects = db
             .get_objects(20, None, None, Some(comp1_id))
             .await
@@ -491,7 +506,7 @@ async fn get_objects_filters_by_competition_id() {
             );
         }
 
-        // Test 2: Filter by competition 2
+        // Filter by competition 2
         let comp2_objects = db
             .get_objects(20, None, None, Some(comp2_id))
             .await
@@ -509,7 +524,7 @@ async fn get_objects_filters_by_competition_id() {
             );
         }
 
-        // Test 3: No competition filter returns all objects
+        // No competition filter returns all objects
         let all_objects = db.get_objects(20, None, None, None).await.unwrap();
         assert_eq!(
             all_objects.len(),
@@ -520,7 +535,7 @@ async fn get_objects_filters_by_competition_id() {
 }
 
 #[tokio::test]
-async fn get_objects_filters_by_competition_id_with_pagination() {
+async fn get_objects_with_competition_id_and_after_id_should_paginate() {
     for db_factory in get_test_databases() {
         let db = db_factory().await;
 
