@@ -83,7 +83,7 @@ fn get_test_databases() -> Vec<DatabaseFactory> {
                     Ok(db) => Box::new(db) as Box<dyn Database + Send + Sync>,
                     Err(e) => {
                         panic!(
-                            "Failed to connect to PostgreSQL: {}. Set database.enabled=false in test_config.toml to skip these tests.",
+                            "Failed to connect to PostgreSQL: {}. Set database.enabled=false in config.toml to skip these tests.",
                             e
                         );
                     }

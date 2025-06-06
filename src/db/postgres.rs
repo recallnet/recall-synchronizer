@@ -6,6 +6,7 @@ use chrono::{DateTime, Utc};
 use sqlx::postgres::PgPoolOptions;
 use sqlx::{PgPool, Row as _};
 use std::time::Duration;
+use tracing::{debug, error, info, warn};
 
 /// A PostgreSQL implementation of the Database trait
 pub struct PostgresDatabase {
@@ -24,14 +25,23 @@ impl PostgresDatabase {
         database_url: &str,
         schema: Option<String>,
     ) -> Result<Self, DatabaseError> {
+        info!(
+            "Creating PostgreSQL database connection with URL: {}",
+            database_url
+        );
+
         let pool = PgPoolOptions::new()
             .max_connections(10)
             .acquire_timeout(Duration::from_secs(10))
             .idle_timeout(Duration::from_secs(60))
             .connect_lazy(database_url)
-            .map_err(|e| DatabaseError::ConnectionError(e.to_string()))?;
+            .map_err(|e| {
+                error!("Failed to create connection pool: {}", e);
+                DatabaseError::ConnectionError(e.to_string())
+            })?;
 
         if let Err(e) = sqlx::query("SELECT 1").execute(&pool).await {
+            error!("Database connectivity test failed: {}", e);
             return Err(DatabaseError::ConnectionError(format!(
                 "Database is not accessible: {}",
                 e
@@ -45,17 +55,24 @@ impl PostgresDatabase {
             db.initialize_schema(schema_name).await?;
         }
 
+        info!("PostgreSQL database connection established successfully");
         Ok(db)
     }
 
     /// Initialize a schema with the required tables
     async fn initialize_schema(&self, schema_name: &str) -> Result<(), DatabaseError> {
+        info!("Initializing schema: {}", schema_name);
+
         // Create schema if it doesn't exist
         let create_schema_query = format!("CREATE SCHEMA IF NOT EXISTS {}", schema_name);
+        debug!("Executing: {}", create_schema_query);
         sqlx::query(&create_schema_query)
             .execute(&self.pool)
             .await
-            .map_err(|e| DatabaseError::QueryError(format!("Failed to create schema: {}", e)))?;
+            .map_err(|e| {
+                error!("Failed to create schema '{}': {}", schema_name, e);
+                DatabaseError::QueryError(format!("Failed to create schema: {}", e))
+            })?;
 
         // Create the object_index table in the schema
         let create_table_query = format!(
@@ -79,10 +96,14 @@ impl PostgresDatabase {
             schema_name
         );
 
+        debug!("Creating object_index table in schema '{}'", schema_name);
         sqlx::query(&create_table_query)
             .execute(&self.pool)
             .await
-            .map_err(|e| DatabaseError::QueryError(format!("Failed to create table: {}", e)))?;
+            .map_err(|e| {
+                error!("Failed to create object_index table: {}", e);
+                DatabaseError::QueryError(format!("Failed to create table: {}", e))
+            })?;
 
         // Create index
         let create_index_query = format!(
@@ -90,11 +111,19 @@ impl PostgresDatabase {
             schema_name
         );
 
+        debug!("Creating index on object_last_modified_at");
         sqlx::query(&create_index_query)
             .execute(&self.pool)
             .await
-            .map_err(|e| DatabaseError::QueryError(format!("Failed to create index: {}", e)))?;
+            .map_err(|e| {
+                error!("Failed to create index: {}", e);
+                DatabaseError::QueryError(format!("Failed to create index: {}", e))
+            })?;
 
+        info!(
+            "Schema '{}' initialization completed successfully",
+            schema_name
+        );
         Ok(())
     }
 
@@ -164,6 +193,11 @@ impl Database for PostgresDatabase {
         after_id: Option<uuid::Uuid>,
         competition_id: Option<uuid::Uuid>,
     ) -> Result<Vec<ObjectIndex>, DatabaseError> {
+        debug!(
+            "Querying objects with limit={}, since={:?}, after_id={:?}, competition_id={:?}",
+            limit, since, after_id, competition_id
+        );
+
         let query_base = format!(
             r#"
             SELECT
@@ -223,6 +257,8 @@ impl Database for PostgresDatabase {
             )
         };
 
+        debug!("Executing query: {}", query);
+
         // Execute query with appropriate bindings
         let mut query_builder = sqlx::query(&query);
 
@@ -245,11 +281,16 @@ impl Database for PostgresDatabase {
         query_builder = query_builder.bind(i64::from(limit));
 
         let objects = match query_builder.fetch_all(&self.pool).await {
-            Ok(rows) => rows,
+            Ok(rows) => {
+                debug!("Query returned {} rows", rows.len());
+                rows
+            }
             Err(e) => {
                 if e.to_string().contains("does not exist") {
+                    warn!("Table does not exist, returning empty result");
                     return Ok(Vec::new());
                 }
+                error!("Database query failed: {}", e);
                 return Err(DatabaseError::QueryError(e.to_string()));
             }
         };
@@ -260,11 +301,17 @@ impl Database for PostgresDatabase {
             result.push(self.row_to_object_index(row)?);
         }
 
+        info!("Retrieved {} objects from database", result.len());
         Ok(result)
     }
 
     #[cfg(test)]
     async fn add_object(&self, object: ObjectIndex) -> Result<(), DatabaseError> {
+        debug!(
+            "Adding object to database: id={}, key={}",
+            object.id, object.object_key
+        );
+
         let query = format!(
             r#"
             INSERT INTO {} (
@@ -303,8 +350,15 @@ impl Database for PostgresDatabase {
             .bind(object.updated_at)
             .execute(&self.pool)
             .await
-            .map_err(|e| DatabaseError::QueryError(e.to_string()))?;
+            .map_err(|e| {
+                error!("Failed to insert object: {}", e);
+                DatabaseError::QueryError(e.to_string())
+            })?;
 
+        info!(
+            "Successfully added object: id={}, key={}",
+            object.id, object.object_key
+        );
         Ok(())
     }
 }

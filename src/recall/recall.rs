@@ -131,7 +131,7 @@ impl RecallBlockchain {
     ) -> Result<Address, RecallError> {
         info!("Creating a new bucket...");
 
-        let (bucket, tx_result) = Bucket::new(
+        let (bucket, _) = Bucket::new(
             provider,
             signer,
             None,
@@ -140,21 +140,6 @@ impl RecallBlockchain {
         )
         .await
         .map_err(|e| RecallError::Configuration(format!("Failed to create new bucket: {}", e)))?;
-
-        match tx_result.status {
-            recall_provider::tx::TxStatus::Pending(pending) => {
-                info!(
-                    "Bucket creation transaction pending, tx hash: {:?}",
-                    pending.hash
-                );
-            }
-            recall_provider::tx::TxStatus::Committed(committed) => {
-                info!(
-                    "Bucket creation transaction committed, tx hash: {:?}",
-                    committed.transaction_hash
-                );
-            }
-        }
 
         let bucket_address = bucket.address();
         info!("Created new bucket at address: {}", bucket_address);

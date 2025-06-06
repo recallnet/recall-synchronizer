@@ -58,7 +58,6 @@ pub fn load_config(path: &str) -> Result<Config> {
         .build()?
         .try_deserialize()?;
 
-    // Apply environment variable overrides for Recall configuration
     if let Ok(network) = std::env::var("RECALL_NETWORK") {
         config.recall.network = network;
     }

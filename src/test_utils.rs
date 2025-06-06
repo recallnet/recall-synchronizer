@@ -33,12 +33,12 @@ pub fn is_recall_enabled() -> bool {
     is_test_enabled("ENABLE_RECALL_TESTS")
 }
 
-/// Load test configuration from test_config.toml
+/// Load test configuration from config.toml
 pub fn load_test_config() -> Result<Config, anyhow::Error> {
-    let config_path = "test_config.toml";
+    let config_path = "config.toml";
 
     // Load the config file using the standard config loader
-    load_config(config_path).map_err(|e| anyhow::anyhow!("Failed to load test_config.toml: {}", e))
+    load_config(config_path).map_err(|e| anyhow::anyhow!("Failed to load config.toml: {}", e))
 }
 
 /// Creates a test ObjectIndex with default values

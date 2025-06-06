@@ -68,8 +68,6 @@ async fn main() -> Result<()> {
         }
     };
 
-    // Use real implementations
-    info!("Using real database and storage implementations");
     run(config, cli.reset, cli.competition_id, cli.since).await
 }
 

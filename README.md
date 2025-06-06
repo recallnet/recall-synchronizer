@@ -209,7 +209,7 @@ The project provides several test targets with different configurations:
 
 #### Test Configuration
 
-Tests can be configured via environment variables that override `test_config.toml`:
+Tests can be configured via environment variables that override `config.toml`:
 
 - `ENABLE_DB_TESTS=true/false` - Enable tests with real PostgreSQL database
 - `ENABLE_SQLITE_TESTS=true/false` - Enable tests with real SQLite storage
