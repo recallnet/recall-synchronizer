@@ -1,4 +1,4 @@
-use crate::db::{postgres::PostgresDatabase, Database, DatabaseError, FakeDatabase, ObjectIndex};
+use crate::db::{postgres::PostgresDatabase, Database, FakeDatabase, ObjectIndex};
 use crate::test_utils::{create_test_object_index, is_db_enabled, load_test_config};
 use chrono::{Duration, Utc};
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -241,47 +241,6 @@ async fn get_objects_with_limit_beyond_available_records_returns_objects_up_to_l
             objects.len(),
             test_objects.len(),
             "Should return all available objects when limit exceeds total count"
-        );
-    }
-}
-
-#[tokio::test]
-async fn get_object_by_existing_key_returns_object() {
-    for db_factory in get_test_databases() {
-        let db = db_factory().await;
-        let test_objects = setup_test_database(db.as_ref()).await;
-
-        // Test retrieving an object from the middle of the dataset
-        let target_key = "test/object_07.jsonl";
-        let object = db.get_object_by_key(target_key).await.unwrap();
-
-        assert_eq!(object.object_key, target_key);
-
-        // Verify it matches our test data
-        let expected_object = test_objects
-            .iter()
-            .find(|o| o.object_key == target_key)
-            .unwrap();
-        assert_eq!(object.size_bytes, expected_object.size_bytes);
-        assert_eq!(object.data_type, expected_object.data_type);
-    }
-}
-
-#[tokio::test]
-async fn get_object_by_nonexistent_key_returns_error() {
-    for db_factory in get_test_databases() {
-        let db = db_factory().await;
-        let _ = setup_test_database(db.as_ref()).await;
-
-        let result = db.get_object_by_key("nonexistent/object.jsonl").await;
-
-        assert!(
-            matches!(
-                result,
-                Err(DatabaseError::ObjectNotFound(ref key)) if key == "nonexistent/object.jsonl"
-            ),
-            "Expected ObjectNotFound error for nonexistent key, got: {:?}",
-            result
         );
     }
 }

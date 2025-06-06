@@ -9,9 +9,6 @@ pub enum DatabaseError {
     #[error("Query execution failed: {0}")]
     QueryError(String),
 
-    #[error("Object with key {0} not found")]
-    ObjectNotFound(String),
-
     #[error("Failed to deserialize database row: {0}")]
     DeserializationError(String),
 

@@ -72,15 +72,6 @@ impl Database for FakeDatabase {
         Ok(filtered)
     }
 
-    async fn get_object_by_key(&self, object_key: &str) -> Result<ObjectIndex, DatabaseError> {
-        let objects = self.objects.read().unwrap();
-
-        objects
-            .get(object_key)
-            .cloned()
-            .ok_or_else(|| DatabaseError::ObjectNotFound(object_key.to_string()))
-    }
-
     #[cfg(test)]
     async fn add_object(&self, object: ObjectIndex) -> Result<(), DatabaseError> {
         let mut objects = self.objects.write().unwrap();

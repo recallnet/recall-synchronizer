@@ -264,40 +264,6 @@ impl Database for PostgresDatabase {
     }
 
     #[cfg(test)]
-    async fn get_object_by_key(&self, object_key: &str) -> Result<ObjectIndex, DatabaseError> {
-        let query = format!(
-            r#"
-            SELECT
-                id, object_key, bucket_name, competition_id, agent_id,
-                data_type, size_bytes, content_hash, metadata,
-                event_timestamp, object_last_modified_at, created_at, updated_at
-            FROM {}
-            WHERE object_key = $1
-            "#,
-            self.table_name()
-        );
-
-        let row = match sqlx::query(&query)
-            .bind(object_key)
-            .fetch_optional(&self.pool)
-            .await
-        {
-            Ok(row) => row,
-            Err(e) => {
-                // For testing, if the table doesn't exist, return not found
-                if e.to_string().contains("does not exist") {
-                    return Err(DatabaseError::ObjectNotFound(object_key.to_string()));
-                }
-                return Err(DatabaseError::QueryError(e.to_string()));
-            }
-        };
-
-        // Convert row to ObjectIndex or return not found error
-        let row = row.ok_or_else(|| DatabaseError::ObjectNotFound(object_key.to_string()))?;
-        self.row_to_object_index(row)
-    }
-
-    #[cfg(test)]
     async fn add_object(&self, object: ObjectIndex) -> Result<(), DatabaseError> {
         let query = format!(
             r#"

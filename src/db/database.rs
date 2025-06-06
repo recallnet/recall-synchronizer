@@ -22,10 +22,6 @@ pub trait Database: Send + Sync + 'static {
         competition_id: Option<Uuid>,
     ) -> Result<Vec<ObjectIndex>, DatabaseError>;
 
-    /// Get a specific object by its key
-    #[cfg(test)]
-    async fn get_object_by_key(&self, object_key: &str) -> Result<ObjectIndex, DatabaseError>;
-
     /// Add an object to the database (test-only)
     #[cfg(test)]
     async fn add_object(&self, object: ObjectIndex) -> Result<(), DatabaseError>;
@@ -52,11 +48,6 @@ impl<T: Database + ?Sized> Database for Arc<T> {
         (**self)
             .get_objects(limit, since, after_id, competition_id)
             .await
-    }
-
-    #[cfg(test)]
-    async fn get_object_by_key(&self, object_key: &str) -> Result<ObjectIndex, DatabaseError> {
-        (**self).get_object_by_key(object_key).await
     }
 
     #[cfg(test)]

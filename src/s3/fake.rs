@@ -79,7 +79,6 @@ impl Storage for FakeStorage {
     }
 }
 
-#[cfg(test)]
 impl Default for FakeStorage {
     fn default() -> Self {
         Self::new()
