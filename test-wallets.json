@@ -38,25 +38,5 @@
   {
     "address": "0x1c863099c90c0EB4D5C1e5FC789F5C7F5B79eb22",
     "private_key": "0x1fed6318665e45e35afc28e03ba0f39cd1d67f90ebe91f3ef7c000905bac3316"
-  },
-  {
-    "address": "0xda33507B12AF0D680eF08D24317BcccF95Cf59f8",
-    "private_key": "0xea58cb7c7ec2315a289d48d1312ff158fa5ce1cae893ab316929f56bc02c39ac"
-  },
-  {
-    "address": "0xa959cd407F90854f265587c97d9f9b74092eF0A2",
-    "private_key": "0xdfbb26f34567b8dc92c02495fea48db6e7913847d7b5a7621a58a807ef1987fa"
-  },
-  {
-    "address": "0x3623C7837A4e819dE66387bD66fd2Bf4D2e290db",
-    "private_key": "0x970114db243fbfe3e4f0727cd3c192cc10ccce888f622d21aacfa52c45cbe6ca"
-  },
-  {
-    "address": "0x2A193F96913Ba9F87990b9Cb9aAD8e2063843F7c",
-    "private_key": "0x58d97b551ac9ad6450aede8b494be94f6635fa93fc555394bb5eb3ae14684937"
-  },
-  {
-    "address": "0x7fD1e619fA9445eC50998243e8F47B91085ff2d3",
-    "private_key": "0xe9cf3a036430d5b32fca4b47ade6b4323ec263c43aca785c61a2c67fc0636779"
   }
 ]
