@@ -508,14 +508,14 @@ async fn when_since_param_includes_already_synced_objects_they_are_skipped() {
     let since_time = base_time + Duration::hours(2) + Duration::minutes(30);
     env.synchronizer.run(None, Some(since_time)).await.unwrap();
 
-    for i in 0..8 {
-        env.verify_object_synced(&objects[i])
+    for (i, object) in objects.iter().enumerate().take(8) {
+        env.verify_object_synced(object)
             .await
             .unwrap_or_else(|e| panic!("Object {} should be synced: {}", i, e));
     }
 
-    for i in 8..10 {
-        env.verify_object_not_synced(&objects[i])
+    for (i, object) in objects.iter().enumerate().skip(8).take(2) {
+        env.verify_object_not_synced(object)
             .await
             .unwrap_or_else(|e| panic!("Object {} should not be synced: {}", i, e));
     }
@@ -544,34 +544,34 @@ async fn when_since_param_skips_unsynced_objects_they_remain_unsynced() {
     let since_time = base_time + Duration::hours(3) - Duration::minutes(30);
     env.synchronizer.run(None, Some(since_time)).await.unwrap();
 
-    for i in 0..3 {
-        env.verify_object_not_synced(&objects[i])
+    for (i, object) in objects.iter().enumerate().take(3) {
+        env.verify_object_not_synced(object)
             .await
             .unwrap_or_else(|e| panic!("Object {} should not be synced: {}", i, e));
     }
 
-    for i in 3..6 {
-        env.verify_object_synced(&objects[i])
+    for (i, object) in objects.iter().enumerate().skip(3).take(3) {
+        env.verify_object_synced(object)
             .await
             .unwrap_or_else(|e| panic!("Object {} should be synced: {}", i, e));
     }
 
-    for i in 6..8 {
-        env.verify_object_not_synced(&objects[i])
+    for (i, object) in objects.iter().enumerate().skip(6).take(2) {
+        env.verify_object_not_synced(object)
             .await
             .unwrap_or_else(|e| panic!("Object {} should not be synced: {}", i, e));
     }
 
     env.synchronizer.run(None, None).await.unwrap();
 
-    for i in 0..3 {
-        env.verify_object_not_synced(&objects[i])
+    for (i, object) in objects.iter().enumerate().take(3) {
+        env.verify_object_not_synced(object)
             .await
             .unwrap_or_else(|e| panic!("Object {} should still not be synced: {}", i, e));
     }
 
-    for i in 3..8 {
-        env.verify_object_synced(&objects[i])
+    for (i, object) in objects.iter().enumerate().skip(3).take(5) {
+        env.verify_object_synced(object)
             .await
             .unwrap_or_else(|e| panic!("Object {} should be synced: {}", i, e));
     }
