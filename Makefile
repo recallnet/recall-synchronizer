@@ -1,4 +1,4 @@
-.PHONY: all build test test-fast test-coverage clean docker-up docker-down docker-clean init-db fmt lint start-recall start-recall-if-needed stop-recall recall-status fund-wallets fund-wallet
+.PHONY: all build test test-fast test-coverage clean docker-up docker-down init-db fmt lint recall-start recall-start-if-needed recall-stop fund-wallets fund-wallet
 
 # Default target
 all: build
@@ -12,13 +12,13 @@ test-fast:
 	cargo test
 
 # Run integration tests with real implementations
-test: docker-up init-db start-recall-if-needed
+test: docker-up init-db recall-start-if-needed
 	@ENABLE_DB_TESTS=true ENABLE_S3_TESTS=true ENABLE_RECALL_TESTS=true ENABLE_SQLITE_TESTS=true RUST_BACKTRACE=1 cargo test -- --nocapture
 
 # Run all tests with coverage
-test-coverage: docker-up init-db start-recall-if-needed
+test-coverage: docker-up init-db recall-start-if-needed
 	@which cargo-tarpaulin > /dev/null || cargo install cargo-tarpaulin
-	@ENABLE_DB_TESTS=true ENABLE_SQLITE_TESTS=true RUST_BACKTRACE=1 cargo tarpaulin --out html
+	@ENABLE_DB_TESTS=true ENABLE_S3_TESTS=true ENABLE_RECALL_TESTS=true ENABLE_SQLITE_TESTS=true RUST_BACKTRACE=1 cargo tarpaulin --out html
 
 # Format code
 fmt:
@@ -53,28 +53,20 @@ init-db:
 	@docker compose exec -T postgres psql -U recall -d recall_competitions -f /docker-entrypoint-initdb.d/init.sql >/dev/null 2>&1
 
 # Stop Docker containers
-docker-down: stop-recall
+docker-down: recall-stop
 	@docker compose down
 
-# Clean up Docker resources (use when having network issues)
-docker-clean:
-	@./scripts/docker-clean.sh
-
 # Start Recall container (always restarts)
-start-recall:
-	@./scripts/start-recall.sh
+recall-start:
+	@./scripts/recall-start.sh
 
 # Start Recall container only if not running
-start-recall-if-needed:
-	@./scripts/start-recall-if-needed.sh
+recall-start-if-needed:
+	@./scripts/recall-start-if-needed.sh
 
 # Stop Recall container
-stop-recall:
-	@./scripts/stop-recall.sh
-
-# Check Recall container status
-recall-status:
-	@./scripts/check-recall-status.sh
+recall-stop:
+	@./scripts/recall-stop.sh
 
 # Fund all test wallets
 fund-wallets:

@@ -42,7 +42,6 @@ if [ ! -f "$RECALL_NETWORK_CONFIG_FILE" ]; then
 fi
 
 # Extract faucet owner private key from container
-echo "Extracting faucet owner key..."
 FAUCET_KEY=$(docker exec $CONTAINER_NAME sed -n '/^faucet_owner:/,/^[^ ]/{/private_key:/p}' /workdir/localnet-data/state.yml | awk '{print $2}' 2>/dev/null || echo "")
 
 if [ -z "$FAUCET_KEY" ]; then
@@ -50,8 +49,6 @@ if [ -z "$FAUCET_KEY" ]; then
     echo "Please ensure the recall-localnet container is properly initialized."
     exit 1
 fi
-
-echo "Found faucet owner key: ${FAUCET_KEY:0:10}..."
 
 # Extract RPC URL from networks.toml
 RPC_URL=$(awk '/^\[localnet\.subnet_config\]/{f=1} f && /^evm_rpc_url/{gsub(/.*=[ ]*"|"[ ]*$/, ""); print; exit}' $RECALL_NETWORK_CONFIG_FILE)
@@ -62,14 +59,12 @@ if [ -z "$RPC_URL" ]; then
     exit 1
 fi
 
-echo "Using RPC URL: $RPC_URL"
-
 # Fund the wallet
 echo "Funding wallet $ADDRESS with $AMOUNT ETH..."
 cast send --rpc-url "$RPC_URL" \
     --private-key "$FAUCET_KEY" \
     "$ADDRESS" \
-    --value "${AMOUNT}ether"
+    --value "${AMOUNT}ether" > /dev/null 2>&1
 
 if [ $? -eq 0 ]; then
     echo "✓ Successfully funded $ADDRESS with $AMOUNT ETH"
