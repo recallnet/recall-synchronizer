@@ -24,10 +24,8 @@ async fn setup_test_data(storage: &dyn SyncStorage) -> Vec<SyncRecord> {
     let base_time = Utc::now() - Duration::hours(10);
     let mut test_data = Vec::new();
 
-    // Clear any existing data
     storage.clear_all().await.unwrap();
 
-    // Create 15 records with different timestamps
     for i in 0..15 {
         let object_key = format!("test/object_{:02}.jsonl", i);
         let timestamp = base_time + Duration::minutes(i * 30);
@@ -42,20 +40,13 @@ async fn setup_test_data(storage: &dyn SyncStorage) -> Vec<SyncRecord> {
 
 /// Helper function to create test storage implementations
 fn get_test_storages() -> Vec<StorageFactory> {
-    let mut storages: Vec<StorageFactory> = vec![
-        // Always include the FakeSyncStorage
-        Box::new(|| {
-            Box::pin(async {
-                Box::new(FakeSyncStorage::new()) as Box<dyn SyncStorage + Send + Sync>
-            })
-        }),
-    ];
+    let mut storages: Vec<StorageFactory> = vec![Box::new(|| {
+        Box::pin(async { Box::new(FakeSyncStorage::new()) as Box<dyn SyncStorage + Send + Sync> })
+    })];
 
     if is_sqlite_enabled() {
         storages.push(Box::new(|| {
             Box::pin(async move {
-                // Create an in-memory SQLite storage for testing
-                // Using ":memory:" creates a database that exists only in RAM
                 let storage = SqliteSyncStorage::new(":memory:")
                     .expect("Failed to create in-memory SQLite storage");
                 Box::new(storage) as Box<dyn SyncStorage + Send + Sync>
@@ -77,10 +68,13 @@ async fn add_object_creates_new_record() {
 
         storage.add_object(record).await.unwrap();
 
-        // Check that the object exists with PendingSync status
         let retrieved = storage.get_object(id).await.unwrap();
         assert!(retrieved.is_some());
-        assert_eq!(retrieved.unwrap().status, SyncStatus::PendingSync);
+        assert_eq!(
+            retrieved.unwrap().status,
+            SyncStatus::PendingSync,
+            "Expected status to be PendingSync after adding object"
+        );
     }
 }
 
@@ -95,23 +89,29 @@ async fn set_object_status_updates_existing_record() {
 
         storage.add_object(record).await.unwrap();
 
-        // Update status to Processing
         storage
             .set_object_status(id, SyncStatus::Processing)
             .await
             .unwrap();
         let retrieved = storage.get_object(id).await.unwrap();
         assert!(retrieved.is_some());
-        assert_eq!(retrieved.unwrap().status, SyncStatus::Processing);
+        assert_eq!(
+            retrieved.unwrap().status,
+            SyncStatus::Processing,
+            "Expected status to be Processing after update"
+        );
 
-        // Update status to Complete
         storage
             .set_object_status(id, SyncStatus::Complete)
             .await
             .unwrap();
         let retrieved = storage.get_object(id).await.unwrap();
         assert!(retrieved.is_some());
-        assert_eq!(retrieved.unwrap().status, SyncStatus::Complete);
+        assert_eq!(
+            retrieved.unwrap().status,
+            SyncStatus::Complete,
+            "Expected status to be Complete after second update"
+        );
     }
 }
 
@@ -126,11 +126,17 @@ async fn set_object_status_fails_for_nonexistent_record() {
             .set_object_status(nonexistent_id, SyncStatus::Complete)
             .await;
 
-        assert!(result.is_err());
-        assert!(matches!(
-            result.unwrap_err(),
-            crate::sync::storage::error::SyncStorageError::ObjectNotFound(ref id) if id == &nonexistent_id.to_string()
-        ));
+        assert!(
+            result.is_err(),
+            "Expected error when setting status for nonexistent record"
+        );
+        assert!(
+            matches!(
+                result.unwrap_err(),
+                crate::sync::storage::error::SyncStorageError::ObjectNotFound(ref id) if id == &nonexistent_id.to_string()
+            ),
+            "Expected ObjectNotFound error for nonexistent record"
+        );
     }
 }
 
@@ -143,7 +149,10 @@ async fn get_object_returns_none_for_nonexistent_record() {
         let nonexistent_id = Uuid::new_v4();
         let retrieved = storage.get_object(nonexistent_id).await.unwrap();
 
-        assert_eq!(retrieved, None);
+        assert_eq!(
+            retrieved, None,
+            "Expected None when trying to get a nonexistent object"
+        );
     }
 }
 
@@ -193,7 +202,6 @@ async fn get_objects_with_status_returns_matching_records() {
         assert_eq!(processing_records.len(), 2);
         assert_eq!(complete_records.len(), 3);
 
-        // Verify the correct records are returned
         assert!(processing_records.iter().any(|r| r.id == test_data[0].id));
         assert!(processing_records.iter().any(|r| r.id == test_data[1].id));
         assert!(complete_records.iter().any(|r| r.id == test_data[2].id));
@@ -210,7 +218,6 @@ async fn get_last_object_returns_most_recent_by_timestamp() {
 
         let base_time = Utc::now() - Duration::hours(5);
 
-        // Add records with different timestamps
         let record1 = create_test_record("test/object1.jsonl", base_time);
         let record2 = create_test_record("test/object2.jsonl", base_time + Duration::hours(1));
         let record3 = create_test_record("test/object3.jsonl", base_time + Duration::hours(2));
@@ -220,11 +227,20 @@ async fn get_last_object_returns_most_recent_by_timestamp() {
         storage.add_object(record3.clone()).await.unwrap();
 
         let last_object = storage.get_last_object().await.unwrap();
-        assert!(last_object.is_some());
+        assert!(
+            last_object.is_some(),
+            "Expected Some when objects exist in storage"
+        );
 
         let last = last_object.unwrap();
-        assert_eq!(last.id, record3.id);
-        assert_eq!(last.object_key, record3.object_key);
+        assert_eq!(
+            last.id, record3.id,
+            "Expected last object to be the most recent"
+        );
+        assert_eq!(
+            last.object_key, record3.object_key,
+            "Expected last object key to match the most recent record"
+        );
     }
 }
 
@@ -235,7 +251,10 @@ async fn get_last_object_returns_none_when_empty() {
         storage.clear_all().await.unwrap();
 
         let last_object = storage.get_last_object().await.unwrap();
-        assert!(last_object.is_none());
+        assert!(
+            last_object.is_none(),
+            "Expected None when no objects exist in storage"
+        );
     }
 }
 
@@ -245,22 +264,25 @@ async fn clear_all_removes_all_records() {
         let storage = storage_factory().await;
         let test_data = setup_test_data(storage.as_ref()).await;
 
-        // Verify some data exists
         let retrieved = storage.get_object(test_data[0].id).await.unwrap();
         assert!(retrieved.is_some());
 
-        // Clear all data
         storage.clear_all().await.unwrap();
 
-        // Verify all data is gone
         for record in &test_data {
             let retrieved = storage.get_object(record.id).await.unwrap();
-            assert_eq!(retrieved, None);
+            assert_eq!(
+                retrieved, None,
+                "Record {} should be removed after clear_all",
+                record.id
+            );
         }
 
-        // Verify get_last_object returns None
         let last_object = storage.get_last_object().await.unwrap();
-        assert!(last_object.is_none());
+        assert!(
+            last_object.is_none(),
+            "Last object should be None after clear_all"
+        );
     }
 }
 
@@ -272,14 +294,12 @@ async fn concurrent_status_updates_do_not_corrupt_data() {
         let storage = Arc::new(storage_factory().await);
         storage.clear_all().await.unwrap();
 
-        // Create a single record
         let record = create_test_record("test/concurrent.jsonl", Utc::now());
         let id = record.id;
         storage.add_object(record).await.unwrap();
 
         let mut tasks = JoinSet::new();
 
-        // Spawn multiple concurrent status updates
         for i in 0..10 {
             let storage = storage.clone();
             let status = if i % 2 == 0 {
@@ -293,18 +313,19 @@ async fn concurrent_status_updates_do_not_corrupt_data() {
             });
         }
 
-        // Wait for all tasks to complete
         while let Some(result) = tasks.join_next().await {
             result.unwrap();
         }
 
-        // Verify the object still exists with a valid status
         let final_record = storage.get_object(id).await.unwrap();
         assert!(final_record.is_some());
-        assert!(matches!(
-            final_record.unwrap().status,
-            SyncStatus::Processing | SyncStatus::Complete
-        ));
+        assert!(
+            matches!(
+                final_record.unwrap().status,
+                SyncStatus::Processing | SyncStatus::Complete
+            ),
+            "Expected status to be Processing or Complete"
+        );
     }
 }
 
@@ -332,13 +353,11 @@ async fn get_objects_with_status_returns_records_ordered_by_timestamp() {
             storage.add_object(record).await.unwrap();
         }
 
-        // Get records ordered by status (which orders by timestamp)
         let pending_records = storage
             .get_objects_with_status(SyncStatus::PendingSync)
             .await
             .unwrap();
 
-        // Verify they are ordered by timestamp (ascending)
         for i in 1..pending_records.len() {
             assert!(
                 pending_records[i].timestamp >= pending_records[i - 1].timestamp,
@@ -346,9 +365,12 @@ async fn get_objects_with_status_returns_records_ordered_by_timestamp() {
             );
         }
 
-        // Verify get_last_object returns the newest
         let last_object = storage.get_last_object().await.unwrap().unwrap();
-        assert_eq!(last_object.timestamp, base_time + Duration::hours(5));
+        assert_eq!(
+            last_object.timestamp,
+            base_time + Duration::hours(5),
+            "Last object should be the one with the latest timestamp"
+        );
     }
 }
 
@@ -359,7 +381,7 @@ async fn get_last_synced_object_id_returns_none_when_not_set() {
         storage.clear_all().await.unwrap();
 
         let last_id = storage.get_last_synced_object_id(None).await.unwrap();
-        assert_eq!(last_id, None);
+        assert_eq!(last_id, None, "Expected None when no last synced ID is set");
     }
 }
 
@@ -376,7 +398,11 @@ async fn set_last_synced_object_id_overwrites_previous_value() {
             .unwrap();
 
         let retrieved_id = storage.get_last_synced_object_id(None).await.unwrap();
-        assert_eq!(retrieved_id, Some(first_id));
+        assert_eq!(
+            retrieved_id,
+            Some(first_id),
+            "Expected to retrieve the first ID"
+        );
 
         let second_id = Uuid::new_v4();
         storage
@@ -385,8 +411,16 @@ async fn set_last_synced_object_id_overwrites_previous_value() {
             .unwrap();
 
         let retrieved_id = storage.get_last_synced_object_id(None).await.unwrap();
-        assert_eq!(retrieved_id, Some(second_id));
-        assert_ne!(retrieved_id, Some(first_id));
+        assert_eq!(
+            retrieved_id,
+            Some(second_id),
+            "Expected to retrieve the second ID"
+        );
+        assert_ne!(
+            retrieved_id,
+            Some(first_id),
+            "Expected the second ID to overwrite the first"
+        );
     }
 }
 
@@ -399,7 +433,6 @@ async fn clear_all_removes_all_last_synced_object_ids() {
         let comp1_id = Uuid::new_v4();
         let comp2_id = Uuid::new_v4();
 
-        // Set multiple competition and global last synced IDs
         storage
             .set_last_synced_object_id(Uuid::new_v4(), None)
             .await
@@ -413,24 +446,28 @@ async fn clear_all_removes_all_last_synced_object_ids() {
             .await
             .unwrap();
 
-        // Clear all data
         storage.clear_all().await.unwrap();
 
-        // All should be cleared
-        assert_eq!(storage.get_last_synced_object_id(None).await.unwrap(), None);
+        assert_eq!(
+            storage.get_last_synced_object_id(None).await.unwrap(),
+            None,
+            "Expected None after clear_all for global last synced ID"
+        );
         assert_eq!(
             storage
                 .get_last_synced_object_id(Some(comp1_id))
                 .await
                 .unwrap(),
-            None
+            None,
+            "Expected None after clear_all for competition 1 last synced ID"
         );
         assert_eq!(
             storage
                 .get_last_synced_object_id(Some(comp2_id))
                 .await
                 .unwrap(),
-            None
+            None,
+            "Expected None after clear_all for competition 2 last synced ID"
         );
     }
 }
@@ -469,21 +506,24 @@ async fn set_last_synced_object_id_with_competition_stores_separately() {
         );
         assert_eq!(
             storage.get_last_synced_object_id(None).await.unwrap(),
-            Some(obj1_id)
+            Some(obj1_id),
+            "Expected to retrieve the global last synced ID"
         );
         assert_eq!(
             storage
                 .get_last_synced_object_id(Some(comp1_id))
                 .await
                 .unwrap(),
-            Some(obj2_id)
+            Some(obj2_id),
+            "Expected to retrieve the second object's ID for competition 1"
         );
         assert_eq!(
             storage
                 .get_last_synced_object_id(Some(comp2_id))
                 .await
                 .unwrap(),
-            Some(obj3_id)
+            Some(obj3_id),
+            "Expected to retrieve the third object's ID for competition 2"
         );
 
         // Update one competition's ID shouldn't affect others
@@ -495,21 +535,24 @@ async fn set_last_synced_object_id_with_competition_stores_separately() {
 
         assert_eq!(
             storage.get_last_synced_object_id(None).await.unwrap(),
-            Some(obj1_id)
+            Some(obj1_id),
+            "Expected to retrieve the global last synced ID"
         );
         assert_eq!(
             storage
                 .get_last_synced_object_id(Some(comp1_id))
                 .await
                 .unwrap(),
-            Some(new_obj_id)
+            Some(new_obj_id),
+            "Expected to retrieve the updated object's ID for competition 1"
         );
         assert_eq!(
             storage
                 .get_last_synced_object_id(Some(comp2_id))
                 .await
                 .unwrap(),
-            Some(obj3_id)
+            Some(obj3_id),
+            "Expected to retrieve the third object's ID for competition 2"
         );
     }
 }

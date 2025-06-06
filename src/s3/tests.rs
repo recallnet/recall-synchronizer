@@ -14,13 +14,11 @@ type StorageFactory =
 fn get_test_storages() -> Vec<(&'static str, StorageFactory)> {
     let mut storages: Vec<(&'static str, StorageFactory)> = vec![];
 
-    // Always include FakeStorage
     storages.push((
         "fake",
         Box::new(|| {
             Box::pin(async {
                 let fake_storage = Arc::new(FakeStorage::new());
-                // Pre-populate test data
                 fake_storage
                     .add_object("test_key", Bytes::from("test data"))
                     .await
@@ -30,10 +28,8 @@ fn get_test_storages() -> Vec<(&'static str, StorageFactory)> {
         }),
     ));
 
-    // Conditionally include real S3 if configured
     if is_s3_enabled() {
         let config = load_test_config().expect("Failed to load test config");
-        // Clone the S3 config we need before moving into the closure
         let s3_config = config.s3.clone();
 
         storages.push((
@@ -45,7 +41,6 @@ fn get_test_storages() -> Vec<(&'static str, StorageFactory)> {
                     match S3Storage::new(&s3_config).await {
                         Ok(storage) => {
                             let real_storage = Arc::new(storage);
-                            // Pre-populate test data
                             real_storage
                                 .add_object("test_key", Bytes::from("test data"))
                                 .await
@@ -100,17 +95,13 @@ async fn add_and_remove_object_works_correctly() {
         let key = format!("test_add_remove_{}", name);
         let data = Bytes::from("new test data");
 
-        // Add object
         storage.add_object(&key, data.clone()).await.unwrap();
 
-        // Get and verify data
         let retrieved = storage.get_object(&key).await.unwrap();
         assert_eq!(retrieved, data);
 
-        // Remove object
         storage.remove_object(&key).await.unwrap();
 
-        // Verify it no longer exists
         let result = storage.get_object(&key).await;
         assert!(
             matches!(result, Err(StorageError::ObjectNotFound(_))),
@@ -136,18 +127,14 @@ async fn fake_fail_object_causes_object_specific_failures() {
     let result = storage.get_object("fail_test_key").await;
     assert!(result.is_ok());
 
-    // Set object to fail
     storage.fake_fail_object("fail_test_key").await;
 
-    // Now get_object should fail with ObjectNotFound
     let result = storage.get_object("fail_test_key").await;
     assert!(matches!(result, Err(StorageError::ObjectNotFound(_))));
 
-    // Other objects should still work
     let result = storage.get_object("fail_test_key2").await;
     assert!(result.is_ok());
 
-    // Not existing object should still fail
     let result = storage.get_object("nonexistent_key").await;
     assert!(matches!(result, Err(StorageError::ObjectNotFound(_))));
 }
@@ -156,7 +143,6 @@ async fn fake_fail_object_causes_object_specific_failures() {
 async fn has_bucket_and_create_bucket_work_correctly() {
     for (name, storage_factory) in get_test_storages() {
         let storage = storage_factory().await;
-        // Use unique bucket names to avoid conflicts
         let bucket_name = format!("test-bucket-{}-{}", name, uuid::Uuid::new_v4().simple());
 
         let exists = storage.has_bucket(&bucket_name).await.unwrap();
@@ -178,7 +164,6 @@ async fn has_bucket_and_create_bucket_work_correctly() {
             bucket_name, name
         );
 
-        // Creating bucket again should succeed (idempotent)
         storage
             .create_bucket(&bucket_name)
             .await
@@ -189,7 +174,6 @@ async fn has_bucket_and_create_bucket_work_correctly() {
                 )
             });
 
-        // Verify bucket still exists
         let exists = storage.has_bucket(&bucket_name).await.unwrap();
         assert!(
             exists,
