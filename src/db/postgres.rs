@@ -307,18 +307,4 @@ impl Database for PostgresDatabase {
 
         Ok(())
     }
-
-    #[cfg(test)]
-    async fn clear_data(&self) -> Result<(), DatabaseError> {
-        let query = format!("DELETE FROM {}", self.table_name());
-        sqlx::query(&query).execute(&self.pool).await.map_err(|e| {
-            if e.to_string().contains("does not exist") {
-                // Table doesn't exist yet, which is fine for tests
-                return DatabaseError::Other(anyhow::anyhow!("Table not initialized"));
-            }
-            DatabaseError::Other(e.into())
-        })?;
-
-        Ok(())
-    }
 }

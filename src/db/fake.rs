@@ -78,11 +78,4 @@ impl Database for FakeDatabase {
         objects.insert(object.object_key.clone(), object);
         Ok(())
     }
-
-    #[cfg(test)]
-    async fn clear_data(&self) -> Result<(), DatabaseError> {
-        let mut objects = self.objects.write().unwrap();
-        objects.clear();
-        Ok(())
-    }
 }
