@@ -553,6 +553,10 @@ impl Storage for RecallBlockchain {
     async fn delete_blob(&self, key: &str) -> Result<(), RecallError> {
         debug!("Deleting blob: {}", key);
 
+        if !self.has_blob(key).await? {
+            return Err(RecallError::BlobNotFound(key.to_string()));
+        }
+
         let key_owned = key.to_string();
         let bucket_address = self.bucket_address;
         let provider = Arc::clone(&self.provider);
