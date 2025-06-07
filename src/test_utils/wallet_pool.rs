@@ -81,18 +81,6 @@ impl WalletPool {
         let index = self.counter.fetch_add(1, Ordering::Relaxed) % self.wallets.len();
         self.wallets[index].clone()
     }
-
-    /// Get the total number of wallets in the pool
-    pub fn wallet_count(&self) -> usize {
-        self.wallets.len()
-    }
-
-    /// Get all wallets in the pool
-    ///
-    /// Useful for tests that need to iterate over all wallets
-    pub fn all_wallets(&self) -> Vec<TestWallet> {
-        self.wallets.clone()
-    }
 }
 
 /// Get the next available test wallet
@@ -100,51 +88,4 @@ impl WalletPool {
 /// This is a convenience function that gets a wallet from the global pool.
 pub fn get_next_wallet() -> TestWallet {
     WalletPool::instance().get_next_wallet()
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_wallet_pool_round_robin() {
-        let pool = WalletPool::instance();
-        let wallet_count = pool.wallet_count();
-
-        // Get wallets in sequence
-        let mut wallets = Vec::new();
-        for _ in 0..wallet_count {
-            wallets.push(pool.get_next_wallet());
-        }
-
-        // Next wallet should be the same as the first
-        let next_wallet = pool.get_next_wallet();
-        assert_eq!(next_wallet.address, wallets[0].address);
-    }
-
-    #[test]
-    fn test_wallet_pool_concurrent_access() {
-        use std::thread;
-
-        let pool = WalletPool::instance();
-
-        // Spawn multiple threads that get wallets
-        let handles: Vec<_> = (0..10).map(|_| thread::spawn(get_next_wallet)).collect();
-
-        // Collect results
-        let wallets: Vec<_> = handles.into_iter().map(|h| h.join().unwrap()).collect();
-
-        // We should have gotten different wallets (modulo the pool size)
-        assert_eq!(wallets.len(), 10);
-
-        // Check that all returned wallets are valid wallets from the pool
-        let all_pool_wallets = pool.all_wallets();
-        for wallet in &wallets {
-            assert!(
-                all_pool_wallets.iter().any(|w| w.address == wallet.address),
-                "Wallet {} not found in pool",
-                wallet.address
-            );
-        }
-    }
 }

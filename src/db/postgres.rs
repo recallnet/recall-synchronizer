@@ -33,11 +33,6 @@ impl PostgresDatabase {
         database_url: &str,
         schema: Option<String>,
     ) -> Result<Self, DatabaseError> {
-        info!(
-            "Creating PostgreSQL database connection with URL: {}",
-            database_url
-        );
-
         let pool = PgPoolOptions::new()
             .max_connections(10)
             .acquire_timeout(Duration::from_secs(10))

@@ -22,7 +22,7 @@ impl S3Storage {
     /// Create a new S3Storage instance from configuration
     pub async fn new(config: &S3Config) -> Result<Self, StorageError> {
         info!(
-            "Creating S3Storage with config: endpoint={:?}, region={}, bucket={}, access_key={:?}",
+            "Creating S3 connection: endpoint={:?}, region={}, bucket={}, access_key={:?}",
             config.endpoint, config.region, config.bucket, config.access_key_id
         );
 
@@ -55,10 +55,7 @@ impl S3Storage {
         let cache_size = NonZeroUsize::new(100).unwrap();
         let cache = Arc::new(Mutex::new(lru::LruCache::new(cache_size)));
 
-        info!(
-            "Created S3 client with config: endpoint={:?}, region={}, bucket={}, access_key={:?}",
-            config.endpoint, config.region, config.bucket, config.access_key_id
-        );
+        info!("S3 connection established successfully");
 
         let storage = Self {
             client,

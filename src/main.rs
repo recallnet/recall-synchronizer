@@ -1,7 +1,7 @@
 // src/main.rs
 use anyhow::{Context, Result};
 use chrono::{DateTime, Utc};
-use clap::Parser;
+use clap::{Parser, Subcommand};
 use std::process;
 use tracing::{error, info, Level};
 
@@ -22,32 +22,43 @@ use crate::sync::synchronizer::Synchronizer;
 #[command(author, version, about, long_about = None)]
 struct Cli {
     /// Path to configuration file
-    #[arg(short, long, value_name = "FILE", default_value = "config.toml")]
+    #[arg(
+        short,
+        long,
+        value_name = "FILE",
+        default_value = "config.toml",
+        global = true
+    )]
     config: String,
 
-    /// Reset synchronization state
-    #[arg(long)]
-    reset: bool,
-
-    /// Filter by competition ID
-    #[arg(long)]
-    competition_id: Option<String>,
-
-    /// Synchronize only data updated since this timestamp (RFC3339 format)
-    #[arg(long)]
-    since: Option<String>,
-
     /// Show verbose output
-    #[arg(short, long)]
+    #[arg(short, long, global = true)]
     verbose: bool,
+
+    #[command(subcommand)]
+    command: Commands,
+}
+
+#[derive(Subcommand, Debug)]
+enum Commands {
+    /// Run the synchronizer
+    Run {
+        /// Filter by competition ID
+        #[arg(long)]
+        competition_id: Option<String>,
+
+        /// Synchronize only data updated since this timestamp (RFC3339 format)
+        #[arg(long)]
+        since: Option<String>,
+    },
+    /// Reset synchronization state
+    Reset,
 }
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    // Parse command line arguments
     let cli = Cli::parse();
 
-    // Initialize logging
     let log_level = if cli.verbose {
         Level::DEBUG
     } else {
@@ -55,11 +66,9 @@ async fn main() -> Result<()> {
     };
     tracing_subscriber::fmt().with_max_level(log_level).init();
 
-    // Display startup banner
     info!("Recall Data Synchronizer v{}", env!("CARGO_PKG_VERSION"));
     info!("Loading configuration from: {}", cli.config);
 
-    // Load configuration
     let config = match config::load_config(&cli.config) {
         Ok(cfg) => cfg,
         Err(e) => {
@@ -68,17 +77,21 @@ async fn main() -> Result<()> {
         }
     };
 
-    run(config, cli.reset, cli.competition_id, cli.since).await
+    match cli.command {
+        Commands::Run {
+            competition_id,
+            since,
+        } => run_synchronizer(config, competition_id, since).await,
+        Commands::Reset => reset_synchronizer(config).await,
+    }
 }
 
 /// Run the synchronizer with real database and storage implementations
-async fn run(
+async fn run_synchronizer(
     config: config::Config,
-    reset: bool,
     competition_id: Option<String>,
     since: Option<String>,
 ) -> Result<()> {
-    // Parse the since parameter if provided
     let since_time = if let Some(ts) = since {
         Some(
             DateTime::parse_from_rfc3339(&ts)
@@ -89,13 +102,39 @@ async fn run(
         None
     };
 
-    // Create specific implementations
+    let synchronizer = initialize_synchronizer(config).await?;
+
+    if let Err(e) = synchronizer.run(competition_id, since_time).await {
+        error!("Synchronizer failed: {}", e);
+        process::exit(1);
+    }
+
+    Ok(())
+}
+
+/// Reset the synchronizer state
+async fn reset_synchronizer(config: config::Config) -> Result<()> {
+    let synchronizer = initialize_synchronizer(config).await?;
+
+    info!("Resetting synchronization state...");
+
+    synchronizer.reset().await?;
+
+    info!("Synchronization state has been reset successfully");
+
+    Ok(())
+}
+
+async fn initialize_synchronizer(
+    config: config::Config,
+) -> Result<
+    Synchronizer<PostgresDatabase, SqliteSyncStorage, s3::S3Storage, RecallBlockchain>,
+    anyhow::Error,
+> {
     let database = PostgresDatabase::new(&config.database.url).await?;
     let sync_storage = SqliteSyncStorage::new(&config.sync_storage.db_path)?;
     let s3_storage = crate::s3::S3Storage::new(&config.s3).await?;
     let recall_storage = RecallBlockchain::new(&config.recall).await?;
-
-    // Create the synchronizer with specific implementations
     let synchronizer = Synchronizer::new(
         database,
         sync_storage,
@@ -106,17 +145,5 @@ async fn run(
 
     info!("Synchronizer initialized successfully");
 
-    // If reset flag is set, reset the synchronizer state
-    if reset {
-        info!("Reset flag is set, clearing synchronization state");
-        synchronizer.reset().await?;
-    }
-
-    // Run the synchronizer
-    if let Err(e) = synchronizer.run(competition_id, since_time).await {
-        error!("Synchronizer failed: {}", e);
-        process::exit(1);
-    }
-
-    Ok(())
+    Ok(synchronizer)
 }

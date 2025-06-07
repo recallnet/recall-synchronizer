@@ -29,7 +29,6 @@ fn get_test_storages() -> Vec<(&'static str, StorageFactory)> {
                     let config = load_test_config()
                         .expect("Failed to load test config");
 
-                    // Get a unique wallet for this test
                     let test_wallet = get_next_wallet();
                     println!("Using test wallet: {}", test_wallet.address);
 
@@ -77,14 +76,11 @@ async fn add_blob_and_has_blob_work_correctly() {
         let key = format!("test-blob-{}-{}", name, Uuid::new_v4());
         let data = b"test data".to_vec();
 
-        // Initially blob should not exist
         let exists = storage.has_blob(&key).await.unwrap();
         assert!(!exists, "Blob should not exist initially for {}", name);
 
-        // Add blob
         storage.add_blob(&key, data.clone()).await.unwrap();
 
-        // Now blob should exist
         let exists = storage.has_blob(&key).await.unwrap();
         assert!(exists, "Blob should exist after adding for {}", name);
 
@@ -136,7 +132,6 @@ async fn list_blobs_works_correctly() {
             name
         );
 
-        // Add some blobs
         let keys = vec![
             format!("{}file1.txt", prefix),
             format!("{}file2.txt", prefix),
@@ -150,7 +145,6 @@ async fn list_blobs_works_correctly() {
         let blobs = storage.list_blobs(&prefix).await.unwrap();
         assert_eq!(blobs.len(), 3, "Should have 3 blobs for {}", name);
 
-        // Check that all keys are present
         for key in &keys {
             assert!(
                 blobs.contains(key),
@@ -160,7 +154,6 @@ async fn list_blobs_works_correctly() {
             );
         }
 
-        // List blobs with more specific prefix
         let dir_prefix = format!("{}dir/", prefix);
         let dir_blobs = storage.list_blobs(&dir_prefix).await.unwrap();
         assert_eq!(dir_blobs.len(), 1, "Should have 1 blob in dir for {}", name);
@@ -234,7 +227,6 @@ async fn clear_prefix_works_correctly() {
         let prefix = format!("test-clear-{}-{}/", name, Uuid::new_v4());
         let other_prefix = format!("test-other-{}-{}/", name, Uuid::new_v4());
 
-        // Add blobs with our prefix
         let our_keys = vec![
             format!("{}file1.txt", prefix),
             format!("{}file2.txt", prefix),
@@ -245,7 +237,6 @@ async fn clear_prefix_works_correctly() {
             storage.add_blob(key, b"test data".to_vec()).await.unwrap();
         }
 
-        // Add blobs with other prefix
         let other_keys = vec![
             format!("{}file1.txt", other_prefix),
             format!("{}file2.txt", other_prefix),
@@ -277,20 +268,20 @@ async fn clear_prefix_works_correctly() {
 }
 
 #[tokio::test]
-async fn error_handling_works_correctly() {
-    // Test with fake storage only as we can control failures
+async fn fake_storage_failure_simulation() {
     let storage = FakeRecallStorage::new();
-    let key = format!("test-error-{}", Uuid::new_v4());
+    let key = "fail-test";
+    let data = b"test data".to_vec();
 
-    storage.fake_fail_blob(&key);
+    storage.fake_fail_blob(key);
 
-    let add_result = storage.add_blob(&key, b"data".to_vec()).await;
-    assert!(add_result.is_err(), "Add should fail for failed blob");
+    let add_result = storage.add_blob(key, data.clone()).await;
+    assert!(matches!(add_result, Err(RecallError::Operation(_))));
 
-    let has_result = storage.has_blob(&key).await;
-    assert!(has_result.is_err(), "Has should fail for failed blob");
+    let has_result = storage.has_blob(key).await;
+    assert!(matches!(has_result, Err(RecallError::Operation(_))));
 
-    storage.fake_reset_blob(&key);
+    storage.fake_reset_blob(key);
 
     let add_result = storage.add_blob(&key, b"data".to_vec()).await;
     assert!(
@@ -300,33 +291,9 @@ async fn error_handling_works_correctly() {
 
     let has_result = storage.has_blob(&key).await;
     assert!(
-        has_result.is_ok(),
+        has_result.unwrap(),
         "Has should succeed after clearing failure"
     );
-}
-
-#[tokio::test]
-async fn fake_storage_failure_simulation() {
-    let storage = FakeRecallStorage::new();
-    let key = "fail-test";
-    let data = b"test data".to_vec();
-
-    storage.fake_fail_blob(key);
-
-    // Operations should fail with Operation error
-    let add_result = storage.add_blob(key, data.clone()).await;
-    assert!(matches!(add_result, Err(RecallError::Operation(_))));
-
-    let has_result = storage.has_blob(key).await;
-    assert!(matches!(has_result, Err(RecallError::Operation(_))));
-
-    storage.fake_reset_blob(key);
-
-    // Now operations should succeed
-    storage.add_blob(key, data).await.unwrap();
-
-    let exists = storage.has_blob(key).await.unwrap();
-    assert!(exists);
 }
 
 #[tokio::test]
