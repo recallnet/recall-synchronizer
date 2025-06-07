@@ -41,8 +41,22 @@ struct Cli {
 
 #[derive(Subcommand, Debug)]
 enum Commands {
-    /// Run the synchronizer
+    /// Run the synchronizer once
     Run {
+        /// Filter by competition ID
+        #[arg(long)]
+        competition_id: Option<String>,
+
+        /// Synchronize only data updated since this timestamp (RFC3339 format)
+        #[arg(long)]
+        since: Option<String>,
+    },
+    /// Start the synchronizer to run continuously at specified interval
+    Start {
+        /// Interval in seconds between synchronization runs
+        #[arg(short, long, value_name = "SECONDS")]
+        interval: u64,
+
         /// Filter by competition ID
         #[arg(long)]
         competition_id: Option<String>,
@@ -82,6 +96,11 @@ async fn main() -> Result<()> {
             competition_id,
             since,
         } => run_synchronizer(config, competition_id, since).await,
+        Commands::Start {
+            interval,
+            competition_id,
+            since,
+        } => start_synchronizer(config, interval, competition_id, since).await,
         Commands::Reset => reset_synchronizer(config).await,
     }
 }
@@ -121,6 +140,35 @@ async fn reset_synchronizer(config: config::Config) -> Result<()> {
     synchronizer.reset().await?;
 
     info!("Synchronization state has been reset successfully");
+
+    Ok(())
+}
+
+/// Start the synchronizer to run continuously at specified interval
+async fn start_synchronizer(
+    config: config::Config,
+    interval: u64,
+    competition_id: Option<String>,
+    since: Option<String>,
+) -> Result<()> {
+    let since_time = if let Some(ts) = since {
+        Some(
+            DateTime::parse_from_rfc3339(&ts)
+                .context(format!("Failed to parse timestamp: {}", ts))?
+                .with_timezone(&Utc),
+        )
+    } else {
+        None
+    };
+
+    let synchronizer = initialize_synchronizer(config).await?;
+
+    info!("Starting synchronizer with interval of {} seconds", interval);
+
+    if let Err(e) = synchronizer.start(interval, competition_id, since_time).await {
+        error!("Synchronizer failed: {}", e);
+        process::exit(1);
+    }
 
     Ok(())
 }

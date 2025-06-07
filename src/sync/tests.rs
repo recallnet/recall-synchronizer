@@ -954,3 +954,55 @@ async fn reset_clears_sync_state_and_allows_resyncing() {
         });
     }
 }
+
+#[tokio::test]
+async fn start_synchronizer_runs_at_interval() {
+    let mut config = create_test_config();
+    config.sync.batch_size = 2;
+    let env = setup_with_config(config).await;
+
+    let base_time = Utc::now();
+
+    for i in 0..6 {
+        let object = create_test_object_index(
+            &format!("test/interval-{}.jsonl", i),
+            base_time - Duration::minutes(i as i64),
+        );
+        env.add_object_to_db_and_s3(object, &format!("Test data {}", i))
+            .await;
+    }
+
+    // Start the synchronizer in a separate task with 1 second interval
+    let sync_task = {
+        let sync = env.synchronizer.clone();
+        tokio::spawn(async move { sync.start(1, None, None).await })
+    };
+
+    // Check after ~0.5 seconds (first immediate run)
+    tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
+
+    let blobs_run1 = env.recall_storage.list_blobs("test/").await.unwrap();
+    assert_eq!(
+        blobs_run1.len(),
+        2,
+        "First run should sync 2 objects (batch_size=2)"
+    );
+
+    // Check after ~1.5 seconds (second interval run)
+    tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
+
+    let blobs_run2 = env.recall_storage.list_blobs("test/").await.unwrap();
+    assert_eq!(
+        blobs_run2.len(),
+        4,
+        "Second run should have 4 objects total"
+    );
+
+    // Check after ~2.5 seconds (third interval run)
+    tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
+
+    let blobs_run3 = env.recall_storage.list_blobs("test/").await.unwrap();
+    assert_eq!(blobs_run3.len(), 6, "Third run should have all 6 objects");
+
+    sync_task.abort();
+}

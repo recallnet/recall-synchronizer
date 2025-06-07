@@ -1,7 +1,8 @@
 use anyhow::{Context, Result};
 use chrono::{DateTime, Utc};
 use std::sync::Arc;
-use tracing::{debug, error, info};
+use tokio::time::{interval, Duration};
+use tracing::{debug, error, info, warn};
 
 use crate::config::SyncConfig;
 use crate::db::{Database, ObjectIndex};
@@ -10,6 +11,7 @@ use crate::s3::Storage as S3Storage;
 use crate::sync::storage::{SyncRecord, SyncStatus, SyncStorage};
 
 /// Main synchronizer that orchestrates the data synchronization process
+#[derive(Clone)]
 pub struct Synchronizer<D: Database, S: SyncStorage, ST: S3Storage, RS: RecallStorage> {
     database: Arc<D>,
     sync_storage: Arc<S>,
@@ -296,5 +298,32 @@ impl<D: Database, S: SyncStorage, ST: S3Storage, RS: RecallStorage> Synchronizer
         self.sync_storage.clear_all().await?;
         info!("Synchronization state has been reset");
         Ok(())
+    }
+
+    /// Starts the synchronizer to run continuously at the specified interval
+    pub async fn start(
+        &self,
+        interval_seconds: u64,
+        competition_id: Option<String>,
+        since: Option<DateTime<Utc>>,
+    ) -> Result<()> {
+        let mut interval_timer = interval(Duration::from_secs(interval_seconds));
+
+        info!("Synchronizer started with {}s interval", interval_seconds);
+
+        loop {
+            interval_timer.tick().await;
+
+            info!("Starting synchronization run");
+            match self.run(competition_id.clone(), since).await {
+                Ok(()) => {
+                    debug!("Synchronization run completed successfully");
+                }
+                Err(e) => {
+                    warn!("Synchronization run failed: {}", e);
+                    // Continue to next interval even if this run failed
+                }
+            }
+        }
     }
 }

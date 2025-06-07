@@ -7,6 +7,7 @@ use std::sync::{Arc, RwLock};
 use uuid::Uuid;
 
 /// A fake in-memory implementation of the SyncStorage trait for testing
+#[derive(Clone)]
 pub struct FakeSyncStorage {
     records: Arc<RwLock<HashMap<Uuid, SyncRecord>>>,
     last_synced_ids: Arc<RwLock<HashMap<Option<Uuid>, Uuid>>>,

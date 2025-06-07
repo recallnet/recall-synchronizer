@@ -283,13 +283,13 @@ async fn fake_storage_failure_simulation() {
 
     storage.fake_reset_blob(key);
 
-    let add_result = storage.add_blob(&key, b"data".to_vec()).await;
+    let add_result = storage.add_blob(key, b"data".to_vec()).await;
     assert!(
         add_result.is_ok(),
         "Add should succeed after clearing failure"
     );
 
-    let has_result = storage.has_blob(&key).await;
+    let has_result = storage.has_blob(key).await;
     assert!(
         has_result.unwrap(),
         "Has should succeed after clearing failure"
