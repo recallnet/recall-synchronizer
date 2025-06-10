@@ -163,30 +163,82 @@ The Docker Compose setup provides:
 
 ### Running the Synchronizer
 
+The synchronizer has three main commands:
+
+#### Run Command
+
+Run the synchronizer once to process and sync data:
+
 ```bash
-cargo run -- --config config.toml
+cargo run -- run --config config.toml
 ```
 
-Additional options:
+Additional options for `run`:
 
-- `--reset` - Reset synchronization state (clears all sync records)
 - `--competition-id <ID>` - Filter by competition ID (maintains separate progress per competition)
 - `--since <TIMESTAMP>` - Synchronize data since timestamp (RFC3339 format)
-- `--verbose` - Show verbose output
 
-#### Reset Functionality
+#### Start Command
 
-The `--reset` flag clears all synchronization state, allowing you to re-sync all data. This is useful when:
+Start the synchronizer to run continuously at a specified interval:
+
+```bash
+cargo run -- start --interval 60 --config config.toml
+```
+
+This will run the synchronizer every 60 seconds. Additional options for `start`:
+
+- `--interval <SECONDS>` - Interval in seconds between synchronization runs (required)
+- `--competition-id <ID>` - Filter by competition ID (maintains separate progress per competition)
+- `--since <TIMESTAMP>` - Synchronize data since timestamp (RFC3339 format)
+
+#### Reset Command
+
+Reset synchronization state (clears all sync records):
+
+```bash
+cargo run -- reset --config config.toml
+```
+
+This is useful when:
 
 - The Recall network has been reset or data has been lost
 - You need to force re-synchronization of all objects
 - Testing synchronization from a clean state
 
-Example:
+#### Global Options
+
+All commands support these global options:
+
+- `--config <FILE>` - Path to configuration file (default: config.toml)
+- `--verbose` - Show verbose output
+
+Examples:
 
 ```bash
-# Reset and re-sync all data
-cargo run -- --config config.toml --reset
+# Run synchronizer once with default config
+cargo run -- run
+
+# Run with custom config and verbose output
+cargo run -- run --config custom.toml --verbose
+
+# Start continuous synchronization every 30 seconds
+cargo run -- start --interval 30
+
+# Start with competition filter and 5 minute interval
+cargo run -- start --interval 300 --competition-id 550e8400-e29b-41d4-a716-446655440000
+
+# Filter by competition ID (single run)
+cargo run -- run --competition-id 550e8400-e29b-41d4-a716-446655440000
+
+# Sync only recent data
+cargo run -- run --since 2024-01-01T00:00:00Z
+
+# Reset synchronization state
+cargo run -- reset
+
+# Reset with custom config
+cargo run -- reset --config custom.toml
 ```
 
 ### Docker Compose Commands
