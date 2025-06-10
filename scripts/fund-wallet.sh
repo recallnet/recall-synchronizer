@@ -59,28 +59,52 @@ if [ -z "$RPC_URL" ]; then
     exit 1
 fi
 
-# Fund the wallet
+# Fund the wallet with retry mechanism
 echo "Funding wallet $ADDRESS with $AMOUNT ETH..."
 
-# Capture the output and error from cast send
-CAST_OUTPUT=$(cast send --rpc-url "$RPC_URL" \
-    --private-key "$FAUCET_KEY" \
-    "$ADDRESS" \
-    --value "${AMOUNT}ether" 2>&1)
-CAST_EXIT_CODE=$?
+# Retry configuration
+MAX_RETRIES=3
+RETRY_DELAY=2
+ATTEMPT=1
 
-if [ $CAST_EXIT_CODE -eq 0 ]; then
-    echo "✓ Successfully funded $ADDRESS with $AMOUNT ETH"
+while [ $ATTEMPT -le $MAX_RETRIES ]; do
+    # Capture the output and error from cast send
+    CAST_OUTPUT=$(cast send --rpc-url "$RPC_URL" \
+        --private-key "$FAUCET_KEY" \
+        "$ADDRESS" \
+        --value "${AMOUNT}ether" 2>&1)
+    CAST_EXIT_CODE=$?
     
-    # Check balance
-    BALANCE=$(cast balance --rpc-url "$RPC_URL" "$ADDRESS" | sed 's/[^0-9]*//g')
-    if [ -n "$BALANCE" ]; then
-        # Convert from wei to ETH (divide by 10^18)
-        BALANCE_ETH=$(echo "scale=4; $BALANCE / 1000000000000000000" | bc 2>/dev/null || echo "unknown")
-        echo "  New balance: $BALANCE_ETH ETH"
+    if [ $CAST_EXIT_CODE -eq 0 ]; then
+        echo "✓ Successfully funded $ADDRESS with $AMOUNT ETH"
+        
+        # Check balance
+        BALANCE=$(cast balance --rpc-url "$RPC_URL" "$ADDRESS" | sed 's/[^0-9]*//g')
+        if [ -n "$BALANCE" ]; then
+            # Convert from wei to ETH (divide by 10^18)
+            BALANCE_ETH=$(echo "scale=4; $BALANCE / 1000000000000000000" | bc 2>/dev/null || echo "unknown")
+            echo "  New balance: $BALANCE_ETH ETH"
+        fi
+        exit 0
+    else
+        # Check if it's a connection error that might be transient
+        if echo "$CAST_OUTPUT" | grep -q "connection closed\|connection refused\|HTTP error\|server returned an error"; then
+            if [ $ATTEMPT -lt $MAX_RETRIES ]; then
+                echo "  Connection error on attempt $ATTEMPT/$MAX_RETRIES. Retrying in ${RETRY_DELAY}s..."
+                sleep $RETRY_DELAY
+                # Exponential backoff
+                RETRY_DELAY=$((RETRY_DELAY * 2))
+                ATTEMPT=$((ATTEMPT + 1))
+            else
+                echo "✗ Failed to fund $ADDRESS after $MAX_RETRIES attempts"
+                echo "  Error: $CAST_OUTPUT"
+                exit 1
+            fi
+        else
+            # Non-transient error, fail immediately
+            echo "✗ Failed to fund $ADDRESS"
+            echo "  Error: $CAST_OUTPUT"
+            exit 1
+        fi
     fi
-else
-    echo "✗ Failed to fund $ADDRESS"
-    echo "  Error: $CAST_OUTPUT"
-    exit 1
-fi
+done
