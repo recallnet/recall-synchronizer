@@ -42,8 +42,9 @@ docker-up:
 	done
 	@docker compose exec -T postgres pg_isready -U recall -q || (echo "Error: PostgreSQL failed to start" && exit 1)
 	# Wait for MinIO to be ready
-	@for i in 1 2 3 4 5; do \
-		docker compose exec -T minio mc --version > /dev/null 2>&1 && break || sleep 2; \
+	@echo "Waiting for MinIO to be ready..."
+	@for i in 1 2 3 4 5 6 7 8 9 10; do \
+		docker compose exec -T minio mc --version > /dev/null 2>&1 && break || (echo "  Waiting for MinIO..." && sleep 2); \
 	done
 	@echo "Docker services are ready"
 
