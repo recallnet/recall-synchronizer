@@ -61,12 +61,15 @@ fi
 
 # Fund the wallet
 echo "Funding wallet $ADDRESS with $AMOUNT ETH..."
-cast send --rpc-url "$RPC_URL" \
+
+# Capture the output and error from cast send
+CAST_OUTPUT=$(cast send --rpc-url "$RPC_URL" \
     --private-key "$FAUCET_KEY" \
     "$ADDRESS" \
-    --value "${AMOUNT}ether" > /dev/null 2>&1
+    --value "${AMOUNT}ether" 2>&1)
+CAST_EXIT_CODE=$?
 
-if [ $? -eq 0 ]; then
+if [ $CAST_EXIT_CODE -eq 0 ]; then
     echo "✓ Successfully funded $ADDRESS with $AMOUNT ETH"
     
     # Check balance
@@ -78,5 +81,6 @@ if [ $? -eq 0 ]; then
     fi
 else
     echo "✗ Failed to fund $ADDRESS"
+    echo "  Error: $CAST_OUTPUT"
     exit 1
 fi

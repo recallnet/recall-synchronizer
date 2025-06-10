@@ -77,42 +77,19 @@ if command -v jq &> /dev/null; then
         exit 0
     fi
     
-    # Check if fund-wallet.sh exists
-    FUND_WALLET_SCRIPT="./scripts/fund-wallet.sh"
-    if [ ! -x "$FUND_WALLET_SCRIPT" ]; then
-        echo "Warning: $FUND_WALLET_SCRIPT not found or not executable."
-        exit 0
-    fi
+    # Use fund-all-test-wallets.sh script
+    FUND_SCRIPT="./scripts/fund-all-test-wallets.sh"
     
-    # Read addresses from test-wallets.json and fund them
-    ADDRESSES=$(jq -r '.[].address' $TEST_WALLETS_FILE)
-    WALLET_COUNT=$(echo "$ADDRESSES" | wc -l | tr -d ' ')
+    echo "Funding test wallets..."
     
-    echo "Funding $WALLET_COUNT test wallets with $ETH_PER_WALLET ETH each..."
+    # Set the environment variables for the fund script
+    export ETH_PER_WALLET
+    export TEST_WALLETS_FILE
     
-    i=1
-    SUCCESS_COUNT=0
-    FAIL_COUNT=0
-    
-    while IFS= read -r ADDRESS; do
-        echo ""
-        echo "[$i/$WALLET_COUNT] Processing wallet: $ADDRESS"
-        
-        # Use the fund-wallet.sh script
-        if $FUND_WALLET_SCRIPT "$ADDRESS" "$ETH_PER_WALLET"; then
-            SUCCESS_COUNT=$((SUCCESS_COUNT + 1))
-        else
-            FAIL_COUNT=$((FAIL_COUNT + 1))
-            echo "  ✗ Failed to fund $ADDRESS"
-        fi
-        
-        i=$((i + 1))
-    done <<< "$ADDRESSES"
-    
-    echo ""
-    echo "Funding complete: $SUCCESS_COUNT succeeded, $FAIL_COUNT failed"
-    
-    if [ $FAIL_COUNT -gt 0 ]; then
+    # Run the fund-all-test-wallets.sh script
+    if $FUND_SCRIPT; then
+        echo "Test wallets funded successfully."
+    else
         echo "Warning: Some wallets failed to fund. Tests may fail for those wallets."
     fi
 else

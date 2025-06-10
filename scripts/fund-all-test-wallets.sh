@@ -19,14 +19,9 @@ if [ ! -f "$TEST_WALLETS_FILE" ]; then
     exit 1
 fi
 
-# Check if fund-wallet.sh exists
+# Get the script directory
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 FUND_WALLET_SCRIPT="$SCRIPT_DIR/fund-wallet.sh"
-
-if [ ! -x "$FUND_WALLET_SCRIPT" ]; then
-    echo "Error: $FUND_WALLET_SCRIPT not found or not executable."
-    exit 1
-fi
 
 # Read addresses from test-wallets.json
 ADDRESSES=$(jq -r '.[].address' $TEST_WALLETS_FILE)
