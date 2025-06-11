@@ -37,7 +37,7 @@ impl Database for FakeDatabase {
             .values()
             .filter(|obj| {
                 if let Some(comp_id) = competition_id {
-                    if obj.competition_id != Some(comp_id) {
+                    if obj.competition_id != comp_id {
                         return false;
                     }
                 }

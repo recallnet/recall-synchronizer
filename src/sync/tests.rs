@@ -235,7 +235,7 @@ async fn when_competition_id_filter_is_applied_only_matching_objects_are_synchro
     let now = Utc::now();
 
     let mut filtered_object = create_test_object_index("test/filtered.jsonl", now);
-    filtered_object.competition_id = Some(competition_id);
+    filtered_object.competition_id = competition_id;
 
     let other_object = create_test_object_index("test/other.jsonl", now + Duration::hours(1));
 
@@ -592,7 +592,7 @@ async fn sync_with_same_competition_id_continues_from_where_it_left_off() {
             &format!("comp1/obj-{}.jsonl", i),
             base_time + Duration::minutes(i as i64),
         );
-        object.competition_id = Some(comp1_id);
+        object.competition_id = comp1_id;
         env.add_object_to_db_and_s3(object, &format!("Comp1 data {}", i))
             .await;
     }
@@ -602,7 +602,7 @@ async fn sync_with_same_competition_id_continues_from_where_it_left_off() {
             &format!("comp2/obj-{}.jsonl", i),
             base_time + Duration::minutes((i + 10) as i64),
         );
-        object.competition_id = Some(comp2_id);
+        object.competition_id = comp2_id;
         env.add_object_to_db_and_s3(object, &format!("Comp2 data {}", i))
             .await;
     }
@@ -666,7 +666,7 @@ async fn sync_with_different_competitions_maintains_separate_progress() {
             &format!("comp1/obj-{}.jsonl", i),
             base_time + Duration::minutes(i as i64),
         );
-        obj1.competition_id = Some(comp1_id);
+        obj1.competition_id = comp1_id;
         env.add_object_to_db_and_s3(obj1, &format!("Comp1 data {}", i))
             .await;
 
@@ -674,7 +674,7 @@ async fn sync_with_different_competitions_maintains_separate_progress() {
             &format!("comp2/obj-{}.jsonl", i),
             base_time + Duration::minutes((i + 10) as i64),
         );
-        obj2.competition_id = Some(comp2_id);
+        obj2.competition_id = comp2_id;
         env.add_object_to_db_and_s3(obj2, &format!("Comp2 data {}", i))
             .await;
     }
@@ -756,7 +756,7 @@ async fn regular_sync_processes_all_unsynced_objects_from_all_competitions() {
             &format!("comp1/obj-{}.jsonl", i),
             base_time + Duration::minutes(i as i64),
         );
-        object.competition_id = Some(comp1_id);
+        object.competition_id = comp1_id;
         env.add_object_to_db_and_s3(object, &format!("Comp1 data {}", i))
             .await;
 
@@ -764,7 +764,7 @@ async fn regular_sync_processes_all_unsynced_objects_from_all_competitions() {
             &format!("comp2/obj-{}.jsonl", i),
             base_time + Duration::minutes((i + 5) as i64),
         );
-        object.competition_id = Some(comp2_id);
+        object.competition_id = comp2_id;
         env.add_object_to_db_and_s3(object, &format!("Comp2 data {}", i))
             .await;
     }
@@ -821,31 +821,31 @@ async fn regular_sync_continues_regardless_of_competition_specific_progress() {
 
     // comp1/obj-0 at time 0
     let mut obj = create_test_object_index("comp1/obj-0.jsonl", base_time);
-    obj.competition_id = Some(comp1_id);
+    obj.competition_id = comp1_id;
     all_objects.push(obj.clone());
     env.add_object_to_db_and_s3(obj, "Comp1 data 0").await;
 
     // comp2/obj-0 at time 1
     let mut obj = create_test_object_index("comp2/obj-0.jsonl", base_time + Duration::minutes(1));
-    obj.competition_id = Some(comp2_id);
+    obj.competition_id = comp2_id;
     all_objects.push(obj.clone());
     env.add_object_to_db_and_s3(obj, "Comp2 data 0").await;
 
     // comp1/obj-1 at time 2
     let mut obj = create_test_object_index("comp1/obj-1.jsonl", base_time + Duration::minutes(2));
-    obj.competition_id = Some(comp1_id);
+    obj.competition_id = comp1_id;
     all_objects.push(obj.clone());
     env.add_object_to_db_and_s3(obj, "Comp1 data 1").await;
 
     // comp2/obj-1 at time 3
     let mut obj = create_test_object_index("comp2/obj-1.jsonl", base_time + Duration::minutes(3));
-    obj.competition_id = Some(comp2_id);
+    obj.competition_id = comp2_id;
     all_objects.push(obj.clone());
     env.add_object_to_db_and_s3(obj, "Comp2 data 1").await;
 
     // comp1/obj-2 at time 4
     let mut obj = create_test_object_index("comp1/obj-2.jsonl", base_time + Duration::minutes(4));
-    obj.competition_id = Some(comp1_id);
+    obj.competition_id = comp1_id;
     all_objects.push(obj.clone());
     env.add_object_to_db_and_s3(obj, "Comp1 data 2").await;
 

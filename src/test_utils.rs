@@ -54,8 +54,8 @@ pub fn create_test_object_index(object_key: &str, modified_at: DateTime<Utc>) ->
         id: Uuid::new_v4(),
         object_key: object_key.to_string(),
         bucket_name: "test-bucket".to_string(),
-        competition_id: Some(Uuid::new_v4()),
-        agent_id: Some(Uuid::new_v4()),
+        competition_id: Uuid::new_v4(),
+        agent_id: Uuid::new_v4(),
         data_type: "TEST_DATA".to_string(),
         size_bytes: Some(1024),
         content_hash: Some(format!(

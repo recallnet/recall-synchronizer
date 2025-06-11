@@ -464,7 +464,7 @@ async fn get_objects_with_competition_id_should_filter() {
                 &format!("test/comp1_object_{:02}.jsonl", i),
                 base_time + Duration::minutes(i * 10),
             );
-            object.competition_id = Some(comp1_id);
+            object.competition_id = comp1_id;
             db.add_object(object).await.unwrap();
         }
 
@@ -474,19 +474,10 @@ async fn get_objects_with_competition_id_should_filter() {
                 &format!("test/comp2_object_{:02}.jsonl", i),
                 base_time + Duration::minutes(i * 10),
             );
-            object.competition_id = Some(comp2_id);
+            object.competition_id = comp2_id;
             db.add_object(object).await.unwrap();
         }
 
-        // Create 2 objects with no competition
-        for i in 0..2 {
-            let mut object = create_test_object_index(
-                &format!("test/no_comp_object_{:02}.jsonl", i),
-                base_time + Duration::minutes(i * 10),
-            );
-            object.competition_id = None;
-            db.add_object(object).await.unwrap();
-        }
 
         // Filter by competition 1
         let comp1_objects = db
@@ -501,7 +492,7 @@ async fn get_objects_with_competition_id_should_filter() {
         for obj in &comp1_objects {
             assert_eq!(
                 obj.competition_id,
-                Some(comp1_id),
+                comp1_id,
                 "All returned objects should belong to competition 1"
             );
         }
@@ -519,7 +510,7 @@ async fn get_objects_with_competition_id_should_filter() {
         for obj in &comp2_objects {
             assert_eq!(
                 obj.competition_id,
-                Some(comp2_id),
+                comp2_id,
                 "All returned objects should belong to competition 2"
             );
         }
@@ -528,8 +519,8 @@ async fn get_objects_with_competition_id_should_filter() {
         let all_objects = db.get_objects(20, None, None, None).await.unwrap();
         assert_eq!(
             all_objects.len(),
-            10,
-            "Should return all 10 objects when no competition filter is provided"
+            8,
+            "Should return all 8 objects when no competition filter is provided"
         );
     }
 }
@@ -549,7 +540,7 @@ async fn get_objects_with_competition_id_and_after_id_should_paginate() {
                 &format!("test/comp_object_{:02}.jsonl", i),
                 base_time + Duration::minutes(i * 10),
             );
-            object.competition_id = Some(comp_id);
+            object.competition_id = comp_id;
             db.add_object(object.clone()).await.unwrap();
             comp_objects.push(object);
         }
@@ -560,7 +551,7 @@ async fn get_objects_with_competition_id_and_after_id_should_paginate() {
                 &format!("test/other_object_{:02}.jsonl", i),
                 base_time + Duration::minutes(i * 10),
             );
-            object.competition_id = Some(uuid::Uuid::new_v4());
+            object.competition_id = uuid::Uuid::new_v4();
             db.add_object(object).await.unwrap();
         }
 
@@ -570,7 +561,7 @@ async fn get_objects_with_competition_id_and_after_id_should_paginate() {
         for obj in &batch1 {
             assert_eq!(
                 obj.competition_id,
-                Some(comp_id),
+                comp_id,
                 "All objects in first batch should belong to the specified competition"
             );
         }
@@ -599,7 +590,7 @@ async fn get_objects_with_competition_id_and_after_id_should_paginate() {
         for obj in &batch2 {
             assert_eq!(
                 obj.competition_id,
-                Some(comp_id),
+                comp_id,
                 "All objects in second batch should belong to the specified competition"
             );
         }
