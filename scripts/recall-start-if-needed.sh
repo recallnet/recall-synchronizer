@@ -7,7 +7,7 @@ CONTAINER_NAME="${CONTAINER_NAME:-recall-localnet}"
 RECALL_LOCALNET_IMAGE="${RECALL_LOCALNET_IMAGE:-textile/recall-localnet:latest}"
 RECALL_NETWORK_CONFIG_FILE="${RECALL_NETWORK_CONFIG_FILE:-networks.toml}"
 TEST_WALLETS_FILE="${TEST_WALLETS_FILE:-test-wallets.json}"
-ETH_PER_WALLET="${ETH_PER_WALLET:-10000000}"
+ETH_PER_WALLET="${ETH_PER_WALLET:-1000}"
 
 # Check if container is already running
 if docker ps --format '{{.Names}}' | grep -q "^${CONTAINER_NAME}$"; then

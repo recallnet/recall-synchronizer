@@ -42,8 +42,8 @@ fn get_test_storages() -> Vec<(&'static str, StorageFactory)> {
                     };
 
                     println!("Preparing wallet {} with credits...", test_wallet.address);
-                    // Buy 20 RECALL worth of credits
-                    match RecallBlockchain::prepare_account(&recall_config, 20).await {
+                    // Buy 10 RECALL worth of credits
+                    match RecallBlockchain::prepare_account(&recall_config, 10).await {
                         Ok(_) => {
                             println!("Successfully prepared wallet {} with credits", test_wallet.address);
                         }

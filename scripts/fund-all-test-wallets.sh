@@ -4,7 +4,7 @@
 
 # Configuration
 TEST_WALLETS_FILE="${TEST_WALLETS_FILE:-test-wallets.json}"
-ETH_PER_WALLET="${ETH_PER_WALLET:-100}"
+ETH_PER_WALLET="${ETH_PER_WALLET:-1000}"
 
 # Check if jq is available
 if ! command -v jq &> /dev/null; then

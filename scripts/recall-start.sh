@@ -5,7 +5,7 @@ CONTAINER_NAME="recall-localnet"
 RECALL_LOCALNET_IMAGE="${RECALL_LOCALNET_IMAGE:-textile/recall-localnet:sha-a72edb8-e7f57d2}"
 RECALL_NETWORK_CONFIG_FILE="${RECALL_NETWORK_CONFIG_FILE:-networks.toml}"
 TEST_WALLETS_FILE="${TEST_WALLETS_FILE:-test-wallets.json}"
-ETH_PER_WALLET="${ETH_PER_WALLET:-100000}"
+ETH_PER_WALLET="${ETH_PER_WALLET:-1000}"
 
 # Stop existing container if running
 echo "Stopping existing recall-localnet container if running..."
