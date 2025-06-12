@@ -163,9 +163,15 @@ async fn start_synchronizer(
 
     let synchronizer = initialize_synchronizer(config).await?;
 
-    info!("Starting synchronizer with interval of {} seconds", interval);
+    info!(
+        "Starting synchronizer with interval of {} seconds",
+        interval
+    );
 
-    if let Err(e) = synchronizer.start(interval, competition_id, since_time).await {
+    if let Err(e) = synchronizer
+        .start(interval, competition_id, since_time)
+        .await
+    {
         error!("Synchronizer failed: {}", e);
         process::exit(1);
     }

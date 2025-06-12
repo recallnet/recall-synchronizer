@@ -478,7 +478,6 @@ async fn get_objects_with_competition_id_should_filter() {
             db.add_object(object).await.unwrap();
         }
 
-
         // Filter by competition 1
         let comp1_objects = db
             .get_objects(20, None, None, Some(comp1_id))
@@ -491,8 +490,7 @@ async fn get_objects_with_competition_id_should_filter() {
         );
         for obj in &comp1_objects {
             assert_eq!(
-                obj.competition_id,
-                comp1_id,
+                obj.competition_id, comp1_id,
                 "All returned objects should belong to competition 1"
             );
         }
@@ -509,8 +507,7 @@ async fn get_objects_with_competition_id_should_filter() {
         );
         for obj in &comp2_objects {
             assert_eq!(
-                obj.competition_id,
-                comp2_id,
+                obj.competition_id, comp2_id,
                 "All returned objects should belong to competition 2"
             );
         }
@@ -560,8 +557,7 @@ async fn get_objects_with_competition_id_and_after_id_should_paginate() {
 
         for obj in &batch1 {
             assert_eq!(
-                obj.competition_id,
-                comp_id,
+                obj.competition_id, comp_id,
                 "All objects in first batch should belong to the specified competition"
             );
         }
@@ -589,8 +585,7 @@ async fn get_objects_with_competition_id_and_after_id_should_paginate() {
 
         for obj in &batch2 {
             assert_eq!(
-                obj.competition_id,
-                comp_id,
+                obj.competition_id, comp_id,
                 "All objects in second batch should belong to the specified competition"
             );
         }

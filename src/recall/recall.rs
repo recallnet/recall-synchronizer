@@ -249,11 +249,12 @@ impl RecallBlockchain {
         // Parse credit_free as TokenAmount since it's in atto units
         // Handle decimal format by parsing as float first, then converting to integer
         let credit_free_atto = {
-            let credit_value = credit_balance.credit_free.parse::<f64>()
-                .map_err(|e| RecallError::Operation(format!(
+            let credit_value = credit_balance.credit_free.parse::<f64>().map_err(|e| {
+                RecallError::Operation(format!(
                     "Failed to parse credit balance {}: {}",
                     credit_balance.credit_free, e
-                )))?;
+                ))
+            })?;
             TokenAmount::from_atto(credit_value as i128)
         };
 

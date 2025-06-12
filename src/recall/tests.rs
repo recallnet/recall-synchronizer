@@ -90,16 +90,16 @@ async fn add_blob_and_has_blob_work_correctly() {
 }
 
 /// Tests the complete lifecycle of blob operations (create, read, delete).
-/// 
+///
 /// This test combines multiple operations that would normally be separate tests
 /// because the Recall network has limited storage capacity and operations have
 /// eventual consistency. By combining these tests:
-/// 
-/// 1. We reduce the total number of blobs created, helping avoid "subnet has 
+///
+/// 1. We reduce the total number of blobs created, helping avoid "subnet has
 ///    reached storage capacity" errors
 /// 2. We can properly sequence operations with appropriate waits between them
 /// 3. We ensure cleanup happens even if intermediate assertions fail
-/// 
+///
 /// The test includes retry logic to handle the eventual consistency of the
 /// Recall network, where blobs may not be immediately available after creation
 /// or may take time to be fully deleted.
@@ -151,11 +151,9 @@ async fn blob_lifecycle_operations() {
                 }
             }
         }
-        
-        let retrieved_data = retrieved_data.expect(&format!(
-            "Failed to retrieve blob within timeout for {}",
-            name
-        ));
+
+        let retrieved_data = retrieved_data
+            .unwrap_or_else(|| panic!("Failed to retrieve blob within timeout for {}", name));
         assert_eq!(
             retrieved_data, original_data,
             "Retrieved data should match original for {}",
