@@ -117,7 +117,38 @@ The application is primarily configured via environment variables. Key variables
 
 Refer to `src/config.rs` (or equivalent) for the definitive list and detailed configuration logic.
 
-## 8. Development & Contribution
+## 8. Docker Support
+
+The Recall Synchronizer can be run using Docker for easy deployment. The image is automatically built and published to Docker Hub.
+
+### Quick Start with Docker
+
+```bash
+# Using configuration files (recommended)
+docker run -it --rm \
+  -v ./config.toml:/app/config.toml:ro \
+  -v ./networks.toml:/app/networks.toml:ro \
+  -v ./sync-data:/data \
+  textile/recall-synchronizer:latest \
+  run --config /app/config.toml
+
+# Or using environment variables
+docker run --rm \
+  -v ./networks.toml:/app/networks.toml:ro \
+  -e DATABASE_URL="postgresql://user:pass@host:5432/db" \
+  -e S3_ENDPOINT_URL="https://s3.amazonaws.com" \
+  -e S3_ACCESS_KEY_ID="your-key" \
+  -e S3_SECRET_ACCESS_KEY="your-secret" \
+  -e S3_BUCKET_NAME="your-bucket" \
+  -e RECALL_NETWORK="testnet" \
+  -e RECALL_CONFIG_PATH="/app/networks.toml" \
+  -e RECALL_PRIVATE_KEY="your-private-key" \
+  textile/recall-synchronizer:latest
+```
+
+For detailed Docker usage, see [DOCKER.md](DOCKER.md).
+
+## 9. Development & Contribution
 
 ### Prerequisites
 
@@ -251,6 +282,14 @@ cargo run -- reset --config custom.toml
 ### Running Tests
 
 The project provides several test targets with different configurations:
+
+#### Known Issues with Recall Tests
+
+**Storage Capacity**: The Recall localnet has limited storage capacity. If you encounter errors like "subnet has reached storage capacity", you may need to:
+1. Restart the Recall container to clear storage: `docker restart recall-localnet`
+2. Or stop and restart with: `make recall-stop && make recall-start`
+
+The tests are designed to handle storage capacity errors gracefully and will skip tests when the subnet is full.
 
 #### Test Targets
 

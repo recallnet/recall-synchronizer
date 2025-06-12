@@ -1,4 +1,4 @@
-.PHONY: all build test test-fast test-coverage clean docker-up docker-down fmt lint recall-start recall-start-if-needed recall-stop fund-wallets fund-wallet
+.PHONY: all build test test-fast test-coverage clean docker-up docker-down fmt lint recall-start recall-start-if-needed recall-stop fund-wallets fund-wallet docker-build docker-run
 
 # Default target
 all: build
@@ -79,3 +79,16 @@ fund-wallet:
 # Clean the project
 clean: docker-down
 	@cargo clean
+
+# Build Docker image
+docker-build:
+	@docker build --progress=plain -t recall-synchronizer:local .
+
+# Run Docker container
+docker-run: docker-build
+	@docker run --rm -it \
+		--network host \
+		-v $(PWD)/config.toml:/app/config.toml:ro \
+		-v $(PWD)/networks.toml:/app/networks.toml:ro \
+		-v $(PWD)/sync-data:/data \
+		recall-synchronizer:local
