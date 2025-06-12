@@ -1,0 +1,85 @@
+---
+description: "Configuration specific the the repository"
+globs: 
+alwaysApply: true
+---
+# Repository Specific Configuration: recall-synchronizer
+
+This document outlines configuration, quality gates, and architectural context specific to the `recall-synchronizer` repository. It complements the `org-general-practices.mdc` and `org-rust-standards.mdc`.
+
+## 1. Overview
+
+The `recall-synchronizer` is a Rust application responsible for:
+- Periodically querying a centralized PostgreSQL database (which indexes object storage like S3) for new or updated data related to agent competitions.
+- Retrieving the corresponding data from the object store (e.g., S3).
+- Transforming and writing this data to the Recall Testnet.
+- Managing its own state to ensure resilient and consistent synchronization, handling potential downtime of either the source systems or the Recall Testnet.
+
+## 2. Mandatory Quality Checks
+
+All pull requests and commits to the `main` (or `master`) branch **must** pass the following checks. These are typically enforced by the CI pipeline (e.g., defined in `.github/workflows/rust-ci.yml` or similar).
+
+1.  **Formatting:** Code must be formatted according to `rustfmt`.
+    *   Command: `cargo fmt --all -- --check`
+2.  **Linting:** Code must pass `clippy` linting checks with no warnings escalated to errors.
+    *   Command: `cargo clippy --all-targets --all-features -- -D warnings`
+3.  **Compilation:** Code must compile successfully for the release target.
+    *   Command: `cargo build --release`
+4.  **Testing:** All unit and integration tests must pass.
+    *   Command: `cargo test --all-targets --all-features`
+5.  **Documentation:** RustDoc comments should be comprehensive as per `org-rust-standards.mdc`. While a strict percentage might not always be enforced by CI initially, PRs with significant undocumented public APIs may be rejected.
+    *   Command: `cargo doc --no-deps --all-features` (to check for documentation warnings)
+6.  **Dependency Audit (Recommended):** Check for known vulnerabilities in dependencies.
+    *   Command: `cargo audit` (Requires `cargo-audit` to be installed)
+
+## 3. Key Technologies & Libraries
+
+-   **Language:** Rust (Stable toolchain)
+-   **Core Libraries:**
+    -   Tokio (for asynchronous operations)
+    -   SQLx or Diesel (for PostgreSQL interaction)
+    -   Rusoto or AWS SDK for Rust (for S3 interaction)
+    -   Serde (for serialization/deserialization)
+    -   Reqwest (for any direct HTTP API calls, if needed)
+    -   Recall SDK/Crate (for interacting with the Recall Testnet - *specify crate name when available*)
+    -   Thiserror (for defining module-specific error types) and Anyhow (for application-level error context)
+    -   Tracing or `log` crate (for structured logging)
+
+## 4. Code Organization & Abstractions
+
+-   **Module Structure:** Follow standard Rust module patterns with clear separation of concerns.
+-   **Trait Abstractions:** Use traits to define abstractions for external dependencies, especially for S3 and Recall Network interactions.
+-   **Testing Strategy:**
+    -   Each module should have comprehensive unit tests.
+    -   Integration tests should be configurable to run with either in-memory fakes (default) or real implementations.
+    -   Each trait representing an external service should have a corresponding lightweight in-memory fake implementation for testing.
+-   **Error Handling:**
+    -   Each module should define its own `Error` enum using thiserror to represent specific failure cases.
+    -   Error types should provide clear context about what failed and why.
+    -   Follow the patterns outlined in `org-rust-error-handling.mdc` and the examples in `rust-snippet-error.mds`.
+
+## 5. Environment Variables
+
+The application will require environment variables for configuration, including but not limited to:
+
+-   `DATABASE_URL`: Connection string for the PostgreSQL database.
+-   `S3_ENDPOINT_URL`: S3 compatible endpoint URL.
+-   `S3_ACCESS_KEY_ID`: S3 access key.
+-   `S3_SECRET_ACCESS_KEY`: S3 secret key.
+-   `S3_BUCKET_NAME`: S3 bucket to read from.
+-   `RECALL_NODE_URL`: URL for the Recall Testnet node.
+-   `RECALL_SIGNER_KEY`: Private key for signing transactions on Recall Testnet.
+-   `SYNC_INTERVAL_SECONDS`: Interval for synchronization runs.
+-   `LOG_LEVEL`: Logging verbosity (e.g., `info`, `debug`).
+
+(Refer to `src/config.rs` or equivalent for the definitive list and usage.)
+
+## 6. Build & Deployment
+
+-   Builds are performed using standard `cargo build --release`.
+-   Deployment might involve containerizing the application (e.g., using Docker) and running it in a managed environment.
+-   Ensure resource limits (CPU, memory) are appropriately set for the deployed instance.
+
+---
+
+This document should be updated as the project evolves.

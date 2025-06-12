@@ -1,0 +1,311 @@
+---
+description: Should be used when working with unit or integration tests
+globs: 
+alwaysApply: false
+---
+
+```rust
+/// Storage trait defining the interface for blob storage operations
+pub trait Storage {
+    /// Download a specific chunk from a blob identified by its hash
+    async fn download_chunk(&self, hash: &str, chunk_id: u64) -> Result<Bytes, StorageError>;
+    
+    // Other storage methods would be defined here...
+}
+
+/// `FakeStorage` is an in-memory implementation of the `Storage` trait for testing purposes.
+/// It allows simulating various storage scenarios, including successful uploads/downloads,
+/// chunk failures, and blob failures.
+#[derive(Clone)]
+pub struct FakeStorage {
+    data: Arc<Mutex<HashMap<String, Vec<Bytes>>>>,
+    fail_chunks: Arc<Mutex<HashMap<String, Vec<u64>>>>,
+    fail_blobs: Arc<Mutex<HashMap<String, bool>>>,
+    fail_streams: Arc<Mutex<HashMap<String, usize>>>,
+}
+
+impl FakeStorage {
+    /// Create a new empty FakeStorage instance
+    pub fn new() -> Self {
+        FakeStorage {
+            data: Arc::new(Mutex::new(HashMap::new())),
+            fail_chunks: Arc::new(Mutex::new(HashMap::new())),
+            fail_blobs: Arc::new(Mutex::new(HashMap::new())),
+            fail_streams: Arc::new(Mutex::new(HashMap::new())),
+        }
+    }
+
+    /// Simulate a failure for a specific chunk of a blob.
+    ///
+    /// This state is being reset after a subsequent upload of the same blob.
+    pub fn fake_failed_chunks(&self, hash: &str, chunks: Vec<u64>) {
+        self.fail_chunks
+            .lock()
+            .unwrap()
+            .insert(hash.to_string(), chunks);
+    }
+    
+    /// Simulate a completely missing blob
+    pub fn fake_failed_blob(&self, hash: &str) {
+        self.fail_blobs
+            .lock()
+            .unwrap()
+            .insert(hash.to_string(), true);
+    }
+    
+    /// Add test data to the storage
+    pub fn fake_add_data(&self, hash: &str, chunks: Vec<Bytes>) {
+        self.data
+            .lock()
+            .unwrap()
+            .insert(hash.to_string(), chunks);
+    }
+}
+
+impl Storage for FakeStorage {
+    async fn download_chunk(&self, hash: &str, chunk_id: u64) -> Result<Bytes, StorageError> {
+        // Check if we're simulating a blob failure
+        if self.fail_blobs.lock().unwrap().get(hash).copied().unwrap_or(false) {
+            return Err(StorageError::BlobNotFound(hash.to_string()));
+        }
+        
+        // Check if we're simulating a chunk failure
+        let fail_chunks = self
+            .fail_chunks
+            .lock()
+            .unwrap()
+            .get(hash)
+            .cloned()
+            .unwrap_or_default();
+
+        if fail_chunks.contains(&chunk_id) {
+            return Err(StorageError::ChunkNotFound(
+                chunk_id.to_string(),
+                hash.to_string(),
+                "Simulated chunk failure".to_string(),
+            ));
+        }
+
+        // Retrieve the data
+        let data = self.data.lock().unwrap();
+        let chunks = data.get(hash);
+        
+        if let Some(chunks) = chunks {
+            if chunk_id >= chunks.len() as u64 {
+                return Err(StorageError::ChunkNotFound(
+                    chunk_id.to_string(),
+                    hash.to_string(),
+                    "Chunk not found".to_string(),
+                ));
+            }
+            
+            Ok(chunks[chunk_id as usize].clone())
+        } else {
+            Err(StorageError::BlobNotFound(hash.to_string()))
+        }
+    }
+    
+    // Other Storage trait method implementations would follow...
+}
+
+/// Example of unit tests that work with both implementations using parameterized testing
+#[cfg(test)]
+mod tests {
+    use super::*;
+    
+    // Function to create all storage implementations to test
+    fn get_test_storages() -> Vec<Box<dyn Fn() -> Box<dyn Storage>>> {
+        let mut storages: Vec<Box<dyn Fn() -> Box<dyn Storage>>> = vec![
+            // Always include the FakeStorage
+            Box::new(|| {
+                let storage = FakeStorage::new();
+                // Pre-populate with test data as needed
+                let test_data = Bytes::from_static(b"test data");
+                storage.fake_add_data("test_hash", vec![test_data]);
+                Box::new(storage)
+            }),
+        ];
+        
+        // Conditionally add the real S3 implementation when enabled
+        if std::env::var("ENABLE_S3_TESTS").is_ok() {
+            storages.push(Box::new(|| {
+                let bucket = std::env::var("TEST_BUCKET").expect("TEST_BUCKET must be set");
+                let region = Region::UsEast1;
+                let storage = S3Storage::new(bucket, region);
+                Box::new(storage)
+            }));
+        }
+        
+        storages
+    }
+    
+    // Parameterized test that runs the same tests for all storage implementations
+    #[tokio::test]
+    async fn test_all_storage_implementations() {
+        for storage_factory in get_test_storages() {
+            let storage = storage_factory();
+            
+            // Create test data to verify - must match what's set up in get_test_storages()
+            let expected_data = Bytes::from_static(b"test data");
+            
+            // Test standard download functionality
+            let result = storage.download_chunk("test_hash", 0).await;
+            assert!(result.is_ok(), "Failed to download chunk: {:?}", result);
+            assert_eq!(result.unwrap(), expected_data);
+            
+            // Test missing chunk case
+            let result = storage.download_chunk("test_hash", 99).await;
+            assert!(matches!(result, Err(StorageError::ChunkNotFound(..))));
+            
+            // Test missing blob case
+            let result = storage.download_chunk("nonexistent_hash", 0).await;
+            assert!(matches!(result, Err(StorageError::BlobNotFound(..))));
+        }
+    }
+    
+    // Specific tests for FakeStorage features that don't apply to real implementations
+    #[tokio::test]
+    async fn test_fake_storage_specific_features() {
+        let storage = FakeStorage::new();
+        let test_data = Bytes::from_static(b"test data");
+        storage.fake_add_data("test_hash", vec![test_data.clone()]);
+        
+        // Test the fake_failed_chunks feature
+        storage.fake_failed_chunks("test_hash", vec![0]);
+        let result = storage.download_chunk("test_hash", 0).await;
+        assert!(matches!(result, Err(StorageError::ChunkNotFound(..))));
+        
+        // Reset the fake to allow successful download
+        storage.fake_add_data("test_hash", vec![test_data.clone()]);
+        let result = storage.download_chunk("test_hash", 0).await;
+        assert!(result.is_ok());
+        
+        // Test the fake_failed_blob feature
+        storage.fake_failed_blob("test_hash");
+        let result = storage.download_chunk("test_hash", 0).await;
+        assert!(matches!(result, Err(StorageError::BlobNotFound(..))));
+    }
+}
+```
+
+## Guidelines for Using Fake Implementations
+
+When creating test abstractions:
+
+1. **Define Clear Trait Interfaces**: Create well-defined traits that represent your external dependencies (e.g., `Storage`).
+
+2. **Limit Scope**: Focus the trait on only the operations your application actually needs.
+
+3. **Create In-Memory Fake Implementation**: Implement a lightweight in-memory version for testing:
+   - Use thread-safe containers (e.g., `Arc<Mutex<...>>`) to allow for concurrent testing
+   - Implement full trait functionality with predictable in-memory behavior
+   - Make the fake configurable to simulate different scenarios
+
+4. **Add Special Testing Methods**: Add special methods to the fake with the `fake_` prefix:
+   - These methods should only be used in tests
+   - They control the fake's behavior to simulate various scenarios (failures, delays, etc.)
+   - Do NOT create `fake_` methods that duplicate regular trait methods functionality
+   - Example: `fake_failed_chunks()` - sets up failure behavior for specific chunks when regular `download_chunk` is called
+   - Do NOT create `fake_` methods duplicate trait methods or that don't change fake storage state that affect behavior of regular trait methods.
+   - Focus on methods that set up special testing scenarios, not normal operations
+
+5. **Implement Production Version**: Create a real implementation that works with the actual service:
+   - Keep implementation details separate from the trait definition
+   - Use proper error handling and conversion to the common error type
+
+6. **Parameterized Testing**: Use a consistent pattern for running the same tests against multiple implementations:
+   - Create a function that returns a collection of storage implementations to test
+   - Use a factory function pattern to lazily create each implementation
+   - Write test functions that accept any implementation of the trait
+   - Use a loop to run the same tests against all implementations
+   - Separate tests for fake-specific features into their own test functions
+
+7. **Design for Integration Testing**: Allow integration tests to run with either:
+   - Fake implementations by default (for fast, reliable CI/CD)
+   - Real implementations when explicitly configured (for verification)
+   - Control this with environment variables (e.g., `ENABLE_S3_TESTS`)
+
+## When to Use Fake vs Mock
+
+- **Use Fakes** when you need a working implementation that behaves like the real thing
+- **Use Mocks** (from frameworks) when you just need to verify interaction patterns
+
+## Integration Test Example
+
+```rust
+// Function to create all system configurations to test
+fn get_test_system_configurations() -> Vec<Box<dyn Fn() -> (Box<dyn System>, String)>> {
+    let mut configs = Vec::new();
+    
+    // Always include configuration with fake storage
+    configs.push(Box::new(|| {
+        let storage = FakeStorage::new();
+        
+        // Pre-populate with test data
+        storage.fake_add_data("test_hash", vec![
+            Bytes::from_static(b"chunk 0"),
+            Bytes::from_static(b"chunk 1"),
+            Bytes::from_static(b"chunk 2"),
+        ]);
+        
+        // Create system with the fake
+        let system = YourSystem::new(storage);
+        (Box::new(system), "fake_storage".to_string())
+    }));
+    
+    // Conditionally add configuration with real S3 when enabled
+    if std::env::var("ENABLE_S3_TESTS").is_ok() {
+        configs.push(Box::new(|| {
+            let bucket = std::env::var("TEST_BUCKET").expect("TEST_BUCKET must be set");
+            let region = Region::UsEast1;
+            let storage = S3Storage::new(bucket, region);
+            
+            // Set up test data on real S3 would happen here
+            // ...
+            
+            let system = YourSystem::new(storage);
+            (Box::new(system), "real_s3_storage".to_string())
+        }));
+    }
+    
+    configs
+}
+
+#[tokio::test]
+async fn test_system_process_data() {
+    // Run the same test for all storage configurations
+    for config_factory in get_test_system_configurations() {
+        let (system, config_name) = config_factory();
+        
+        // Test normal operation
+        let result = system.process_data("test_hash").await;
+        assert!(result.is_ok(), "Failed with config {}: {:?}", config_name, result);
+        
+        // Test other standard operations
+        // ...
+    }
+}
+
+// Separate test for fake-specific scenarios
+#[tokio::test]
+async fn test_system_error_handling_with_fake() {
+    // Create fake storage for testing error scenarios
+    let storage = FakeStorage::new();
+    storage.fake_add_data("test_hash", vec![
+        Bytes::from_static(b"chunk 0"),
+        Bytes::from_static(b"chunk 1"),
+        Bytes::from_static(b"chunk 2"),
+    ]);
+    
+    // Set up a failure scenario
+    storage.fake_failed_chunks("test_hash", vec![1]);
+    
+    let system = YourSystem::new(storage);
+    
+    // Test error handling
+    let result = system.process_data("test_hash").await;
+    assert!(matches!(result, Err(YourSystemError::StorageError(_))));
+}
+```
+
+Remember: Good fakes make testing faster, more reliable, and more flexible without sacrificing test coverage or realism. The parameterized testing pattern ensures that both implementations are tested with the exact same test code.

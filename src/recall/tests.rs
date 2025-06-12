@@ -1,0 +1,349 @@
+use crate::config::RecallConfig;
+use crate::recall::error::RecallError;
+use crate::recall::fake::FakeRecallStorage;
+use crate::recall::{RecallBlockchain, Storage};
+use crate::test_utils::{get_next_wallet, is_recall_enabled, load_test_config};
+use std::sync::Arc;
+use uuid::Uuid;
+
+type StorageFactory =
+    Box<dyn Fn() -> futures::future::BoxFuture<'static, Box<dyn Storage + Send + Sync>>>;
+
+fn get_test_storages() -> Vec<(&'static str, StorageFactory)> {
+    let mut storages: Vec<(&'static str, StorageFactory)> = vec![];
+
+    // Always add fake storage
+    storages.push((
+        "fake",
+        Box::new(|| {
+            Box::pin(async { Box::new(FakeRecallStorage::new()) as Box<dyn Storage + Send + Sync> })
+        }),
+    ));
+
+    // Conditionally add real Recall
+    if is_recall_enabled() {
+        storages.push((
+            "real_recall",
+            Box::new(|| {
+                Box::pin(async {
+                    let config = load_test_config()
+                        .expect("Failed to load test config");
+
+                    let test_wallet = get_next_wallet();
+                    println!("Using test wallet: {}", test_wallet.address);
+
+                    let network = config.recall.network.clone();
+                    let config_path = config.recall.config_path.clone().unwrap_or_else(|| "networks.toml".to_string());
+                    let recall_config = RecallConfig {
+                        private_key: test_wallet.private_key.clone(),
+                        network,
+                        config_path: Some(config_path),
+                        bucket: None,
+                    };
+
+                    println!("Preparing wallet {} with credits...", test_wallet.address);
+                    // Buy 10 RECALL worth of credits
+                    match RecallBlockchain::prepare_account(&recall_config, 10).await {
+                        Ok(_) => {
+                            println!("Successfully prepared wallet {} with credits", test_wallet.address);
+                        }
+                        Err(e) => {
+                            println!("Warning: Failed to prepare wallet {} with credits: {}. Tests may fail if account lacks credits.", test_wallet.address, e);
+                        }
+                    }
+
+                    match RecallBlockchain::new(&recall_config).await {
+                        Ok(blockchain) => {
+                            println!("Successfully connected to Recall storage with wallet {}", test_wallet.address);
+                            Box::new(Arc::new(blockchain)) as Box<dyn Storage + Send + Sync>
+                        },
+                        Err(e) => {
+                            panic!("Failed to connect to real Recall storage: {}\n\nMake sure the Recall container is running and accessible", e);
+                        }
+                    }
+                })
+            }),
+        ));
+    }
+
+    storages
+}
+
+#[tokio::test]
+async fn add_blob_and_has_blob_work_correctly() {
+    for (name, storage_factory) in get_test_storages() {
+        let storage = storage_factory().await;
+        let key = format!("test-blob-{}-{}", name, Uuid::new_v4());
+        let data = b"test data".to_vec();
+
+        let exists = storage.has_blob(&key).await.unwrap();
+        assert!(!exists, "Blob should not exist initially for {}", name);
+
+        storage.add_blob(&key, data.clone()).await.unwrap();
+
+        let exists = storage.has_blob(&key).await.unwrap();
+        assert!(exists, "Blob should exist after adding for {}", name);
+
+        // Clean up
+        //storage.delete_blob(&key).await.unwrap();
+    }
+}
+
+/// Tests the complete lifecycle of blob operations (create, read, delete).
+///
+/// This test combines multiple operations that would normally be separate tests
+/// because the Recall network has limited storage capacity and operations have
+/// eventual consistency. By combining these tests:
+///
+/// 1. We reduce the total number of blobs created, helping avoid "subnet has
+///    reached storage capacity" errors
+/// 2. We can properly sequence operations with appropriate waits between them
+/// 3. We ensure cleanup happens even if intermediate assertions fail
+///
+/// The test includes retry logic to handle the eventual consistency of the
+/// Recall network, where blobs may not be immediately available after creation
+/// or may take time to be fully deleted.
+#[tokio::test]
+async fn blob_lifecycle_operations() {
+    for (name, storage_factory) in get_test_storages() {
+        let storage = storage_factory().await;
+        let key = format!("test-lifecycle-{}-{}", name, Uuid::new_v4());
+        let original_data = b"test data for lifecycle operations".to_vec();
+
+        // Test 1: Getting non-existent blob should fail
+        let result = storage.get_blob(&key).await;
+        assert!(
+            result.is_err(),
+            "Getting non-existent blob should fail for {}",
+            name
+        );
+
+        // Test 2: Add blob
+        println!("Adding blob with key: {}", key);
+        storage.add_blob(&key, original_data.clone()).await.unwrap();
+
+        // Wait for blob to be available with retry
+        let max_wait = tokio::time::Duration::from_secs(10);
+        let start = tokio::time::Instant::now();
+        loop {
+            if storage.has_blob(&key).await.unwrap() {
+                break;
+            }
+            if start.elapsed() > max_wait {
+                panic!("Blob did not become available within timeout for {}", name);
+            }
+            println!("Waiting for blob to be available for {}...", name);
+            tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
+        }
+
+        // Test 3: Get blob and verify content (with retry for eventual consistency)
+        let mut retrieved_data = None;
+        let start = tokio::time::Instant::now();
+        while start.elapsed() < max_wait {
+            match storage.get_blob(&key).await {
+                Ok(data) => {
+                    retrieved_data = Some(data);
+                    break;
+                }
+                Err(_) => {
+                    println!("Waiting for blob to be retrievable for {}...", name);
+                    tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
+                }
+            }
+        }
+
+        let retrieved_data = retrieved_data
+            .unwrap_or_else(|| panic!("Failed to retrieve blob within timeout for {}", name));
+        assert_eq!(
+            retrieved_data, original_data,
+            "Retrieved data should match original for {}",
+            name
+        );
+
+        // Test 4: Delete blob
+        storage.delete_blob(&key).await.unwrap();
+
+        // Wait for blob to be deleted with retry
+        let start = tokio::time::Instant::now();
+        let mut blob_deleted = false;
+        while start.elapsed() < max_wait {
+            if !storage.has_blob(&key).await.unwrap() {
+                blob_deleted = true;
+                break;
+            }
+            println!("Waiting for blob to be deleted for {}...", name);
+            tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
+        }
+
+        assert!(
+            blob_deleted,
+            "Blob should not exist after deletion for {}",
+            name
+        );
+
+        // Test 5: Deleting non-existent blob should fail
+        let result = storage.delete_blob(&key).await;
+        assert!(
+            result.is_err(),
+            "Deleting non-existent blob should fail for {}",
+            name
+        );
+    }
+}
+
+#[tokio::test]
+async fn list_blobs_works_correctly() {
+    for (name, storage_factory) in get_test_storages() {
+        let storage = storage_factory().await;
+        let prefix = format!("test-prefix-{}-{}/", name, Uuid::new_v4());
+
+        storage.clear_prefix(&prefix).await.unwrap();
+
+        let blobs = storage.list_blobs(&prefix).await.unwrap();
+        assert!(
+            blobs.is_empty(),
+            "Should be no blobs initially for {}",
+            name
+        );
+
+        let keys = vec![
+            format!("{}file1.txt", prefix),
+            format!("{}file2.txt", prefix),
+            format!("{}dir/file3.txt", prefix),
+        ];
+
+        for key in &keys {
+            storage.add_blob(key, b"test data".to_vec()).await.unwrap();
+        }
+
+        let blobs = storage.list_blobs(&prefix).await.unwrap();
+        assert_eq!(blobs.len(), 3, "Should have 3 blobs for {}", name);
+
+        for key in &keys {
+            assert!(
+                blobs.contains(key),
+                "Should contain key {} for {}",
+                key,
+                name
+            );
+        }
+
+        let dir_prefix = format!("{}dir/", prefix);
+        let dir_blobs = storage.list_blobs(&dir_prefix).await.unwrap();
+        assert_eq!(dir_blobs.len(), 1, "Should have 1 blob in dir for {}", name);
+        assert!(
+            dir_blobs.contains(&keys[2]),
+            "Should contain dir file for {}",
+            name
+        );
+
+        storage.clear_prefix(&prefix).await.unwrap();
+    }
+}
+
+#[tokio::test]
+async fn clear_prefix_works_correctly() {
+    for (name, storage_factory) in get_test_storages() {
+        let storage = storage_factory().await;
+        let prefix = format!("test-clear-{}-{}/", name, Uuid::new_v4());
+        let other_prefix = format!("test-other-{}-{}/", name, Uuid::new_v4());
+
+        let our_keys = vec![
+            format!("{}file1.txt", prefix),
+            format!("{}file2.txt", prefix),
+            format!("{}dir/file3.txt", prefix),
+        ];
+
+        for key in &our_keys {
+            storage.add_blob(key, b"test data".to_vec()).await.unwrap();
+        }
+
+        let other_keys = vec![
+            format!("{}file1.txt", other_prefix),
+            format!("{}file2.txt", other_prefix),
+        ];
+
+        for key in &other_keys {
+            storage.add_blob(key, b"test data".to_vec()).await.unwrap();
+        }
+
+        storage.clear_prefix(&prefix).await.unwrap();
+
+        let our_blobs = storage.list_blobs(&prefix).await.unwrap();
+        assert!(
+            our_blobs.is_empty(),
+            "Our blobs should be cleared for {}",
+            name
+        );
+
+        let other_blobs = storage.list_blobs(&other_prefix).await.unwrap();
+        assert_eq!(
+            other_blobs.len(),
+            2,
+            "Other blobs should still exist for {}",
+            name
+        );
+
+        storage.clear_prefix(&other_prefix).await.unwrap();
+    }
+}
+
+#[tokio::test]
+async fn fake_storage_failure_simulation() {
+    let storage = FakeRecallStorage::new();
+    let key = "fail-test";
+    let data = b"test data".to_vec();
+
+    storage.fake_fail_blob(key);
+
+    let add_result = storage.add_blob(key, data.clone()).await;
+    assert!(matches!(add_result, Err(RecallError::Operation(_))));
+
+    let has_result = storage.has_blob(key).await;
+    assert!(matches!(has_result, Err(RecallError::Operation(_))));
+
+    storage.fake_reset_blob(key);
+
+    let add_result = storage.add_blob(key, b"data".to_vec()).await;
+    assert!(
+        add_result.is_ok(),
+        "Add should succeed after clearing failure"
+    );
+
+    let has_result = storage.has_blob(key).await;
+    assert!(
+        has_result.unwrap(),
+        "Has should succeed after clearing failure"
+    );
+}
+
+#[tokio::test]
+async fn concurrent_operations() {
+    for (name, storage_factory) in get_test_storages() {
+        let storage = Arc::new(storage_factory().await);
+        let prefix = format!("test-concurrent-{}-{}/", name, Uuid::new_v4());
+
+        // Spawn multiple tasks that add blobs concurrently
+        let mut handles = vec![];
+        for i in 0..10 {
+            let storage_clone = storage.clone();
+            let key = format!("{}file{}.txt", prefix, i);
+            let handle = tokio::spawn(async move {
+                storage_clone
+                    .add_blob(&key, format!("data{}", i).into_bytes())
+                    .await
+            });
+            handles.push(handle);
+        }
+
+        // Wait for all operations to complete
+        for handle in handles {
+            handle.await.unwrap().unwrap();
+        }
+
+        let blobs = storage.list_blobs(&prefix).await.unwrap();
+        assert_eq!(blobs.len(), 10, "Should have 10 blobs for {}", name);
+
+        storage.clear_prefix(&prefix).await.unwrap();
+    }
+}

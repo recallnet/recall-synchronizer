@@ -1,0 +1,47 @@
+services:
+  postgres:
+    image: postgres:14
+    environment:
+      POSTGRES_USER: recall
+      POSTGRES_PASSWORD: recall_password
+      POSTGRES_DB: recall_competitions
+    ports:
+      - "5432:5432"
+    volumes:
+      - ./schema:/docker-entrypoint-initdb.d
+      - postgres_data:/var/lib/postgresql/data
+    command: ["postgres", "-c", "log_statement=all"]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U recall"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    networks:
+      - recall-sync-network
+
+  minio:
+    image: minio/minio
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    environment:
+      MINIO_ROOT_USER: minioadmin
+      MINIO_ROOT_PASSWORD: minioadmin
+    command: server /data --console-address ":9001"
+    volumes:
+      - minio_data:/data
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    networks:
+      - recall-sync-network
+
+volumes:
+  postgres_data:
+  minio_data:
+
+networks:
+  recall-sync-network:
+    driver: bridge

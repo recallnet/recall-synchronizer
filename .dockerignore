@@ -1,0 +1,19 @@
+# Build artifacts
+target/
+
+# Test files
+test-wallets.json
+
+# Local configuration
+config.toml
+.env
+.env.*
+
+# SQLite databases
+*.db
+*.sqlite
+*.sqlite3
+
+# Git
+.git/
+.gitignore

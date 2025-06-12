@@ -1,2 +1,8 @@
 /target
 **/.DS_Store
+
+**/.claude/settings.local.json
+.vscode/*
+.env
+
+networks.toml

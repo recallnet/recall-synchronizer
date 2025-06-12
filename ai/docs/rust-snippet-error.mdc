@@ -1,0 +1,125 @@
+---
+description: Should be used when writting or handling Rust errors
+globs: 
+alwaysApply: false
+---
+
+```rust
+#[derive(thiserror::Error, Debug)]
+pub enum Error {
+    #[error("Invalid parameter {0}: {1}")]
+    InvalidEntanglementParameter(String, u8),
+
+    #[error("Input vector is empty")]
+    EmptyInput,
+
+    #[error("Failed to download a blob with hash {hash}: {source}")]
+    BlobDownload {
+        hash: String,
+        #[source]
+        source: Box<dyn std::error::Error + Send + Sync>,
+    },
+
+    #[error("Failed to download chunks {chunks:?} for blob with hash {hash}: {source}")]
+    ChunksDownload {
+        hash: String,
+        chunks: Vec<String>,
+        #[source]
+        source: Box<dyn std::error::Error + Send + Sync>,
+    },
+
+    #[error("Storage error: {0}")]
+    Storage(#[from] StorageError),
+
+    #[error("Failed to parse metadata: {0}")]
+    ParsingMetadata(#[from] serde_json::Error),
+
+    #[error("Error during entanglement execution: {0}")]
+    Execution(#[from] executer::Error),
+
+    #[error("Error occurred: {0}")]
+    Other(#[from] anyhow::Error),
+
+    #[error("Repairing failed: {0}")]
+    Repair(#[from] repairer::Error),
+}
+```
+
+## Guidelines for Using This Error Pattern
+
+When implementing errors in new modules:
+
+1. **Create a Module-Specific Error Enum**: Each module should define its own `Error` enum that captures all possible error conditions relevant to that module.
+
+2. **Use Descriptive Variants**: Create specific variants for different failure modes, rather than using generic types:
+   - `InvalidEntanglementParameter`: For validation errors on function parameters
+   - `EmptyInput`: For specific precondition failures
+   - `BlobDownload`, `ChunksDownload`: For operation-specific failures with context
+
+3. **Include Relevant Context**: Incorporate important information in the error:
+   - Simple values can be included as tuple fields: `InvalidEntanglementParameter(String, u8)`
+   - More complex contexts should use named fields: `BlobDownload { hash: String, source: ... }`
+
+4. **Error Conversion with `#[from]`**: Use `#[from]` attribute for automatic conversions from dependency errors:
+   - `Storage(#[from] StorageError)`: Automatically converts `StorageError` to your module's error
+   - This simplifies error propagation with the `?` operator
+
+5. **Source Error Chaining**: Use `#[source]` attribute to maintain the error chain for nested errors:
+   - `source: Box<dyn std::error::Error + Send + Sync>`: Allows capturing any error type that implements `Error`
+   - This preserves the original error for debugging
+
+6. **Parameterized Error Messages**: Use descriptive messages with parameters:
+   - `#[error("Failed to download chunks {chunks:?} for blob with hash {hash}: {source}")]`
+   - Values in braces will be replaced with the actual field values when formatting the error
+
+7. **General Error Fallback**: Include an `Other` variant with `anyhow::Error` for unexpected errors
+
+## Error Handling Usage
+
+```rust
+fn process_data(input: &[u8]) -> Result<Vec<u8>, Error> {
+    if input.is_empty() {
+        return Err(Error::EmptyInput);
+    }
+    
+    let param_value = validate_parameter("encoding", 5)?;
+    
+    let hash = compute_hash(input);
+    let blob = download_blob(&hash).map_err(|err| Error::BlobDownload {
+        hash: hash.to_string(),
+        source: Box::new(err),
+    })?;
+    
+    // Process with external component that returns its own error type
+    let result = executer::process(&blob)?; // Error converted automatically via #[from]
+    
+    Ok(result)
+}
+
+fn validate_parameter(name: &str, value: u8) -> Result<u8, Error> {
+    if value < 10 {
+        Err(Error::InvalidEntanglementParameter(name.to_string(), value))
+    } else {
+        Ok(value)
+    }
+}
+```
+
+## Testing Error Conditions
+
+```rust
+#[test]
+fn test_empty_input_error() {
+    let result = process_data(&[]);
+    assert!(matches!(result, Err(Error::EmptyInput)));
+}
+
+#[test]
+fn test_invalid_parameter_error() {
+    let err = validate_parameter("test", 5).unwrap_err();
+    assert!(matches!(err, Error::InvalidEntanglementParameter(param_name, value) 
+        if param_name == "test" && value == 5));
+}
+```
+
+Remember: Good error types make code more robust, self-documenting, and easier to debug.
