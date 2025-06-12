@@ -38,6 +38,3 @@ jobs:
 
       - name: Run tests
         run: make test
-
-      - name: Generate documentation
-        run: make doc
