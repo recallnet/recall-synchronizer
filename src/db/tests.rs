@@ -5,8 +5,12 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 
 // Type alias to simplify the complex type for database factory functions
-type DatabaseFactory =
-    Box<dyn Fn() -> futures::future::BoxFuture<'static, Box<dyn Database + Send + Sync>>>;
+type DatabaseFactory = Box<
+    dyn Fn() -> futures::future::BoxFuture<
+        'static,
+        Box<dyn Database<Object = ObjectIndex> + Send + Sync>,
+    >,
+>;
 
 // Counter for generating unique schema names
 static SCHEMA_COUNTER: AtomicU64 = AtomicU64::new(0);
@@ -19,12 +23,12 @@ fn generate_test_schema() -> String {
 }
 
 /// Creates a new PostgreSQL database connection with a unique schema for test isolation
-async fn create_postgres_with_schema() -> Result<Arc<PostgresDatabase>, String> {
+async fn create_postgres_with_schema() -> Result<Arc<PostgresDatabase<ObjectIndex>>, String> {
     let config = load_test_config().map_err(|e| format!("Failed to load test config: {}", e))?;
     let db_url = config.database.url;
     let schema = generate_test_schema();
 
-    let pg_db = PostgresDatabase::new_with_schema(&db_url, Some(schema))
+    let pg_db = PostgresDatabase::<ObjectIndex>::new_with_schema(&db_url, Some(schema))
         .await
         .map_err(|e| format!("Failed to connect to PostgreSQL: {}", e))?;
 
@@ -32,7 +36,9 @@ async fn create_postgres_with_schema() -> Result<Arc<PostgresDatabase>, String> 
 }
 
 /// Setup a test database with a specific prefix for test isolation
-async fn add_test_objects(db: &(dyn Database + Send + Sync)) -> Vec<ObjectIndex> {
+async fn add_test_objects(
+    db: &(dyn Database<Object = ObjectIndex> + Send + Sync),
+) -> Vec<ObjectIndex> {
     let base_time = Utc::now() - Duration::hours(10);
     let mut objects = Vec::new();
 
@@ -60,14 +66,17 @@ async fn add_test_objects(db: &(dyn Database + Send + Sync)) -> Vec<ObjectIndex>
 // Helper function to create test databases
 fn get_test_databases() -> Vec<DatabaseFactory> {
     let mut databases: Vec<DatabaseFactory> = vec![Box::new(|| {
-        Box::pin(async { Box::new(FakeDatabase::new()) as Box<dyn Database + Send + Sync> })
+        Box::pin(async {
+            Box::new(FakeDatabase::<ObjectIndex>::new())
+                as Box<dyn Database<Object = ObjectIndex> + Send + Sync>
+        })
     })];
 
     if is_db_enabled() {
         databases.push(Box::new(|| {
             Box::pin(async {
                 match create_postgres_with_schema().await {
-                    Ok(db) => Box::new(db) as Box<dyn Database + Send + Sync>,
+                    Ok(db) => Box::new(db) as Box<dyn Database<Object = ObjectIndex> + Send + Sync>,
                     Err(e) => {
                         panic!(
                             "Failed to connect to PostgreSQL: {}. Set database.enabled=false in config.toml to skip these tests.",
@@ -181,12 +190,7 @@ async fn get_objects_with_limit_in_middle_of_range_returns_objects() {
         let objects = db
             // Use the second object as a cutoff point
             // This should return the 8 most recent objects after the second one
-            .get_objects(
-                limit,
-                Some(test_objects[1].created_at),
-                None,
-                None,
-            )
+            .get_objects(limit, Some(test_objects[1].created_at), None, None)
             .await
             .unwrap();
 

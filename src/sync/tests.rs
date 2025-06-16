@@ -15,18 +15,19 @@ use chrono::{Duration, Utc};
 use std::sync::Arc;
 use uuid::Uuid;
 
-/// Extract object keys from a vector of SyncRecord
-fn rec_to_keys(records: Vec<SyncRecord>) -> Vec<String> {
-    records.into_iter().map(|rec| rec.object_key).collect()
+/// Extract object IDs from a vector of SyncRecord
+fn rec_to_ids(records: Vec<SyncRecord>) -> Vec<Uuid> {
+    records.into_iter().map(|rec| rec.id).collect()
 }
 
 /// Test environment that holds all storage implementations and the synchronizer
 struct TestEnvironment {
-    database: Arc<FakeDatabase>,
+    database: Arc<FakeDatabase<ObjectIndex>>,
     sync_storage: Arc<FakeSyncStorage>,
     s3_storage: Arc<FakeStorage>,
     recall_storage: Arc<FakeRecallStorage>,
-    synchronizer: Synchronizer<FakeDatabase, FakeSyncStorage, FakeStorage, FakeRecallStorage>,
+    synchronizer:
+        Synchronizer<FakeDatabase<ObjectIndex>, FakeSyncStorage, FakeStorage, FakeRecallStorage>,
 }
 
 impl TestEnvironment {
@@ -52,14 +53,11 @@ impl TestEnvironment {
             Some(r) => {
                 return Err(format!(
                     "Object {} is not marked as complete in sync storage. Status: {:?}",
-                    object.object_key, r.status
+                    object.id, r.status
                 ));
             }
             None => {
-                return Err(format!(
-                    "Object {} not found in sync storage",
-                    object.object_key
-                ));
+                return Err(format!("Object {} not found in sync storage", object.id));
             }
         }
 
@@ -80,7 +78,7 @@ impl TestEnvironment {
         if s3_data.as_ref() != recall_data.as_slice() {
             return Err(format!(
                 "Data mismatch for object {}: S3 has {} bytes, Recall has {} bytes",
-                object.object_key,
+                object.id,
                 s3_data.len(),
                 recall_data.len()
             ));
@@ -103,7 +101,7 @@ impl TestEnvironment {
             if r.status == SyncStatus::Complete {
                 return Err(format!(
                     "Object {} is unexpectedly marked as complete in sync storage",
-                    object.object_key
+                    object.id
                 ));
             }
         }
@@ -119,7 +117,7 @@ impl TestEnvironment {
         if exists_in_recall {
             return Err(format!(
                 "Object {} unexpectedly found in Recall storage with key {}",
-                object.object_key, recall_key
+                object.id, recall_key
             ));
         }
 
@@ -143,13 +141,13 @@ fn create_test_config() -> Config {
             url: "postgres://fake:fake@localhost:5432/fake".to_string(),
             max_connections: 5,
         },
-        s3: S3Config {
+        s3: Some(S3Config {
             endpoint: Some("http://localhost:9000".to_string()),
             region: "us-east-1".to_string(),
             bucket: "test-bucket".to_string(),
             access_key_id: Some("test".to_string()),
             secret_access_key: Some("test".to_string()),
-        },
+        }),
         recall: RecallConfig {
             private_key: "fake-key".to_string(),
             network: "localnet".to_string(),
@@ -170,7 +168,7 @@ async fn setup() -> TestEnvironment {
 
 // Setup a test environment with custom config
 async fn setup_with_config(config: Config) -> TestEnvironment {
-    let database = Arc::new(FakeDatabase::new());
+    let database = Arc::new(FakeDatabase::<ObjectIndex>::new());
     let sync_storage = Arc::new(FakeSyncStorage::new());
     let s3_storage = Arc::new(FakeStorage::new());
     let recall_storage = Arc::new(FakeRecallStorage::new());
@@ -178,7 +176,7 @@ async fn setup_with_config(config: Config) -> TestEnvironment {
     let synchronizer = Synchronizer::with_storage(
         database.clone(),
         sync_storage.clone(),
-        s3_storage.clone(),
+        Some(s3_storage.clone()),
         recall_storage.clone(),
         config.sync,
     );
@@ -315,8 +313,9 @@ async fn when_object_is_already_being_processed_it_is_skipped() {
 
     let sync_record = SyncRecord::new(
         test_object.id,
-        test_object.object_key.clone(),
-        test_object.bucket_name.clone(),
+        test_object.competition_id,
+        test_object.agent_id,
+        test_object.data_type.clone(),
         test_object.created_at,
     );
     env.sync_storage.add_object(sync_record).await.unwrap();
@@ -387,11 +386,6 @@ async fn with_batch_size_should_limits_database_fetch() {
         3,
         "Should process exactly batch_size (3) objects"
     );
-
-    let synced_keys: Vec<String> = completed.iter().map(|r| r.object_key.clone()).collect();
-    assert!(synced_keys.contains(&"test/batch-0.jsonl".to_string()));
-    assert!(synced_keys.contains(&"test/batch-1.jsonl".to_string()));
-    assert!(synced_keys.contains(&"test/batch-2.jsonl".to_string()));
 }
 
 #[tokio::test]
@@ -440,15 +434,15 @@ async fn multiple_sync_runs_with_new_objects() {
         .unwrap();
     assert_eq!(synced_records.len(), 6, "Should have 6 synced objects");
 
-    let synced_keys = rec_to_keys(synced_records.clone());
+    let synced_ids = rec_to_ids(synced_records.clone());
 
     let batch1_synced_count = batch1_objects
         .iter()
-        .filter(|obj| synced_keys.contains(&obj.object_key))
+        .filter(|obj| synced_ids.contains(&obj.id))
         .count();
     let batch2_synced_count = batch2_objects
         .iter()
-        .filter(|obj| synced_keys.contains(&obj.object_key))
+        .filter(|obj| synced_ids.contains(&obj.id))
         .count();
 
     assert_eq!(
@@ -621,7 +615,7 @@ async fn sync_with_same_competition_id_continues_from_where_it_left_off() {
 
     // Verify all synced objects are from competition 1
     for record in &synced {
-        assert!(record.object_key.starts_with("comp1/"));
+        assert_eq!(record.competition_id, comp1_id);
     }
 
     // Second sync for competition 1 - should sync remaining 2 objects
@@ -639,11 +633,11 @@ async fn sync_with_same_competition_id_continues_from_where_it_left_off() {
 
     let comp1_synced = synced
         .iter()
-        .filter(|r| r.object_key.starts_with("comp1/"))
+        .filter(|r| r.competition_id == comp1_id)
         .count();
     let comp2_synced = synced
         .iter()
-        .filter(|r| r.object_key.starts_with("comp2/"))
+        .filter(|r| r.competition_id == comp2_id)
         .count();
 
     assert_eq!(comp1_synced, 5, "All comp1 objects should be synced");
@@ -691,7 +685,7 @@ async fn sync_with_different_competitions_maintains_separate_progress() {
         .await
         .unwrap();
     assert_eq!(synced.len(), 2);
-    assert!(synced.iter().all(|r| r.object_key.starts_with("comp1/")));
+    assert!(synced.iter().all(|r| r.competition_id == comp1_id));
 
     // Sync comp2 - should sync 2 objects
     env.synchronizer
@@ -721,7 +715,7 @@ async fn sync_with_different_competitions_maintains_separate_progress() {
     assert_eq!(
         synced
             .iter()
-            .filter(|r| r.object_key.starts_with("comp1/"))
+            .filter(|r| r.competition_id == comp1_id)
             .count(),
         4,
         "All comp1 objects should be synced"
@@ -781,7 +775,7 @@ async fn regular_sync_processes_all_unsynced_objects_from_all_competitions() {
         .await
         .unwrap();
     assert_eq!(synced.len(), 3);
-    assert!(synced.iter().all(|r| r.object_key.starts_with("comp1/")));
+    assert!(synced.iter().all(|r| r.competition_id == comp1_id));
 
     // Regular sync (no competition filter) should sync comp2 objects
     env.synchronizer.run(None, None).await.unwrap();
@@ -795,11 +789,11 @@ async fn regular_sync_processes_all_unsynced_objects_from_all_competitions() {
 
     let comp1_synced = synced
         .iter()
-        .filter(|r| r.object_key.starts_with("comp1/"))
+        .filter(|r| r.competition_id == comp1_id)
         .count();
     let comp2_synced = synced
         .iter()
-        .filter(|r| r.object_key.starts_with("comp2/"))
+        .filter(|r| r.competition_id == comp2_id)
         .count();
 
     assert_eq!(comp1_synced, 3);
@@ -861,7 +855,7 @@ async fn regular_sync_continues_regardless_of_competition_specific_progress() {
         .await
         .unwrap();
     assert_eq!(synced.len(), 2);
-    assert!(synced.iter().all(|r| r.object_key.starts_with("comp1/")));
+    assert!(synced.iter().all(|r| r.competition_id == comp1_id));
 
     // Regular sync should start from beginning and sync oldest unsynced objects
     // Should sync comp2/obj-0 and comp2/obj-1 (batch size 2)

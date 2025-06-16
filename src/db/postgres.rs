@@ -1,34 +1,32 @@
 use crate::db::database::Database;
 use crate::db::error::DatabaseError;
-use crate::db::models::ObjectIndex;
+use crate::db::pg_schema::PgSchema;
+use crate::db::syncable::SyncableObject;
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use sqlx::postgres::PgPoolOptions;
-use sqlx::{PgPool, Row as _};
+use sqlx::PgPool;
+use std::marker::PhantomData;
 use std::time::Duration;
 use tracing::{debug, error, info, warn};
 
-/// Macro to extract a field from a database row with error handling
-macro_rules! get_field {
-    ($row:expr, $field:expr) => {
-        $row.try_get($field)
-            .map_err(|e| DatabaseError::DeserializationError(e.to_string()))?
-    };
-}
-
-/// A PostgreSQL implementation of the Database trait
-pub struct PostgresDatabase {
+/// A generic PostgreSQL implementation of the Database trait
+pub struct PostgresDatabase<T> {
     pool: PgPool,
     schema: Option<String>,
+    _phantom: PhantomData<T>,
 }
 
-impl PostgresDatabase {
-    /// Create a new PostgresDatabase with the given connection URL
+impl<T> PostgresDatabase<T>
+where
+    T: PgSchema,
+{
+    /// Create a new PostgresGenericDatabase with the given connection URL
     pub async fn new(database_url: &str) -> Result<Self, DatabaseError> {
         Self::new_with_schema(database_url, None).await
     }
 
-    /// Create a new PostgresDatabase with a specific schema
+    /// Create a new PostgresGenericDatabase with a specific schema
     pub async fn new_with_schema(
         database_url: &str,
         schema: Option<String>,
@@ -51,7 +49,11 @@ impl PostgresDatabase {
             )));
         };
 
-        let db = PostgresDatabase { pool, schema };
+        let db = PostgresDatabase {
+            pool,
+            schema,
+            _phantom: PhantomData,
+        };
 
         // If a schema is specified, create it and the tables
         if let Some(ref schema_name) = db.schema {
@@ -81,19 +83,11 @@ impl PostgresDatabase {
         let create_table_query = format!(
             r#"
             CREATE TABLE IF NOT EXISTS {}.object_index (
-                id UUID PRIMARY KEY,
-                object_key TEXT UNIQUE NOT NULL,
-                bucket_name VARCHAR(100) NOT NULL,
-                competition_id UUID NOT NULL,
-                agent_id UUID NOT NULL,
-                data_type VARCHAR(50) NOT NULL,
-                size_bytes BIGINT,
-                metadata JSONB,
-                event_timestamp TIMESTAMPTZ,
-                created_at TIMESTAMPTZ NOT NULL
+                {}
             )
             "#,
-            schema_name
+            schema_name,
+            T::schema_definition()
         );
 
         debug!("Creating object_index table in schema '{}'", schema_name);
@@ -105,7 +99,7 @@ impl PostgresDatabase {
                 DatabaseError::QueryError(format!("Failed to create table: {}", e))
             })?;
 
-        // Create index
+        // Create index on created_at
         let create_index_query = format!(
             "CREATE INDEX IF NOT EXISTS object_index_created_at_idx ON {}.object_index (created_at)",
             schema_name
@@ -134,37 +128,22 @@ impl PostgresDatabase {
             None => "object_index".to_string(),
         }
     }
-
-    /// Helper function to create an ObjectIndex from a database row
-    fn row_to_object_index(
-        &self,
-        row: sqlx::postgres::PgRow,
-    ) -> Result<ObjectIndex, DatabaseError> {
-        debug!("Converting database row to ObjectIndex");
-        Ok(ObjectIndex {
-            id: get_field!(row, "id"),
-            object_key: get_field!(row, "object_key"),
-            bucket_name: get_field!(row, "bucket_name"),
-            competition_id: get_field!(row, "competition_id"),
-            agent_id: get_field!(row, "agent_id"),
-            data_type: get_field!(row, "data_type"),
-            size_bytes: get_field!(row, "size_bytes"),
-            metadata: get_field!(row, "metadata"),
-            event_timestamp: get_field!(row, "event_timestamp"),
-            created_at: get_field!(row, "created_at"),
-        })
-    }
 }
 
 #[async_trait]
-impl Database for PostgresDatabase {
+impl<T> Database for PostgresDatabase<T>
+where
+    T: PgSchema + SyncableObject + Clone + 'static,
+{
+    type Object = T;
+
     async fn get_objects(
         &self,
         limit: u32,
         since: Option<DateTime<Utc>>,
         after_id: Option<uuid::Uuid>,
         competition_id: Option<uuid::Uuid>,
-    ) -> Result<Vec<ObjectIndex>, DatabaseError> {
+    ) -> Result<Vec<T>, DatabaseError> {
         debug!(
             "Querying objects with limit={}, since={:?}, after_id={:?}, competition_id={:?}",
             limit, since, after_id, competition_id
@@ -173,11 +152,10 @@ impl Database for PostgresDatabase {
         let query_base = format!(
             r#"
             SELECT
-                id, object_key, bucket_name, competition_id, agent_id,
-                data_type, size_bytes, metadata,
-                event_timestamp, created_at
+                {}
             FROM {}
             "#,
+            T::select_columns(),
             self.table_name()
         );
 
@@ -252,7 +230,7 @@ impl Database for PostgresDatabase {
 
         query_builder = query_builder.bind(i64::from(limit));
 
-        let objects = match query_builder.fetch_all(&self.pool).await {
+        let rows = match query_builder.fetch_all(&self.pool).await {
             Ok(rows) => {
                 debug!("Query returned {} rows", rows.len());
                 rows
@@ -267,10 +245,10 @@ impl Database for PostgresDatabase {
             }
         };
 
-        // Convert rows to ObjectIndex objects
-        let mut result = Vec::with_capacity(objects.len());
-        for row in objects {
-            result.push(self.row_to_object_index(row)?);
+        // Convert rows to objects
+        let mut result = Vec::with_capacity(rows.len());
+        for row in rows {
+            result.push(T::from_row(row)?);
         }
 
         info!("Retrieved {} objects from database", result.len());
@@ -278,54 +256,17 @@ impl Database for PostgresDatabase {
     }
 
     #[cfg(test)]
-    async fn add_object(&self, object: ObjectIndex) -> Result<(), DatabaseError> {
-        debug!(
-            "Adding object to database: id={}, key={}",
-            object.id, object.object_key
-        );
+    async fn add_object(&self, object: T) -> Result<(), DatabaseError> {
+        debug!("Adding object to database");
 
-        let query = format!(
-            r#"
-            INSERT INTO {} (
-                id, object_key, bucket_name, competition_id, agent_id,
-                data_type, size_bytes, metadata,
-                event_timestamp, created_at
-            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
-            ON CONFLICT (object_key) DO UPDATE SET
-                bucket_name = EXCLUDED.bucket_name,
-                competition_id = EXCLUDED.competition_id,
-                agent_id = EXCLUDED.agent_id,
-                data_type = EXCLUDED.data_type,
-                size_bytes = EXCLUDED.size_bytes,
-                metadata = EXCLUDED.metadata,
-                event_timestamp = EXCLUDED.event_timestamp,
-                created_at = EXCLUDED.created_at
-            "#,
-            self.table_name()
-        );
+        let query = object.new_insert_query(&self.table_name());
 
-        sqlx::query(&query)
-            .bind(object.id)
-            .bind(&object.object_key)
-            .bind(&object.bucket_name)
-            .bind(object.competition_id)
-            .bind(object.agent_id)
-            .bind(&object.data_type)
-            .bind(object.size_bytes)
-            .bind(&object.metadata)
-            .bind(object.event_timestamp)
-            .bind(object.created_at)
-            .execute(&self.pool)
-            .await
-            .map_err(|e| {
-                error!("Failed to insert object: {}", e);
-                DatabaseError::QueryError(e.to_string())
-            })?;
+        query.execute(&self.pool).await.map_err(|e| {
+            error!("Failed to insert object: {}", e);
+            DatabaseError::QueryError(e.to_string())
+        })?;
 
-        info!(
-            "Successfully added object: id={}, key={}",
-            object.id, object.object_key
-        );
+        info!("Successfully added object");
         Ok(())
     }
 }

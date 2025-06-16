@@ -10,11 +10,12 @@ type StorageFactory =
     Box<dyn Fn() -> futures::future::BoxFuture<'static, Box<dyn SyncStorage + Send + Sync>>>;
 
 /// Creates a test SyncRecord with default values
-fn create_test_record(object_key: &str, timestamp: chrono::DateTime<Utc>) -> SyncRecord {
+fn create_test_record(_object_key: &str, timestamp: chrono::DateTime<Utc>) -> SyncRecord {
     SyncRecord::new(
         Uuid::new_v4(),
-        object_key.to_string(),
-        "test-bucket".to_string(),
+        Uuid::new_v4(),
+        Uuid::new_v4(),
+        "TEST_DATA".to_string(),
         timestamp,
     )
 }
@@ -238,8 +239,8 @@ async fn get_last_object_returns_most_recent_by_timestamp() {
             "Expected last object to be the most recent"
         );
         assert_eq!(
-            last.object_key, record3.object_key,
-            "Expected last object key to match the most recent record"
+            last.competition_id, record3.competition_id,
+            "Expected last competition_id to match the most recent record"
         );
     }
 }

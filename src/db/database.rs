@@ -1,13 +1,16 @@
 use crate::db::error::DatabaseError;
-use crate::db::models::ObjectIndex;
+use crate::db::syncable::SyncableObject;
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use std::sync::Arc;
 use uuid::Uuid;
 
-/// Database trait defining the interface for reading object metadata
+/// Generic database trait
 #[async_trait]
 pub trait Database: Send + Sync + 'static {
+    /// The type of object this database stores
+    type Object: SyncableObject;
+
     /// Query for objects that need to be synchronized with filtering options
     ///
     /// * `limit` - Maximum number of objects to return
@@ -20,34 +23,32 @@ pub trait Database: Send + Sync + 'static {
         since: Option<DateTime<Utc>>,
         after_id: Option<Uuid>,
         competition_id: Option<Uuid>,
-    ) -> Result<Vec<ObjectIndex>, DatabaseError>;
+    ) -> Result<Vec<Self::Object>, DatabaseError>;
 
     /// Add an object to the database (test-only)
     #[cfg(test)]
-    async fn add_object(&self, object: ObjectIndex) -> Result<(), DatabaseError>;
+    async fn add_object(&self, object: Self::Object) -> Result<(), DatabaseError>;
 }
 
 /// Implementation of Database trait for Arc<T> where T implements Database
-///
-/// This allows sharing database instances across threads and components efficiently.
-/// The Arc wrapper provides thread-safe reference counting, enabling multiple
-/// parts of the application to share the same database instance.
 #[async_trait]
 impl<T: Database + ?Sized> Database for Arc<T> {
+    type Object = T::Object;
+
     async fn get_objects(
         &self,
         limit: u32,
         since: Option<DateTime<Utc>>,
         after_id: Option<Uuid>,
         competition_id: Option<Uuid>,
-    ) -> Result<Vec<ObjectIndex>, DatabaseError> {
+    ) -> Result<Vec<Self::Object>, DatabaseError> {
         (**self)
             .get_objects(limit, since, after_id, competition_id)
             .await
     }
 
     #[cfg(test)]
-    async fn add_object(&self, object: ObjectIndex) -> Result<(), DatabaseError> {
+    async fn add_object(&self, object: Self::Object) -> Result<(), DatabaseError> {
         (**self).add_object(object).await
     }
 }

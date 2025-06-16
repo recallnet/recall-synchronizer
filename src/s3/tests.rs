@@ -30,39 +30,43 @@ fn get_test_storages() -> Vec<(&'static str, StorageFactory)> {
 
     if is_s3_enabled() {
         let config = load_test_config().expect("Failed to load test config");
-        let s3_config = config.s3.clone();
 
-        storages.push((
-            "s3",
-            Box::new(move || {
-                let s3_config = s3_config.clone();
+        if let Some(s3_config) = config.s3 {
+            let s3_config_clone = s3_config.clone();
 
-                Box::pin(async move {
-                    match S3Storage::new(&s3_config).await {
-                        Ok(storage) => {
-                            let real_storage = Arc::new(storage);
+            storages.push((
+                "s3",
+                Box::new(move || {
+                    let s3_config = s3_config_clone.clone();
 
-                            if !real_storage
-                                .has_bucket(&s3_config.bucket)
-                                .await
-                                .unwrap_or(false)
-                            {
-                                if let Err(e) = real_storage.create_bucket(&s3_config.bucket).await
+                    Box::pin(async move {
+                        match S3Storage::new(&s3_config).await {
+                            Ok(storage) => {
+                                let real_storage = Arc::new(storage);
+
+                                if !real_storage
+                                    .has_bucket(&s3_config.bucket)
+                                    .await
+                                    .unwrap_or(false)
                                 {
-                                    eprintln!("Warning: Failed to create test bucket: {}", e);
-                                    // Continue anyway, as bucket might exist but we can't check
+                                    if let Err(e) =
+                                        real_storage.create_bucket(&s3_config.bucket).await
+                                    {
+                                        eprintln!("Warning: Failed to create test bucket: {}", e);
+                                        // Continue anyway, as bucket might exist but we can't check
+                                    }
                                 }
-                            }
 
-                            real_storage as Arc<dyn Storage + Send + Sync>
+                                real_storage as Arc<dyn Storage + Send + Sync>
+                            }
+                            Err(e) => {
+                                panic!("Failed to create S3 storage for tests: {}", e);
+                            }
                         }
-                        Err(e) => {
-                            panic!("Failed to create S3 storage for tests: {}", e);
-                        }
-                    }
-                })
-            }),
-        ));
+                    })
+                }),
+            ));
+        }
     }
 
     storages
