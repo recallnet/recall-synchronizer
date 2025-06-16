@@ -122,6 +122,15 @@ impl<D: Database, S: SyncStorage, ST: S3Storage, RS: RecallStorage> Synchronizer
         }
     }
 
+    /// Constructs the Recall key in the required format
+    /// Format: <competition_id>/<agent_id>/<data_type>/<uuid>
+    fn construct_recall_key(object: &ObjectIndex) -> String {
+        format!(
+            "{}/{}/{}/{}",
+            object.competition_id, object.agent_id, object.data_type, object.id
+        )
+    }
+
     /// Synchronizes a single object from S3 to Recall
     async fn sync_object(&self, object: &ObjectIndex) -> Result<()> {
         let sync_record = SyncRecord::new(
@@ -139,20 +148,26 @@ impl<D: Database, S: SyncStorage, ST: S3Storage, RS: RecallStorage> Synchronizer
 
         match self.s3_storage.get_object(&object.object_key).await {
             Ok(data) => {
+                // Construct the proper Recall key
+                let recall_key = Self::construct_recall_key(object);
+
                 match self
                     .recall_storage
-                    .add_blob(&object.object_key, data.to_vec())
+                    .add_blob(&recall_key, data.to_vec())
                     .await
                 {
                     Ok(()) => {
-                        info!("Successfully synchronized {} to Recall", object.object_key);
+                        info!(
+                            "Successfully synchronized {} to Recall as {}",
+                            object.object_key, recall_key
+                        );
 
                         self.sync_storage
                             .set_object_status(object.id, SyncStatus::Complete)
                             .await?;
                     }
                     Err(e) => {
-                        error!("Failed to submit {} to Recall: {}", object.object_key, e);
+                        error!("Failed to submit {} to Recall: {}", recall_key, e);
                         // TODO: Implement retry logic
                     }
                 }

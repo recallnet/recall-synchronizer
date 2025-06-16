@@ -30,6 +30,13 @@ struct TestEnvironment {
 }
 
 impl TestEnvironment {
+    fn construct_recall_key(object: &ObjectIndex) -> String {
+        format!(
+            "{}/{}/{}/{}",
+            object.competition_id, object.agent_id, object.data_type, object.id
+        )
+    }
+
     /// Verify that an object has been properly synchronized
     async fn verify_object_synced(&self, object: &ObjectIndex) -> Result<(), String> {
         let record = self
@@ -62,9 +69,11 @@ impl TestEnvironment {
             .await
             .map_err(|e| format!("Failed to get object from S3: {}", e))?;
 
+        // Use the correct Recall key format
+        let recall_key = Self::construct_recall_key(object);
         let recall_data = self
             .recall_storage
-            .get_blob(&object.object_key)
+            .get_blob(&recall_key)
             .await
             .map_err(|e| format!("Failed to get blob from Recall: {}", e))?;
 
@@ -82,20 +91,10 @@ impl TestEnvironment {
 
     /// Verify that an object has NOT been synchronized
     async fn verify_object_not_synced(&self, object: &ObjectIndex) -> Result<(), String> {
-        self.verify_object_not_synced_by_id(object.id, &object.object_key)
-            .await
-    }
-
-    /// Verify that an object has NOT been synchronized (by ID and key)
-    async fn verify_object_not_synced_by_id(
-        &self,
-        object_id: Uuid,
-        object_key: &str,
-    ) -> Result<(), String> {
         // Check sync storage status
         let record = self
             .sync_storage
-            .get_object(object_id)
+            .get_object(object.id)
             .await
             .map_err(|e| format!("Failed to get object: {}", e))?;
 
@@ -104,22 +103,23 @@ impl TestEnvironment {
             if r.status == SyncStatus::Complete {
                 return Err(format!(
                     "Object {} is unexpectedly marked as complete in sync storage",
-                    object_key
+                    object.object_key
                 ));
             }
         }
 
-        // Verify the blob does not exist in Recall
+        // Verify the blob does not exist in Recall using the correct key
+        let recall_key = Self::construct_recall_key(object);
         let exists_in_recall = self
             .recall_storage
-            .has_blob(object_key)
+            .has_blob(&recall_key)
             .await
             .map_err(|e| format!("Failed to check blob existence in Recall: {}", e))?;
 
         if exists_in_recall {
             return Err(format!(
-                "Object {} unexpectedly found in Recall storage",
-                object_key
+                "Object {} unexpectedly found in Recall storage with key {}",
+                object.object_key, recall_key
             ));
         }
 
@@ -916,16 +916,18 @@ async fn reset_clears_sync_state_and_allows_resyncing() {
 
     // Delete blobs one-by-one to simulate network reset
     for obj in &objects {
+        let recall_key = TestEnvironment::construct_recall_key(obj);
         env.recall_storage
-            .delete_blob(&obj.object_key)
+            .delete_blob(&recall_key)
             .await
-            .unwrap_or_else(|e| panic!("Failed to delete blob {}: {}", obj.object_key, e));
+            .unwrap_or_else(|e| panic!("Failed to delete blob {}: {}", recall_key, e));
     }
 
     // Verify sync doesn't re-upload (sync state still shows complete)
     env.synchronizer.run(None, None).await.unwrap();
     for obj in &objects {
-        let exists = env.recall_storage.has_blob(&obj.object_key).await.unwrap();
+        let recall_key = TestEnvironment::construct_recall_key(obj);
+        let exists = env.recall_storage.has_blob(&recall_key).await.unwrap();
         assert!(
             !exists,
             "Object {} should not be re-synced before reset",
@@ -981,7 +983,7 @@ async fn start_synchronizer_runs_at_interval() {
     // Check after ~0.5 seconds (first immediate run)
     tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
 
-    let blobs_run1 = env.recall_storage.list_blobs("test/").await.unwrap();
+    let blobs_run1 = env.recall_storage.list_blobs("").await.unwrap();
     assert_eq!(
         blobs_run1.len(),
         2,
@@ -991,7 +993,7 @@ async fn start_synchronizer_runs_at_interval() {
     // Check after ~1.5 seconds (second interval run)
     tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
 
-    let blobs_run2 = env.recall_storage.list_blobs("test/").await.unwrap();
+    let blobs_run2 = env.recall_storage.list_blobs("").await.unwrap();
     assert_eq!(
         blobs_run2.len(),
         4,
@@ -1001,8 +1003,61 @@ async fn start_synchronizer_runs_at_interval() {
     // Check after ~2.5 seconds (third interval run)
     tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
 
-    let blobs_run3 = env.recall_storage.list_blobs("test/").await.unwrap();
+    let blobs_run3 = env.recall_storage.list_blobs("").await.unwrap();
     assert_eq!(blobs_run3.len(), 6, "Third run should have all 6 objects");
 
     sync_task.abort();
+}
+
+#[tokio::test]
+async fn recall_key_structure_follows_required_format() {
+    let env = setup().await;
+
+    let competition_id = Uuid::new_v4();
+    let agent_id = Uuid::new_v4();
+    let object_id = Uuid::new_v4();
+
+    // Create an object with an S3 key that doesn't match the required format
+    let mut object = create_test_object_index("some/random/s3/key.jsonl", Utc::now());
+    object.id = object_id;
+    object.competition_id = competition_id;
+    object.agent_id = agent_id;
+    object.data_type = "CHAIN_OF_THOUGHT".to_string();
+
+    env.add_object_to_db_and_s3(object.clone(), "Test data for recall key format")
+        .await;
+
+    env.synchronizer.run(None, None).await.unwrap();
+
+    let record = env.sync_storage.get_object(object_id).await.unwrap();
+    assert_eq!(
+        record.map(|r| r.status),
+        Some(SyncStatus::Complete),
+        "Object should be marked as complete"
+    );
+
+    let expected_key = format!(
+        "{}/{}/{}/{}",
+        competition_id, agent_id, "CHAIN_OF_THOUGHT", object_id
+    );
+
+    let exists_with_correct_key = env.recall_storage.has_blob(&expected_key).await.unwrap();
+
+    assert!(
+        exists_with_correct_key,
+        "Object should be stored in Recall with key: {}",
+        expected_key
+    );
+
+    let exists_with_s3_key = env
+        .recall_storage
+        .has_blob(&object.object_key)
+        .await
+        .unwrap();
+
+    assert!(
+        !exists_with_s3_key,
+        "Object should NOT be stored with the original S3 key: {}",
+        object.object_key
+    );
 }
