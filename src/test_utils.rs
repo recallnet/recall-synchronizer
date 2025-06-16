@@ -58,14 +58,8 @@ pub fn create_test_object_index(object_key: &str, modified_at: DateTime<Utc>) ->
         agent_id: Uuid::new_v4(),
         data_type: "TEST_DATA".to_string(),
         size_bytes: Some(1024),
-        content_hash: Some(format!(
-            "hash_{}",
-            object_key.chars().rev().take(5).collect::<String>()
-        )), // Use reversed part of key for unique hash
         metadata: None,
         event_timestamp: Some(modified_at),
-        object_last_modified_at: modified_at,
         created_at: modified_at,
-        updated_at: modified_at,
     }
 }

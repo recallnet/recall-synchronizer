@@ -135,7 +135,7 @@ async fn get_objects_with_past_timestamp_returns_recent_objects() {
 
         let expected_count = test_objects
             .iter()
-            .filter(|o| o.object_last_modified_at > midpoint_time)
+            .filter(|o| o.created_at > midpoint_time)
             .count();
 
         assert_eq!(
@@ -147,7 +147,7 @@ async fn get_objects_with_past_timestamp_returns_recent_objects() {
 
         for obj in &objects {
             assert!(
-                obj.object_last_modified_at > midpoint_time,
+                obj.created_at > midpoint_time,
                 "Object {} should be newer than the filter timestamp",
                 obj.object_key
             );
@@ -183,7 +183,7 @@ async fn get_objects_with_limit_in_middle_of_range_returns_objects() {
             // This should return the 8 most recent objects after the second one
             .get_objects(
                 limit,
-                Some(test_objects[1].object_last_modified_at),
+                Some(test_objects[1].created_at),
                 None,
                 None,
             )
@@ -201,7 +201,7 @@ async fn get_objects_with_limit_in_middle_of_range_returns_objects() {
         // Verify we got the oldest objects (ascending order)
         let sorted_test_objects = {
             let mut objs = test_objects[2..].to_vec();
-            objs.sort_by(|a, b| a.object_last_modified_at.cmp(&b.object_last_modified_at));
+            objs.sort_by(|a, b| a.created_at.cmp(&b.created_at));
             objs
         };
 
@@ -567,7 +567,7 @@ async fn get_objects_with_competition_id_and_after_id_should_paginate() {
         let batch2 = db
             .get_objects(
                 3,
-                Some(last_object.object_last_modified_at),
+                Some(last_object.created_at),
                 Some(last_object.id),
                 Some(comp_id),
             )

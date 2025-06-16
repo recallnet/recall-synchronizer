@@ -45,10 +45,10 @@ impl Database for FakeDatabase {
                 match (since, after_id) {
                     (Some(ts), Some(id)) => {
                         // For objects with timestamp > since OR (timestamp == since AND id > after_id)
-                        obj.object_last_modified_at > ts
-                            || (obj.object_last_modified_at == ts && obj.id > id)
+                        obj.created_at > ts
+                            || (obj.created_at == ts && obj.id > id)
                     }
-                    (Some(ts), None) => obj.object_last_modified_at > ts,
+                    (Some(ts), None) => obj.created_at > ts,
                     (None, Some(_)) => true, // If only after_id is provided, include all
                     (None, None) => true,
                 }
@@ -56,11 +56,11 @@ impl Database for FakeDatabase {
             .cloned()
             .collect();
 
-        // Sort by last_modified_at in ascending order (oldest first)
+        // Sort by created_at in ascending order (oldest first)
         // For same timestamps, sort by ID ascending
         // This ensures we complete all objects with the same timestamp before moving to newer ones
         filtered.sort_by(
-            |a, b| match a.object_last_modified_at.cmp(&b.object_last_modified_at) {
+            |a, b| match a.created_at.cmp(&b.created_at) {
                 std::cmp::Ordering::Equal => a.id.cmp(&b.id),
                 other => other,
             },

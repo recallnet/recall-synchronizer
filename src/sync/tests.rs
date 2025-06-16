@@ -317,7 +317,7 @@ async fn when_object_is_already_being_processed_it_is_skipped() {
         test_object.id,
         test_object.object_key.clone(),
         test_object.bucket_name.clone(),
-        test_object.object_last_modified_at,
+        test_object.created_at,
     );
     env.sync_storage.add_object(sync_record).await.unwrap();
 

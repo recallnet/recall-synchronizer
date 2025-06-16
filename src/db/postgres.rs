@@ -84,16 +84,13 @@ impl PostgresDatabase {
                 id UUID PRIMARY KEY,
                 object_key TEXT UNIQUE NOT NULL,
                 bucket_name VARCHAR(100) NOT NULL,
-                competition_id UUID,
-                agent_id UUID,
+                competition_id UUID NOT NULL,
+                agent_id UUID NOT NULL,
                 data_type VARCHAR(50) NOT NULL,
                 size_bytes BIGINT,
-                content_hash VARCHAR(128),
                 metadata JSONB,
                 event_timestamp TIMESTAMPTZ,
-                object_last_modified_at TIMESTAMPTZ NOT NULL,
-                created_at TIMESTAMPTZ NOT NULL,
-                updated_at TIMESTAMPTZ NOT NULL
+                created_at TIMESTAMPTZ NOT NULL
             )
             "#,
             schema_name
@@ -110,11 +107,11 @@ impl PostgresDatabase {
 
         // Create index
         let create_index_query = format!(
-            "CREATE INDEX IF NOT EXISTS object_index_last_modified_idx ON {}.object_index (object_last_modified_at)",
+            "CREATE INDEX IF NOT EXISTS object_index_created_at_idx ON {}.object_index (created_at)",
             schema_name
         );
 
-        debug!("Creating index on object_last_modified_at");
+        debug!("Creating index on created_at");
         sqlx::query(&create_index_query)
             .execute(&self.pool)
             .await
@@ -152,12 +149,9 @@ impl PostgresDatabase {
             agent_id: get_field!(row, "agent_id"),
             data_type: get_field!(row, "data_type"),
             size_bytes: get_field!(row, "size_bytes"),
-            content_hash: get_field!(row, "content_hash"),
             metadata: get_field!(row, "metadata"),
             event_timestamp: get_field!(row, "event_timestamp"),
-            object_last_modified_at: get_field!(row, "object_last_modified_at"),
             created_at: get_field!(row, "created_at"),
-            updated_at: get_field!(row, "updated_at"),
         })
     }
 }
@@ -180,8 +174,8 @@ impl Database for PostgresDatabase {
             r#"
             SELECT
                 id, object_key, bucket_name, competition_id, agent_id,
-                data_type, size_bytes, content_hash, metadata,
-                event_timestamp, object_last_modified_at, created_at, updated_at
+                data_type, size_bytes, metadata,
+                event_timestamp, created_at
             FROM {}
             "#,
             self.table_name()
@@ -203,7 +197,7 @@ impl Database for PostgresDatabase {
         match (since, after_id) {
             (Some(_), Some(_)) => {
                 where_clauses.push(format!(
-                    "(object_last_modified_at > ${} OR (object_last_modified_at = ${} AND id > ${}))",
+                    "(created_at > ${} OR (created_at = ${} AND id > ${}))",
                     param_count,
                     param_count,
                     param_count + 1
@@ -213,7 +207,7 @@ impl Database for PostgresDatabase {
                 param_count += 2;
             }
             (Some(_), None) => {
-                where_clauses.push(format!("object_last_modified_at > ${}", param_count));
+                where_clauses.push(format!("created_at > ${}", param_count));
                 bind_params.push("since".to_string());
                 param_count += 1;
             }
@@ -223,12 +217,12 @@ impl Database for PostgresDatabase {
         // Build final query
         let query = if where_clauses.is_empty() {
             format!(
-                "{} ORDER BY object_last_modified_at ASC, id ASC LIMIT ${}",
+                "{} ORDER BY created_at ASC, id ASC LIMIT ${}",
                 query_base, param_count
             )
         } else {
             format!(
-                "{} WHERE {} ORDER BY object_last_modified_at ASC, id ASC LIMIT ${}",
+                "{} WHERE {} ORDER BY created_at ASC, id ASC LIMIT ${}",
                 query_base,
                 where_clauses.join(" AND "),
                 param_count
@@ -294,20 +288,18 @@ impl Database for PostgresDatabase {
             r#"
             INSERT INTO {} (
                 id, object_key, bucket_name, competition_id, agent_id,
-                data_type, size_bytes, content_hash, metadata,
-                event_timestamp, object_last_modified_at, created_at, updated_at
-            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+                data_type, size_bytes, metadata,
+                event_timestamp, created_at
+            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
             ON CONFLICT (object_key) DO UPDATE SET
                 bucket_name = EXCLUDED.bucket_name,
                 competition_id = EXCLUDED.competition_id,
                 agent_id = EXCLUDED.agent_id,
                 data_type = EXCLUDED.data_type,
                 size_bytes = EXCLUDED.size_bytes,
-                content_hash = EXCLUDED.content_hash,
                 metadata = EXCLUDED.metadata,
                 event_timestamp = EXCLUDED.event_timestamp,
-                object_last_modified_at = EXCLUDED.object_last_modified_at,
-                updated_at = EXCLUDED.updated_at
+                created_at = EXCLUDED.created_at
             "#,
             self.table_name()
         );
@@ -320,12 +312,9 @@ impl Database for PostgresDatabase {
             .bind(object.agent_id)
             .bind(&object.data_type)
             .bind(object.size_bytes)
-            .bind(&object.content_hash)
             .bind(&object.metadata)
             .bind(object.event_timestamp)
-            .bind(object.object_last_modified_at)
             .bind(object.created_at)
-            .bind(object.updated_at)
             .execute(&self.pool)
             .await
             .map_err(|e| {

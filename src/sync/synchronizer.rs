@@ -137,7 +137,7 @@ impl<D: Database, S: SyncStorage, ST: S3Storage, RS: RecallStorage> Synchronizer
             object.id,
             object.object_key.clone(),
             object.bucket_name.clone(),
-            object.object_last_modified_at,
+            object.created_at,
         );
 
         self.sync_storage.add_object(sync_record).await?;
@@ -291,7 +291,7 @@ impl<D: Database, S: SyncStorage, ST: S3Storage, RS: RecallStorage> Synchronizer
 
             // Update state for next iteration if there might be more objects
             if let Some(last_obj) = objects.last() {
-                current_since_time = Some(last_obj.object_last_modified_at);
+                current_since_time = Some(last_obj.created_at);
                 current_after_id = Some(last_obj.id);
 
                 debug!(
