@@ -14,12 +14,10 @@ mod sync;
 mod test_utils;
 
 use crate::db::postgres::PostgresDatabase;
-use crate::db::Database;
 use crate::recall::RecallBlockchain;
-use crate::s3::Storage as S3Storage;
-use crate::sync::storage::{SqliteSyncStorage, SyncStorage};
+use crate::s3::S3Storage;
+use crate::sync::storage::SqliteSyncStorage;
 use crate::sync::synchronizer::Synchronizer;
-use async_trait::async_trait;
 
 #[derive(Parser, Debug)]
 #[command(author, version, about, long_about = None)]
@@ -40,42 +38,6 @@ struct Cli {
 
     #[command(subcommand)]
     command: Commands,
-}
-
-/// Trait for synchronizer operations to enable dynamic dispatch
-#[async_trait]
-trait SynchronizerOps: Send + Sync {
-    async fn run(&self, since: Option<DateTime<Utc>>) -> Result<()>;
-
-    async fn start(&self, interval: u64, since: Option<DateTime<Utc>>) -> Result<()>;
-
-    async fn reset(&self) -> Result<()>;
-}
-
-/// Implement SynchronizerOps for any Synchronizer type
-#[async_trait]
-impl<D, S, ST, RS> SynchronizerOps for Synchronizer<D, S, ST, RS>
-where
-    D: Database,
-    S: SyncStorage,
-    ST: S3Storage,
-    RS: recall::Storage,
-{
-    async fn run(&self, since: Option<DateTime<Utc>>) -> Result<()> {
-        Synchronizer::run(self, since).await
-    }
-
-    async fn start(
-        &self,
-        interval: u64,
-        since: Option<DateTime<Utc>>,
-    ) -> Result<()> {
-        Synchronizer::start(self, interval, since).await
-    }
-
-    async fn reset(&self) -> Result<()> {
-        Synchronizer::reset(self).await
-    }
 }
 
 #[derive(Subcommand, Debug)]
@@ -195,25 +157,27 @@ async fn start_synchronizer(
     Ok(())
 }
 
-async fn initialize_synchronizer(config: config::Config) -> Result<Box<dyn SynchronizerOps>> {
+type SynchronizerInstance =
+    Synchronizer<PostgresDatabase, SqliteSyncStorage, S3Storage, RecallBlockchain>;
+
+async fn initialize_synchronizer(config: config::Config) -> Result<SynchronizerInstance> {
     let sync_storage = SqliteSyncStorage::new(&config.sync_storage.db_path)?;
     let recall_storage = RecallBlockchain::new(&config.recall).await?;
 
-    let synchronizer: Box<dyn SynchronizerOps> = if let Some(s3_config) = config.s3 {
+    let synchronizer = if let Some(s3_config) = config.s3 {
         // S3 mode - use generic synchronizer with S3
         info!("Initializing S3-based synchronizer");
         let database =
             PostgresDatabase::new(&config.database.url, crate::db::pg_schema::SchemaMode::S3)
                 .await?;
         let s3_storage = crate::s3::S3Storage::new(&s3_config).await?;
-        let sync = Synchronizer::with_s3(
+        Synchronizer::with_s3(
             database,
             sync_storage,
             s3_storage,
             recall_storage,
             config.sync,
-        );
-        Box::new(sync)
+        )
     } else {
         // Direct mode - use generic synchronizer without S3
         info!("Initializing direct database synchronizer (no S3)");
@@ -222,13 +186,7 @@ async fn initialize_synchronizer(config: config::Config) -> Result<Box<dyn Synch
             crate::db::pg_schema::SchemaMode::Direct,
         )
         .await?;
-        let sync = Synchronizer::<_, _, crate::s3::S3Storage, _>::without_s3(
-            database,
-            sync_storage,
-            recall_storage,
-            config.sync,
-        );
-        Box::new(sync)
+        Synchronizer::without_s3(database, sync_storage, recall_storage, config.sync)
     };
 
     info!("Synchronizer initialized successfully");
