@@ -1,35 +1,32 @@
 use crate::db::database::Database;
 use crate::db::error::DatabaseError;
-use crate::db::pg_schema::PgSchema;
-use crate::db::syncable::SyncableObject;
+use crate::db::models::ObjectIndex;
+use crate::db::pg_schema::SchemaMode;
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use sqlx::postgres::PgPoolOptions;
 use sqlx::PgPool;
-use std::marker::PhantomData;
 use std::time::Duration;
 use tracing::{debug, error, info, warn};
 
-/// A generic PostgreSQL implementation of the Database trait
-pub struct PostgresDatabase<T> {
+/// A PostgreSQL implementation of the Database trait
+pub struct PostgresDatabase {
     pool: PgPool,
     schema: Option<String>,
-    _phantom: PhantomData<T>,
+    mode: SchemaMode,
 }
 
-impl<T> PostgresDatabase<T>
-where
-    T: PgSchema,
-{
-    /// Create a new PostgresGenericDatabase with the given connection URL
-    pub async fn new(database_url: &str) -> Result<Self, DatabaseError> {
-        Self::new_with_schema(database_url, None).await
+impl PostgresDatabase {
+    /// Create a new PostgresDatabase with the given connection URL and mode
+    pub async fn new(database_url: &str, mode: SchemaMode) -> Result<Self, DatabaseError> {
+        Self::new_with_schema(database_url, None, mode).await
     }
 
-    /// Create a new PostgresGenericDatabase with a specific schema
+    /// Create a new PostgresDatabase with a specific schema
     pub async fn new_with_schema(
         database_url: &str,
         schema: Option<String>,
+        mode: SchemaMode,
     ) -> Result<Self, DatabaseError> {
         let pool = PgPoolOptions::new()
             .max_connections(10)
@@ -52,7 +49,7 @@ where
         let db = PostgresDatabase {
             pool,
             schema,
-            _phantom: PhantomData,
+            mode,
         };
 
         // If a schema is specified, create it and the tables
@@ -87,7 +84,7 @@ where
             )
             "#,
             schema_name,
-            T::schema_definition()
+            self.mode.schema_definition()
         );
 
         debug!("Creating object_index table in schema '{}'", schema_name);
@@ -131,11 +128,7 @@ where
 }
 
 #[async_trait]
-impl<T> Database for PostgresDatabase<T>
-where
-    T: PgSchema + SyncableObject + Clone + 'static,
-{
-    type Object = T;
+impl Database for PostgresDatabase {
 
     async fn get_objects(
         &self,
@@ -143,7 +136,7 @@ where
         since: Option<DateTime<Utc>>,
         after_id: Option<uuid::Uuid>,
         competition_id: Option<uuid::Uuid>,
-    ) -> Result<Vec<T>, DatabaseError> {
+    ) -> Result<Vec<ObjectIndex>, DatabaseError> {
         debug!(
             "Querying objects with limit={}, since={:?}, after_id={:?}, competition_id={:?}",
             limit, since, after_id, competition_id
@@ -155,7 +148,7 @@ where
                 {}
             FROM {}
             "#,
-            T::select_columns(),
+            self.mode.select_columns(),
             self.table_name()
         );
 
@@ -248,7 +241,7 @@ where
         // Convert rows to objects
         let mut result = Vec::with_capacity(rows.len());
         for row in rows {
-            result.push(T::from_row(row)?);
+            result.push(self.mode.object_from_row(row)?);
         }
 
         info!("Retrieved {} objects from database", result.len());
@@ -256,10 +249,10 @@ where
     }
 
     #[cfg(test)]
-    async fn add_object(&self, object: T) -> Result<(), DatabaseError> {
+    async fn add_object(&self, object: ObjectIndex) -> Result<(), DatabaseError> {
         debug!("Adding object to database");
 
-        let query = object.new_insert_query(&self.table_name());
+        let query = self.mode.new_insert_query(&object, &self.table_name());
 
         query.execute(&self.pool).await.map_err(|e| {
             error!("Failed to insert object: {}", e);

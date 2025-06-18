@@ -41,25 +41,56 @@ pub fn load_test_config() -> Result<Config, anyhow::Error> {
     load_config(config_path).map_err(|e| anyhow::anyhow!("Failed to load config.toml: {}", e))
 }
 
-/// Creates a test ObjectIndex with default values
+/// Creates a test ObjectIndex with S3 storage mode (object_key and bucket_name)
 ///
 /// # Arguments
 ///
 /// * `object_key` - The unique key for the object
-/// * `modified_at` - The last modified timestamp
+/// * `created_at` - The last modified timestamp
 ///
 /// Other parameters can be customized after creation if needed
-pub fn create_test_object_index(object_key: &str, modified_at: DateTime<Utc>) -> ObjectIndex {
+pub fn create_test_object_index_s3(object_key: &str, created_at: DateTime<Utc>) -> ObjectIndex {
     ObjectIndex {
         id: Uuid::new_v4(),
-        object_key: object_key.to_string(),
-        bucket_name: "test-bucket".to_string(),
+        object_key: Some(object_key.to_string()),
+        bucket_name: Some("test-bucket".to_string()),
         competition_id: Uuid::new_v4(),
         agent_id: Uuid::new_v4(),
         data_type: "TEST_DATA".to_string(),
         size_bytes: Some(1024),
         metadata: None,
-        event_timestamp: Some(modified_at),
-        created_at: modified_at,
+        event_timestamp: Some(created_at),
+        created_at,
+        data: None,
+    }
+}
+
+/// Creates a test ObjectIndex with direct storage mode (data field)
+///
+/// # Arguments
+///
+/// * `competition_id` - The competition ID
+/// * `agent_id` - The agent ID
+/// * `data` - The data to store directly
+///
+/// Other parameters can be customized after creation if needed
+pub fn create_test_object_index_direct(
+    competition_id: String,
+    agent_id: String,
+    data: Vec<u8>,
+) -> ObjectIndex {
+    let now = Utc::now();
+    ObjectIndex {
+        id: Uuid::new_v4(),
+        competition_id: Uuid::parse_str(&competition_id).unwrap_or_else(|_| Uuid::new_v4()),
+        agent_id: Uuid::parse_str(&agent_id).unwrap_or_else(|_| Uuid::new_v4()),
+        data_type: "TEST_DATA".to_string(),
+        size_bytes: Some(data.len() as i64),
+        metadata: None,
+        event_timestamp: Some(now),
+        created_at: now,
+        data: Some(data),
+        object_key: None,
+        bucket_name: None,
     }
 }

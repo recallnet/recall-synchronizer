@@ -14,7 +14,7 @@ mod sync;
 mod test_utils;
 
 use crate::db::postgres::PostgresDatabase;
-use crate::db::{Database, ObjectIndex, ObjectIndexDirect};
+use crate::db::Database;
 use crate::recall::RecallBlockchain;
 use crate::s3::Storage as S3Storage;
 use crate::sync::storage::{SqliteSyncStorage, SyncStorage};
@@ -239,7 +239,7 @@ async fn initialize_synchronizer(config: config::Config) -> Result<Box<dyn Synch
     let synchronizer: Box<dyn SynchronizerOps> = if let Some(s3_config) = config.s3 {
         // S3 mode - use generic synchronizer with S3
         info!("Initializing S3-based synchronizer");
-        let database = PostgresDatabase::<ObjectIndex>::new(&config.database.url).await?;
+        let database = PostgresDatabase::new(&config.database.url, crate::db::pg_schema::SchemaMode::S3).await?;
         let s3_storage = crate::s3::S3Storage::new(&s3_config).await?;
         let sync = Synchronizer::with_s3(
             database,
@@ -252,7 +252,7 @@ async fn initialize_synchronizer(config: config::Config) -> Result<Box<dyn Synch
     } else {
         // Direct mode - use generic synchronizer without S3
         info!("Initializing direct database synchronizer (no S3)");
-        let database = PostgresDatabase::<ObjectIndexDirect>::new(&config.database.url).await?;
+        let database = PostgresDatabase::new(&config.database.url, crate::db::pg_schema::SchemaMode::Direct).await?;
         let sync = Synchronizer::<_, _, crate::s3::S3Storage, _>::without_s3(
             database,
             sync_storage,

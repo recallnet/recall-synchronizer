@@ -1,17 +1,16 @@
 use anyhow::{Context, Result};
 use chrono::{DateTime, Utc};
-use std::marker::PhantomData;
 use std::sync::Arc;
 use tokio::time::{interval, Duration};
 use tracing::{debug, error, info, warn};
 
 use crate::config::SyncConfig;
-use crate::db::{Database, SyncableObject};
+use crate::db::{Database, ObjectIndex};
 use crate::recall::Storage as RecallStorage;
 use crate::s3::Storage as S3Storage;
 use crate::sync::storage::{SyncRecord, SyncStatus, SyncStorage};
 
-/// Generic synchronizer that works with any database and object type
+/// Synchronizer that works with ObjectIndex database
 #[derive(Clone)]
 pub struct Synchronizer<D, S, ST, RS>
 where
@@ -25,7 +24,6 @@ where
     s3_storage: Option<Arc<ST>>,
     recall_storage: Arc<RS>,
     config: SyncConfig,
-    _phantom: PhantomData<D::Object>,
 }
 
 impl<D, S, ST, RS> Synchronizer<D, S, ST, RS>
@@ -49,7 +47,6 @@ where
             s3_storage: Some(Arc::new(s3_storage)),
             recall_storage: Arc::new(recall_storage),
             config: sync_config,
-            _phantom: PhantomData,
         }
     }
 
@@ -66,7 +63,6 @@ where
             s3_storage: None,
             recall_storage: Arc::new(recall_storage),
             config: sync_config,
-            _phantom: PhantomData,
         }
     }
 
@@ -85,7 +81,6 @@ where
             s3_storage,
             recall_storage,
             config: sync_config,
-            _phantom: PhantomData,
         }
     }
 
@@ -123,7 +118,7 @@ where
         after_id: Option<uuid::Uuid>,
         limit: Option<u32>,
         competition_id: Option<uuid::Uuid>,
-    ) -> Result<Vec<D::Object>> {
+    ) -> Result<Vec<ObjectIndex>> {
         let batch_size = limit.unwrap_or(self.config.batch_size as u32);
         self.database
             .get_objects(batch_size, since_time, after_id, competition_id)
@@ -132,8 +127,8 @@ where
     }
 
     /// Checks if an object should be processed based on its current status
-    async fn should_process_object(&self, object: &D::Object) -> Result<bool> {
-        let object_id = object.id();
+    async fn should_process_object(&self, object: &ObjectIndex) -> Result<bool> {
+        let object_id = object.id;
         match self.sync_storage.get_object(object_id).await? {
             Some(record) => match record.status {
                 SyncStatus::Complete => {
@@ -152,32 +147,24 @@ where
 
     /// Constructs the Recall key in the required format
     /// Format: <competition_id>/<agent_id>/<data_type>/<uuid>
-    fn construct_recall_key(object: &D::Object) -> String {
+    fn construct_recall_key(object: &ObjectIndex) -> String {
         format!(
             "{}/{}/{}/{}",
-            object.competition_id(),
-            object.agent_id(),
-            object.data_type(),
-            object.id()
+            object.competition_id, object.agent_id, object.data_type, object.id
         )
     }
 
     /// Synchronizes a single object to Recall
-    async fn sync_object(&self, object: &D::Object) -> Result<()> {
-        let object_id = object.id();
-        let competition_id = object.competition_id();
-        let agent_id = object.agent_id();
-        let data_type = object.data_type().to_string();
-        let created_at = object.created_at();
+    async fn sync_object(&self, object: &ObjectIndex) -> Result<()> {
+        let object_id = object.id;
+        let competition_id = object.competition_id;
+        let agent_id = object.agent_id;
+        let data_type = object.data_type.clone();
+        let created_at = object.created_at;
 
         // Create sync record with detailed information
-        let sync_record = SyncRecord::new(
-            object_id,
-            competition_id,
-            agent_id,
-            data_type,
-            created_at,
-        );
+        let sync_record =
+            SyncRecord::new(object_id, competition_id, agent_id, data_type, created_at);
 
         self.sync_storage.add_object(sync_record).await?;
         self.sync_storage
@@ -185,10 +172,10 @@ where
             .await?;
 
         // Get data based on storage type
-        let data_result = if let Some(data) = object.embedded_data() {
+        let data_result = if let Some(data) = &object.data {
             // Object has embedded data
-            Ok(data.to_vec())
-        } else if let Some(s3_key) = object.s3_key() {
+            Ok(data.clone())
+        } else if let Some(s3_key) = &object.object_key {
             // Object uses S3 storage
             match &self.s3_storage {
                 Some(s3) => s3
@@ -247,16 +234,16 @@ where
     /// Process a batch of objects and return the last synced object and count
     async fn process_object_batch<'a>(
         &self,
-        objects: &'a [D::Object],
-    ) -> Result<(Option<&'a D::Object>, usize)> {
-        let mut last_synced_object: Option<&'a D::Object> = None;
+        objects: &'a [ObjectIndex],
+    ) -> Result<(Option<&'a ObjectIndex>, usize)> {
+        let mut last_synced_object: Option<&'a ObjectIndex> = None;
         let mut batch_processed = 0;
 
         for object in objects {
             if self.should_process_object(object).await? {
                 self.sync_object(object).await?;
 
-                let object_id = object.id();
+                let object_id = object.id;
                 if let Some(record) = self.sync_storage.get_object(object_id).await? {
                     if record.status == SyncStatus::Complete {
                         last_synced_object = Some(object);
@@ -324,26 +311,24 @@ where
 
             info!("Found {} objects to synchronize", objects.len());
 
-            // Process the batch of objects
             let (last_synced_object, batch_processed) = self.process_object_batch(&objects).await?;
             total_processed += batch_processed;
 
             if let Some(last_object) = last_synced_object {
-                let object_id = last_object.id();
+                let object_id = last_object.id;
                 self.sync_storage
                     .set_last_synced_object_id(object_id, competition_uuid)
                     .await?;
             }
 
-            // Check if we should continue to the next batch
             if total_processed >= batch_size {
                 break;
             }
 
             // Update state for next iteration if there might be more objects
             if let Some(last_obj) = objects.last() {
-                current_since_time = Some(last_obj.created_at());
-                current_after_id = Some(last_obj.id());
+                current_since_time = Some(last_obj.created_at);
+                current_after_id = Some(last_obj.id);
 
                 debug!(
                     "Total processed: {}, continuing to fill batch of {}",

@@ -9,7 +9,7 @@ use crate::sync::{
     storage::{FakeSyncStorage, SyncRecord, SyncStatus, SyncStorage},
     synchronizer::Synchronizer,
 };
-use crate::test_utils::create_test_object_index;
+use crate::test_utils::create_test_object_index_s3;
 use bytes::Bytes;
 use chrono::{Duration, Utc};
 use std::sync::Arc;
@@ -22,12 +22,12 @@ fn rec_to_ids(records: Vec<SyncRecord>) -> Vec<Uuid> {
 
 /// Test environment that holds all storage implementations and the synchronizer
 struct TestEnvironment {
-    database: Arc<FakeDatabase<ObjectIndex>>,
+    database: Arc<FakeDatabase>,
     sync_storage: Arc<FakeSyncStorage>,
     s3_storage: Arc<FakeStorage>,
     recall_storage: Arc<FakeRecallStorage>,
     synchronizer:
-        Synchronizer<FakeDatabase<ObjectIndex>, FakeSyncStorage, FakeStorage, FakeRecallStorage>,
+        Synchronizer<FakeDatabase, FakeSyncStorage, FakeStorage, FakeRecallStorage>,
 }
 
 impl TestEnvironment {
@@ -63,7 +63,7 @@ impl TestEnvironment {
 
         let s3_data = self
             .s3_storage
-            .get_object(&object.object_key)
+            .get_object(object.object_key.as_ref().expect("object_key required"))
             .await
             .map_err(|e| format!("Failed to get object from S3: {}", e))?;
 
@@ -128,7 +128,7 @@ impl TestEnvironment {
     async fn add_object_to_db_and_s3(&self, object: ObjectIndex, data: &str) {
         self.database.add_object(object.clone()).await.unwrap();
         self.s3_storage
-            .add_object(&object.object_key, Bytes::from(data.to_string()))
+            .add_object(object.object_key.as_ref().expect("object_key required"), Bytes::from(data.to_string()))
             .await
             .unwrap();
     }
@@ -168,7 +168,7 @@ async fn setup() -> TestEnvironment {
 
 // Setup a test environment with custom config
 async fn setup_with_config(config: Config) -> TestEnvironment {
-    let database = Arc::new(FakeDatabase::<ObjectIndex>::new());
+    let database = Arc::new(FakeDatabase::new());
     let sync_storage = Arc::new(FakeSyncStorage::new());
     let s3_storage = Arc::new(FakeStorage::new());
     let recall_storage = Arc::new(FakeRecallStorage::new());
@@ -195,8 +195,8 @@ async fn when_no_filters_applied_all_objects_are_synchronized() {
     let env = setup().await;
 
     let now = Utc::now();
-    let object1 = create_test_object_index("test/object1.jsonl", now);
-    let object2 = create_test_object_index("test/object2.jsonl", now + Duration::hours(1));
+    let object1 = create_test_object_index_s3("test/object1.jsonl", now);
+    let object2 = create_test_object_index_s3("test/object2.jsonl", now + Duration::hours(1));
 
     env.add_object_to_db_and_s3(object1.clone(), "Test data for object1")
         .await;
@@ -210,7 +210,7 @@ async fn when_no_filters_applied_all_objects_are_synchronized() {
     for obj in &objects {
         env.verify_object_synced(obj)
             .await
-            .unwrap_or_else(|e| panic!("Object {} verification failed: {}", obj.object_key, e));
+            .unwrap_or_else(|e| panic!("Object {} verification failed: {}", obj.id, e));
     }
 
     let completed_objects = env
@@ -232,10 +232,10 @@ async fn when_competition_id_filter_is_applied_only_matching_objects_are_synchro
     let competition_id = uuid::Uuid::new_v4();
     let now = Utc::now();
 
-    let mut filtered_object = create_test_object_index("test/filtered.jsonl", now);
+    let mut filtered_object = create_test_object_index_s3("test/filtered.jsonl", now);
     filtered_object.competition_id = competition_id;
 
-    let other_object = create_test_object_index("test/other.jsonl", now + Duration::hours(1));
+    let other_object = create_test_object_index_s3("test/other.jsonl", now + Duration::hours(1));
 
     env.add_object_to_db_and_s3(filtered_object.clone(), "Filtered test data")
         .await;
@@ -252,7 +252,7 @@ async fn when_competition_id_filter_is_applied_only_matching_objects_are_synchro
         .unwrap_or_else(|e| {
             panic!(
                 "Filtered object {} verification failed: {}",
-                filtered_object.object_key, e
+                filtered_object.id, e
             )
         });
 
@@ -261,7 +261,7 @@ async fn when_competition_id_filter_is_applied_only_matching_objects_are_synchro
         .unwrap_or_else(|e| {
             panic!(
                 "Object {} should not be synchronized: {}",
-                other_object.object_key, e
+                other_object.id, e
             )
         });
 }
@@ -273,8 +273,8 @@ async fn when_timestamp_filter_is_applied_only_newer_objects_are_synchronized() 
     let old_time = Utc::now() - Duration::days(7);
     let recent_time = Utc::now() - Duration::hours(1);
 
-    let old_object = create_test_object_index("test/old.jsonl", old_time);
-    let new_object = create_test_object_index("test/new.jsonl", recent_time);
+    let old_object = create_test_object_index_s3("test/old.jsonl", old_time);
+    let new_object = create_test_object_index_s3("test/new.jsonl", recent_time);
 
     env.add_object_to_db_and_s3(old_object.clone(), "Old test data")
         .await;
@@ -289,7 +289,7 @@ async fn when_timestamp_filter_is_applied_only_newer_objects_are_synchronized() 
         .unwrap_or_else(|e| {
             panic!(
                 "Old object {} should not be synchronized: {}",
-                old_object.object_key, e
+                old_object.id, e
             )
         });
 
@@ -298,7 +298,7 @@ async fn when_timestamp_filter_is_applied_only_newer_objects_are_synchronized() 
         .unwrap_or_else(|e| {
             panic!(
                 "Newer object {} verification failed: {}",
-                new_object.object_key, e
+                new_object.id, e
             )
         });
 }
@@ -307,7 +307,7 @@ async fn when_timestamp_filter_is_applied_only_newer_objects_are_synchronized() 
 async fn when_object_is_already_being_processed_it_is_skipped() {
     let env = setup().await;
 
-    let test_object = create_test_object_index("test/concurrent.jsonl", Utc::now());
+    let test_object = create_test_object_index_s3("test/concurrent.jsonl", Utc::now());
     env.add_object_to_db_and_s3(test_object.clone(), "Concurrent test data")
         .await;
 
@@ -333,7 +333,7 @@ async fn when_object_is_already_being_processed_it_is_skipped() {
 
     let exists_in_recall = env
         .recall_storage
-        .has_blob(&test_object.object_key)
+        .has_blob(test_object.object_key.as_ref().expect("object_key required"))
         .await
         .unwrap();
     assert!(
@@ -365,7 +365,7 @@ async fn with_batch_size_should_limits_database_fetch() {
     // Add 10 objects to the database and S3
     let base_time = Utc::now() - Duration::hours(24);
     for i in 0..10 {
-        let object = create_test_object_index(
+        let object = create_test_object_index_s3(
             &format!("test/batch-{}.jsonl", i),
             base_time + Duration::hours(i as i64),
         );
@@ -400,7 +400,7 @@ async fn multiple_sync_runs_with_new_objects() {
     let batch1_time = base_time - Duration::hours(2);
     let mut batch1_objects = Vec::new();
     for i in 0..5 {
-        let object = create_test_object_index(&format!("test/batch1-{}.jsonl", i), batch1_time);
+        let object = create_test_object_index_s3(&format!("test/batch1-{}.jsonl", i), batch1_time);
         batch1_objects.push(object.clone());
         env.add_object_to_db_and_s3(object, &format!("Batch 1 data {}", i))
             .await;
@@ -419,7 +419,7 @@ async fn multiple_sync_runs_with_new_objects() {
     let batch2_time = base_time - Duration::hours(1);
     let mut batch2_objects = Vec::new();
     for i in 0..3 {
-        let object = create_test_object_index(&format!("test/batch2-{}.jsonl", i), batch2_time);
+        let object = create_test_object_index_s3(&format!("test/batch2-{}.jsonl", i), batch2_time);
         batch2_objects.push(object.clone());
         env.add_object_to_db_and_s3(object, &format!("Batch 2 data {}", i))
             .await;
@@ -468,7 +468,7 @@ async fn when_since_param_includes_already_synced_objects_they_are_skipped() {
     let mut objects = Vec::new();
 
     for i in 0..5 {
-        let object = create_test_object_index(
+        let object = create_test_object_index_s3(
             &format!("test/obj-{}.jsonl", i),
             base_time + Duration::hours(i as i64),
         );
@@ -489,7 +489,7 @@ async fn when_since_param_includes_already_synced_objects_they_are_skipped() {
     assert_eq!(synced.len(), 5, "All 5 objects should be synced");
 
     for i in 5..10 {
-        let object = create_test_object_index(
+        let object = create_test_object_index_s3(
             &format!("test/obj-{}.jsonl", i),
             base_time + Duration::hours(i as i64),
         );
@@ -525,7 +525,7 @@ async fn when_since_param_skips_unsynced_objects_they_remain_unsynced() {
     let mut objects = Vec::new();
 
     for i in 0..8 {
-        let object = create_test_object_index(
+        let object = create_test_object_index_s3(
             &format!("test/obj-{}.jsonl", i),
             base_time + Duration::hours(i as i64),
         );
@@ -582,7 +582,7 @@ async fn sync_with_same_competition_id_continues_from_where_it_left_off() {
     let comp2_id = Uuid::new_v4();
 
     for i in 0..5 {
-        let mut object = create_test_object_index(
+        let mut object = create_test_object_index_s3(
             &format!("comp1/obj-{}.jsonl", i),
             base_time + Duration::minutes(i as i64),
         );
@@ -592,7 +592,7 @@ async fn sync_with_same_competition_id_continues_from_where_it_left_off() {
     }
 
     for i in 0..4 {
-        let mut object = create_test_object_index(
+        let mut object = create_test_object_index_s3(
             &format!("comp2/obj-{}.jsonl", i),
             base_time + Duration::minutes((i + 10) as i64),
         );
@@ -656,7 +656,7 @@ async fn sync_with_different_competitions_maintains_separate_progress() {
 
     // Add 4 objects for each competition
     for i in 0..4 {
-        let mut obj1 = create_test_object_index(
+        let mut obj1 = create_test_object_index_s3(
             &format!("comp1/obj-{}.jsonl", i),
             base_time + Duration::minutes(i as i64),
         );
@@ -664,7 +664,7 @@ async fn sync_with_different_competitions_maintains_separate_progress() {
         env.add_object_to_db_and_s3(obj1, &format!("Comp1 data {}", i))
             .await;
 
-        let mut obj2 = create_test_object_index(
+        let mut obj2 = create_test_object_index_s3(
             &format!("comp2/obj-{}.jsonl", i),
             base_time + Duration::minutes((i + 10) as i64),
         );
@@ -746,7 +746,7 @@ async fn regular_sync_processes_all_unsynced_objects_from_all_competitions() {
     let comp2_id = Uuid::new_v4();
 
     for i in 0..3 {
-        let mut object = create_test_object_index(
+        let mut object = create_test_object_index_s3(
             &format!("comp1/obj-{}.jsonl", i),
             base_time + Duration::minutes(i as i64),
         );
@@ -754,7 +754,7 @@ async fn regular_sync_processes_all_unsynced_objects_from_all_competitions() {
         env.add_object_to_db_and_s3(object, &format!("Comp1 data {}", i))
             .await;
 
-        let mut object = create_test_object_index(
+        let mut object = create_test_object_index_s3(
             &format!("comp2/obj-{}.jsonl", i),
             base_time + Duration::minutes((i + 5) as i64),
         );
@@ -814,31 +814,31 @@ async fn regular_sync_continues_regardless_of_competition_specific_progress() {
     let mut all_objects = Vec::new();
 
     // comp1/obj-0 at time 0
-    let mut obj = create_test_object_index("comp1/obj-0.jsonl", base_time);
+    let mut obj = create_test_object_index_s3("comp1/obj-0.jsonl", base_time);
     obj.competition_id = comp1_id;
     all_objects.push(obj.clone());
     env.add_object_to_db_and_s3(obj, "Comp1 data 0").await;
 
     // comp2/obj-0 at time 1
-    let mut obj = create_test_object_index("comp2/obj-0.jsonl", base_time + Duration::minutes(1));
+    let mut obj = create_test_object_index_s3("comp2/obj-0.jsonl", base_time + Duration::minutes(1));
     obj.competition_id = comp2_id;
     all_objects.push(obj.clone());
     env.add_object_to_db_and_s3(obj, "Comp2 data 0").await;
 
     // comp1/obj-1 at time 2
-    let mut obj = create_test_object_index("comp1/obj-1.jsonl", base_time + Duration::minutes(2));
+    let mut obj = create_test_object_index_s3("comp1/obj-1.jsonl", base_time + Duration::minutes(2));
     obj.competition_id = comp1_id;
     all_objects.push(obj.clone());
     env.add_object_to_db_and_s3(obj, "Comp1 data 1").await;
 
     // comp2/obj-1 at time 3
-    let mut obj = create_test_object_index("comp2/obj-1.jsonl", base_time + Duration::minutes(3));
+    let mut obj = create_test_object_index_s3("comp2/obj-1.jsonl", base_time + Duration::minutes(3));
     obj.competition_id = comp2_id;
     all_objects.push(obj.clone());
     env.add_object_to_db_and_s3(obj, "Comp2 data 1").await;
 
     // comp1/obj-2 at time 4
-    let mut obj = create_test_object_index("comp1/obj-2.jsonl", base_time + Duration::minutes(4));
+    let mut obj = create_test_object_index_s3("comp1/obj-2.jsonl", base_time + Duration::minutes(4));
     obj.competition_id = comp1_id;
     all_objects.push(obj.clone());
     env.add_object_to_db_and_s3(obj, "Comp1 data 2").await;
@@ -881,7 +881,7 @@ async fn regular_sync_continues_regardless_of_competition_specific_progress() {
     for obj in &all_objects {
         env.verify_object_synced(obj)
             .await
-            .unwrap_or_else(|e| panic!("Object {} should be synced: {}", obj.object_key, e));
+            .unwrap_or_else(|e| panic!("Object {} should be synced: {}", obj.id, e));
     }
 }
 
@@ -891,7 +891,7 @@ async fn reset_clears_sync_state_and_allows_resyncing() {
 
     let mut objects = Vec::new();
     for i in 0..3 {
-        let object = create_test_object_index(
+        let object = create_test_object_index_s3(
             &format!("test/reset-{}.jsonl", i),
             Utc::now() - Duration::hours(i as i64),
         );
@@ -905,7 +905,7 @@ async fn reset_clears_sync_state_and_allows_resyncing() {
     for obj in &objects {
         env.verify_object_synced(obj)
             .await
-            .unwrap_or_else(|e| panic!("Initial sync failed for {}: {}", obj.object_key, e));
+            .unwrap_or_else(|e| panic!("Initial sync failed for {}: {}", obj.id, e));
     }
 
     // Delete blobs one-by-one to simulate network reset
@@ -925,7 +925,7 @@ async fn reset_clears_sync_state_and_allows_resyncing() {
         assert!(
             !exists,
             "Object {} should not be re-synced before reset",
-            obj.object_key
+            obj.id
         );
     }
 
@@ -945,7 +945,7 @@ async fn reset_clears_sync_state_and_allows_resyncing() {
         env.verify_object_synced(obj).await.unwrap_or_else(|e| {
             panic!(
                 "Object {} should be re-synced after reset: {}",
-                obj.object_key, e
+                obj.id, e
             )
         });
     }
@@ -960,7 +960,7 @@ async fn start_synchronizer_runs_at_interval() {
     let base_time = Utc::now();
 
     for i in 0..6 {
-        let object = create_test_object_index(
+        let object = create_test_object_index_s3(
             &format!("test/interval-{}.jsonl", i),
             base_time - Duration::minutes(i as i64),
         );
@@ -1012,7 +1012,7 @@ async fn recall_key_structure_follows_required_format() {
     let object_id = Uuid::new_v4();
 
     // Create an object with an S3 key that doesn't match the required format
-    let mut object = create_test_object_index("some/random/s3/key.jsonl", Utc::now());
+    let mut object = create_test_object_index_s3("some/random/s3/key.jsonl", Utc::now());
     object.id = object_id;
     object.competition_id = competition_id;
     object.agent_id = agent_id;
@@ -1045,13 +1045,77 @@ async fn recall_key_structure_follows_required_format() {
 
     let exists_with_s3_key = env
         .recall_storage
-        .has_blob(&object.object_key)
+        .has_blob(object.object_key.as_ref().expect("object_key required"))
         .await
         .unwrap();
 
     assert!(
         !exists_with_s3_key,
         "Object should NOT be stored with the original S3 key: {}",
-        object.object_key
+        object.id
     );
+}
+
+#[tokio::test]
+async fn direct_storage_synchronization_works() {
+    use crate::db::FakeDatabase;
+    use crate::test_utils::create_test_object_index_direct;
+
+    // Create test setup
+    let db = Arc::new(FakeDatabase::new());
+    let sync_storage = Arc::new(FakeSyncStorage::new());
+    let recall_storage = Arc::new(FakeRecallStorage::new());
+    let config = SyncConfig { batch_size: 10 };
+
+    // Create synchronizer without S3 (direct mode)
+    let synchronizer = Synchronizer::with_storage(
+        db.clone(),
+        sync_storage.clone(),
+        None::<Arc<FakeStorage>>, // No S3 storage for direct mode
+        recall_storage.clone(),
+        config,
+    );
+
+    // Add some test objects with embedded data
+    let test_data = b"This is test data stored directly in the database".to_vec();
+    let object1 = create_test_object_index_direct(
+        "comp1".to_string(),
+        "agent1".to_string(),
+        test_data.clone(),
+    );
+    let object2 = create_test_object_index_direct(
+        "comp1".to_string(),
+        "agent2".to_string(),
+        test_data.clone(),
+    );
+
+    db.add_object(object1.clone()).await.unwrap();
+    db.add_object(object2.clone()).await.unwrap();
+
+    // Run synchronization
+    synchronizer.run(None, None).await.unwrap();
+
+    // Verify objects were synchronized
+    let synced = sync_storage
+        .get_objects_with_status(SyncStatus::Complete)
+        .await
+        .unwrap();
+    assert_eq!(synced.len(), 2);
+
+    // Verify data was stored in Recall with proper keys
+    let recall_key1 = format!(
+        "{}/{}/{}/{}",
+        object1.competition_id, object1.agent_id, object1.data_type, object1.id
+    );
+    let recall_key2 = format!(
+        "{}/{}/{}/{}",
+        object2.competition_id, object2.agent_id, object2.data_type, object2.id
+    );
+
+    assert!(recall_storage.has_blob(&recall_key1).await.unwrap());
+    assert!(recall_storage.has_blob(&recall_key2).await.unwrap());
+
+    // Verify the data stored in Recall matches the embedded data
+    let stored_data1 = recall_storage.get_blob(&recall_key1).await.unwrap();
+    assert_eq!(stored_data1, test_data);
 }
