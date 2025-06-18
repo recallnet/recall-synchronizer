@@ -19,9 +19,9 @@ pub struct SyncRecord {
     /// UUID from ObjectIndex (maps to object_index.id)
     pub id: Uuid,
     /// Competition ID
-    pub competition_id: Uuid,
+    pub competition_id: Option<Uuid>,
     /// Agent ID
-    pub agent_id: Uuid,
+    pub agent_id: Option<Uuid>,
     /// Data type
     pub data_type: String,
     /// Timestamp when object was last modified (from object_index.object_last_modified_at)
@@ -34,8 +34,8 @@ impl SyncRecord {
     /// Create a new SyncRecord with PendingSync status
     pub fn new(
         id: Uuid,
-        competition_id: Uuid,
-        agent_id: Uuid,
+        competition_id: Option<Uuid>,
+        agent_id: Option<Uuid>,
         data_type: String,
         timestamp: DateTime<Utc>,
     ) -> Self {
@@ -52,8 +52,8 @@ impl SyncRecord {
     /// Create a SyncRecord with a specific status
     pub fn with_status(
         id: Uuid,
-        competition_id: Uuid,
-        agent_id: Uuid,
+        competition_id: Option<Uuid>,
+        agent_id: Option<Uuid>,
         data_type: String,
         timestamp: DateTime<Utc>,
         status: SyncStatus,

@@ -40,8 +40,8 @@ impl SqliteSyncStorage {
             .execute(
                 "CREATE TABLE IF NOT EXISTS sync_records (
                     id TEXT PRIMARY KEY,
-                    competition_id TEXT NOT NULL,
-                    agent_id TEXT NOT NULL,
+                    competition_id TEXT,
+                    agent_id TEXT,
                     data_type TEXT NOT NULL,
                     timestamp TEXT NOT NULL,
                     status TEXT NOT NULL
@@ -136,14 +136,14 @@ impl SqliteSyncStorage {
 impl SyncStorage for SqliteSyncStorage {
     async fn add_object(&self, record: SyncRecord) -> Result<(), SyncStorageError> {
         debug!(
-            "Adding sync record: id={}, competition_id={}, agent_id={}, data_type={}, status={:?}",
+            "Adding sync record: id={}, competition_id={:?}, agent_id={:?}, data_type={}, status={:?}",
             record.id, record.competition_id, record.agent_id, record.data_type, record.status
         );
 
         let connection = Arc::clone(&self.connection);
         let id_str = record.id.to_string();
-        let competition_id_str = record.competition_id.to_string();
-        let agent_id_str = record.agent_id.to_string();
+        let competition_id_str = record.competition_id.map(|id| id.to_string());
+        let agent_id_str = record.agent_id.map(|id| id.to_string());
         let timestamp_str = Self::datetime_to_string(record.timestamp);
         let status_str = Self::status_to_string(record.status);
 
@@ -246,7 +246,7 @@ impl SyncStorage for SqliteSyncStorage {
                 }
             };
 
-            let result: Option<(String, String, String, String, String, String)> = conn
+            let result: Option<(String, Option<String>, Option<String>, String, String, String)> = conn
                 .query_row(
                     "SELECT id, competition_id, agent_id, data_type, timestamp, status 
                      FROM sync_records WHERE id = ?1",
@@ -281,20 +281,26 @@ impl SyncStorage for SqliteSyncStorage {
                         error!("Failed to parse UUID from database: {}", e);
                         SyncStorageError::OperationError(format!("Failed to parse UUID: {}", e))
                     })?;
-                    let competition_id = Uuid::parse_str(&competition_id_str).map_err(|e| {
-                        error!("Failed to parse competition UUID from database: {}", e);
-                        SyncStorageError::OperationError(format!(
-                            "Failed to parse competition UUID: {}",
-                            e
-                        ))
-                    })?;
-                    let agent_id = Uuid::parse_str(&agent_id_str).map_err(|e| {
-                        error!("Failed to parse agent UUID from database: {}", e);
-                        SyncStorageError::OperationError(format!(
-                            "Failed to parse agent UUID: {}",
-                            e
-                        ))
-                    })?;
+                    let competition_id = competition_id_str
+                        .map(|s| Uuid::parse_str(&s))
+                        .transpose()
+                        .map_err(|e| {
+                            error!("Failed to parse competition UUID from database: {}", e);
+                            SyncStorageError::OperationError(format!(
+                                "Failed to parse competition UUID: {}",
+                                e
+                            ))
+                        })?;
+                    let agent_id = agent_id_str
+                        .map(|s| Uuid::parse_str(&s))
+                        .transpose()
+                        .map_err(|e| {
+                            error!("Failed to parse agent UUID from database: {}", e);
+                            SyncStorageError::OperationError(format!(
+                                "Failed to parse agent UUID: {}",
+                                e
+                            ))
+                        })?;
                     let timestamp = Self::string_to_datetime(&timestamp_str)?;
                     let status = Self::string_to_status(&status_str)?;
 
@@ -354,8 +360,8 @@ impl SyncStorage for SqliteSyncStorage {
             let records: Result<Vec<SyncRecord>, SyncStorageError> = stmt
                 .query_map(params![status_str], |row| {
                     let id_str: String = row.get(0)?;
-                    let competition_id_str: String = row.get(1)?;
-                    let agent_id_str: String = row.get(2)?;
+                    let competition_id_str: Option<String> = row.get(1)?;
+                    let agent_id_str: Option<String> = row.get(2)?;
                     let data_type: String = row.get(3)?;
                     let timestamp_str: String = row.get(4)?;
                     let status_str: String = row.get(5)?;
@@ -392,20 +398,26 @@ impl SyncStorage for SqliteSyncStorage {
                             error!("Failed to parse UUID: {}", e);
                             SyncStorageError::OperationError(format!("Failed to parse UUID: {}", e))
                         })?;
-                        let competition_id = Uuid::parse_str(&competition_id_str).map_err(|e| {
-                            error!("Failed to parse competition UUID: {}", e);
-                            SyncStorageError::OperationError(format!(
-                                "Failed to parse competition UUID: {}",
-                                e
-                            ))
-                        })?;
-                        let agent_id = Uuid::parse_str(&agent_id_str).map_err(|e| {
-                            error!("Failed to parse agent UUID: {}", e);
-                            SyncStorageError::OperationError(format!(
-                                "Failed to parse agent UUID: {}",
-                                e
-                            ))
-                        })?;
+                        let competition_id = competition_id_str
+                            .map(|s| Uuid::parse_str(&s))
+                            .transpose()
+                            .map_err(|e| {
+                                error!("Failed to parse competition UUID: {}", e);
+                                SyncStorageError::OperationError(format!(
+                                    "Failed to parse competition UUID: {}",
+                                    e
+                                ))
+                            })?;
+                        let agent_id = agent_id_str
+                            .map(|s| Uuid::parse_str(&s))
+                            .transpose()
+                            .map_err(|e| {
+                                error!("Failed to parse agent UUID: {}", e);
+                                SyncStorageError::OperationError(format!(
+                                    "Failed to parse agent UUID: {}",
+                                    e
+                                ))
+                            })?;
                         let timestamp = Self::string_to_datetime(&timestamp_str)?;
                         let status = Self::string_to_status(&status_str)?;
 
@@ -467,8 +479,8 @@ impl SyncStorage for SqliteSyncStorage {
                     [],
                     |row| {
                         let id_str: String = row.get(0)?;
-                        let competition_id_str: String = row.get(1)?;
-                        let agent_id_str: String = row.get(2)?;
+                        let competition_id_str: Option<String> = row.get(1)?;
+                        let agent_id_str: Option<String> = row.get(2)?;
                         let data_type: String = row.get(3)?;
                         let timestamp_str: String = row.get(4)?;
                         let status_str: String = row.get(5)?;
@@ -501,20 +513,26 @@ impl SyncStorage for SqliteSyncStorage {
                         error!("Failed to parse UUID: {}", e);
                         SyncStorageError::OperationError(format!("Failed to parse UUID: {}", e))
                     })?;
-                    let competition_id = Uuid::parse_str(&competition_id_str).map_err(|e| {
-                        error!("Failed to parse competition UUID: {}", e);
-                        SyncStorageError::OperationError(format!(
-                            "Failed to parse competition UUID: {}",
-                            e
-                        ))
-                    })?;
-                    let agent_id = Uuid::parse_str(&agent_id_str).map_err(|e| {
-                        error!("Failed to parse agent UUID: {}", e);
-                        SyncStorageError::OperationError(format!(
-                            "Failed to parse agent UUID: {}",
-                            e
-                        ))
-                    })?;
+                    let competition_id = competition_id_str
+                        .map(|s| Uuid::parse_str(&s))
+                        .transpose()
+                        .map_err(|e| {
+                            error!("Failed to parse competition UUID: {}", e);
+                            SyncStorageError::OperationError(format!(
+                                "Failed to parse competition UUID: {}",
+                                e
+                            ))
+                        })?;
+                    let agent_id = agent_id_str
+                        .map(|s| Uuid::parse_str(&s))
+                        .transpose()
+                        .map_err(|e| {
+                            error!("Failed to parse agent UUID: {}", e);
+                            SyncStorageError::OperationError(format!(
+                                "Failed to parse agent UUID: {}",
+                                e
+                            ))
+                        })?;
                     let timestamp = Self::string_to_datetime(&timestamp_str)?;
                     let status = Self::string_to_status(&status_str)?;
 

@@ -13,8 +13,8 @@ type StorageFactory =
 fn create_test_record(_object_key: &str, timestamp: chrono::DateTime<Utc>) -> SyncRecord {
     SyncRecord::new(
         Uuid::new_v4(),
-        Uuid::new_v4(),
-        Uuid::new_v4(),
+        Some(Uuid::new_v4()),
+        Some(Uuid::new_v4()),
         "TEST_DATA".to_string(),
         timestamp,
     )

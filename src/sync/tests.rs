@@ -280,8 +280,8 @@ async fn when_object_is_already_being_processed_it_is_skipped() {
 
     let sync_record = SyncRecord::new(
         test_object.id,
-        test_object.competition_id.unwrap_or_default(),
-        test_object.agent_id.unwrap_or_default(),
+        test_object.competition_id,
+        test_object.agent_id,
         test_object.data_type.clone(),
         test_object.created_at,
     );
@@ -594,11 +594,11 @@ async fn regular_sync_processes_all_unsynced_objects_from_all_competitions() {
 
     let comp1_synced = synced
         .iter()
-        .filter(|r| r.competition_id == comp1_id)
+        .filter(|r| r.competition_id == Some(comp1_id))
         .count();
     let comp2_synced = synced
         .iter()
-        .filter(|r| r.competition_id == comp2_id)
+        .filter(|r| r.competition_id == Some(comp2_id))
         .count();
 
     assert_eq!(comp1_synced, 3);

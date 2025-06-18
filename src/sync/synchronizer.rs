@@ -166,8 +166,8 @@ where
     /// Synchronizes a single object to Recall
     async fn sync_object(&self, object: &ObjectIndex) -> Result<()> {
         let object_id = object.id;
-        let competition_id = object.competition_id.unwrap_or_default();
-        let agent_id = object.agent_id.unwrap_or_default();
+        let competition_id = object.competition_id;
+        let agent_id = object.agent_id;
         let data_type = object.data_type.clone();
         let created_at = object.created_at;
 
