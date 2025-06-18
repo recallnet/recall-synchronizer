@@ -28,19 +28,12 @@ impl Database for FakeDatabase {
         limit: u32,
         since: Option<DateTime<Utc>>,
         after_id: Option<Uuid>,
-        competition_id: Option<Uuid>,
     ) -> Result<Vec<ObjectIndex>, DatabaseError> {
         let objects = self.objects.read().unwrap();
 
         let mut filtered: Vec<ObjectIndex> = objects
             .values()
             .filter(|obj| {
-                if let Some(comp_id) = competition_id {
-                    if obj.competition_id != comp_id {
-                        return false;
-                    }
-                }
-
                 match (since, after_id) {
                     (Some(ts), Some(id)) => {
                         // For objects with timestamp > since OR (timestamp == since AND id > after_id)

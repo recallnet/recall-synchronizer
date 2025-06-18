@@ -10,7 +10,7 @@ use uuid::Uuid;
 #[derive(Clone)]
 pub struct FakeSyncStorage {
     records: Arc<RwLock<HashMap<Uuid, SyncRecord>>>,
-    last_synced_ids: Arc<RwLock<HashMap<Option<Uuid>, Uuid>>>,
+    last_synced_id: Arc<RwLock<Option<Uuid>>>,
 }
 
 impl FakeSyncStorage {
@@ -18,7 +18,7 @@ impl FakeSyncStorage {
     pub fn new() -> Self {
         FakeSyncStorage {
             records: Arc::new(RwLock::new(HashMap::new())),
-            last_synced_ids: Arc::new(RwLock::new(HashMap::new())),
+            last_synced_id: Arc::new(RwLock::new(None)),
         }
     }
 }
@@ -74,29 +74,22 @@ impl SyncStorage for FakeSyncStorage {
             .cloned())
     }
 
-    async fn get_last_synced_object_id(
-        &self,
-        competition_id: Option<Uuid>,
-    ) -> Result<Option<Uuid>, SyncStorageError> {
-        let last_ids = self.last_synced_ids.read().unwrap();
-        Ok(last_ids.get(&competition_id).copied())
+    async fn get_last_synced_object_id(&self) -> Result<Option<Uuid>, SyncStorageError> {
+        let last_id = self.last_synced_id.read().unwrap();
+        Ok(*last_id)
     }
 
-    async fn set_last_synced_object_id(
-        &self,
-        id: Uuid,
-        competition_id: Option<Uuid>,
-    ) -> Result<(), SyncStorageError> {
-        let mut last_ids = self.last_synced_ids.write().unwrap();
-        last_ids.insert(competition_id, id);
+    async fn set_last_synced_object_id(&self, id: Uuid) -> Result<(), SyncStorageError> {
+        let mut last_id = self.last_synced_id.write().unwrap();
+        *last_id = Some(id);
         Ok(())
     }
 
     async fn clear_all(&self) -> Result<(), SyncStorageError> {
         let mut records = self.records.write().unwrap();
         records.clear();
-        let mut last_ids = self.last_synced_ids.write().unwrap();
-        last_ids.clear();
+        let mut last_id = self.last_synced_id.write().unwrap();
+        *last_id = None;
         Ok(())
     }
 }

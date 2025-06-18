@@ -13,13 +13,11 @@ pub trait Database: Send + Sync + 'static {
     /// * `limit` - Maximum number of objects to return
     /// * `since` - Only return objects modified after this timestamp
     /// * `after_id` - For objects with the same timestamp as `since`, only return those with ID > after_id
-    /// * `competition_id` - Filter objects by competition ID if provided
     async fn get_objects(
         &self,
         limit: u32,
         since: Option<DateTime<Utc>>,
         after_id: Option<Uuid>,
-        competition_id: Option<Uuid>,
     ) -> Result<Vec<ObjectIndex>, DatabaseError>;
 
     /// Add an object to the database (test-only)
@@ -35,11 +33,8 @@ impl<T: Database + ?Sized> Database for Arc<T> {
         limit: u32,
         since: Option<DateTime<Utc>>,
         after_id: Option<Uuid>,
-        competition_id: Option<Uuid>,
     ) -> Result<Vec<ObjectIndex>, DatabaseError> {
-        (**self)
-            .get_objects(limit, since, after_id, competition_id)
-            .await
+        (**self).get_objects(limit, since, after_id).await
     }
 
     #[cfg(test)]

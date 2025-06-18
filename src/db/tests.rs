@@ -184,7 +184,7 @@ async fn get_objects_with_no_timestamp_filter_returns_all_objects() {
         let (db, mode) = db_factory().await;
 
         let test_objects = add_test_objects(&*db, mode).await;
-        let objects = db.get_objects(20, None, None, None).await.unwrap();
+        let objects = db.get_objects(20, None, None).await.unwrap();
 
         assert_eq!(
             objects.len(),
@@ -209,10 +209,7 @@ async fn get_objects_with_future_timestamp_returns_empty() {
 
         let _ = add_test_objects(&*db, mode).await;
         let future_time = Utc::now() + Duration::days(1);
-        let objects = db
-            .get_objects(20, Some(future_time), None, None)
-            .await
-            .unwrap();
+        let objects = db.get_objects(20, Some(future_time), None).await.unwrap();
 
         assert_eq!(
             objects.len(),
@@ -229,10 +226,7 @@ async fn get_objects_with_past_timestamp_returns_recent_objects() {
         let midpoint_time = Utc::now() - Duration::hours(5);
 
         let test_objects = add_test_objects(&*db, mode).await;
-        let objects = db
-            .get_objects(20, Some(midpoint_time), None, None)
-            .await
-            .unwrap();
+        let objects = db.get_objects(20, Some(midpoint_time), None).await.unwrap();
 
         let expected_count = test_objects
             .iter()
@@ -266,7 +260,7 @@ async fn get_objects_with_limit_at_beginning_of_range_returns_objects() {
         let (db, mode) = db_factory().await;
 
         let _ = add_test_objects(&*db, mode).await;
-        let objects = db.get_objects(3, None, None, None).await.unwrap();
+        let objects = db.get_objects(3, None, None).await.unwrap();
         assert_eq!(
             objects.len(),
             3,
@@ -289,7 +283,7 @@ async fn get_objects_with_limit_in_middle_of_range_returns_objects() {
 
         let test_objects = add_test_objects(&*db, mode).await;
         let objects = db
-            .get_objects(limit, Some(test_objects[1].created_at), None, None)
+            .get_objects(limit, Some(test_objects[1].created_at), None)
             .await
             .unwrap();
 
@@ -316,7 +310,7 @@ async fn get_objects_with_limit_beyond_available_records_returns_objects_up_to_l
         let (db, mode) = db_factory().await;
         let test_objects = add_test_objects(&*db, mode).await;
 
-        let objects = db.get_objects(100, None, None, None).await.unwrap();
+        let objects = db.get_objects(100, None, None).await.unwrap();
 
         assert_eq!(
             objects.len(),
@@ -358,7 +352,7 @@ async fn get_objects_with_same_timestamp_and_after_id_should_paginate() {
         objects_same_time.sort_by(|a, b| a.id.cmp(&b.id));
 
         // Get first batch without after_id
-        let batch1 = db.get_objects(3, None, None, None).await.unwrap();
+        let batch1 = db.get_objects(3, None, None).await.unwrap();
 
         assert_eq!(batch1.len(), 3, "First batch should contain 3 objects");
 
@@ -372,7 +366,7 @@ async fn get_objects_with_same_timestamp_and_after_id_should_paginate() {
         // Get second batch using after_id from first batch
         let last_id_batch1 = batch1.last().unwrap().id;
         let batch2 = db
-            .get_objects(3, Some(shared_timestamp), Some(last_id_batch1), None)
+            .get_objects(3, Some(shared_timestamp), Some(last_id_batch1))
             .await
             .unwrap();
 
@@ -388,7 +382,7 @@ async fn get_objects_with_same_timestamp_and_after_id_should_paginate() {
 
         let last_id_batch2 = batch2.last().unwrap().id;
         let batch3 = db
-            .get_objects(3, Some(shared_timestamp), Some(last_id_batch2), None)
+            .get_objects(3, Some(shared_timestamp), Some(last_id_batch2))
             .await
             .unwrap();
 
@@ -404,7 +398,7 @@ async fn get_objects_with_same_timestamp_and_after_id_should_paginate() {
 
         let last_id_batch3 = batch3.last().unwrap().id;
         let batch4 = db
-            .get_objects(3, Some(shared_timestamp), Some(last_id_batch3), None)
+            .get_objects(3, Some(shared_timestamp), Some(last_id_batch3))
             .await
             .unwrap();
 
@@ -481,12 +475,7 @@ async fn get_objects_with_mixed_timestamps_and_after_id_filters_correctly() {
         db.add_object(older_object).await.unwrap();
 
         let mixed_batch = db
-            .get_objects(
-                10,
-                Some(shared_timestamp),
-                Some(objects_same_time[2].id),
-                None,
-            )
+            .get_objects(10, Some(shared_timestamp), Some(objects_same_time[2].id))
             .await
             .unwrap();
 
@@ -564,12 +553,7 @@ async fn get_objects_with_after_id_returns_with_consistent_ordering() {
         // Verify deterministic ordering by running the same query multiple times
         for run in 0..3 {
             let consistent_batch = db
-                .get_objects(
-                    5,
-                    Some(shared_timestamp),
-                    Some(objects_same_time[1].id),
-                    None,
-                )
+                .get_objects(5, Some(shared_timestamp), Some(objects_same_time[1].id))
                 .await
                 .unwrap();
 
@@ -600,198 +584,6 @@ async fn get_objects_with_after_id_returns_with_consistent_ordering() {
     }
 }
 
-#[tokio::test]
-async fn get_objects_with_competition_id_should_filter() {
-    for db_factory in get_all_test_databases() {
-        let (db, mode) = db_factory().await;
+// Competition ID filtering tests removed - filtering is now done at the application level
 
-        let comp1_id = uuid::Uuid::new_v4();
-        let comp2_id = uuid::Uuid::new_v4();
-        let base_time = Utc::now() - Duration::hours(10);
-
-        // Create 5 objects for competition 1
-        for i in 0..5 {
-            let object = match mode {
-                StorageMode::S3 => {
-                    let mut obj = create_test_object_index_s3(
-                        &format!("test/comp1_object_{:02}.jsonl", i),
-                        base_time + Duration::minutes(i * 10),
-                    );
-                    obj.competition_id = comp1_id;
-                    obj
-                }
-                StorageMode::Direct => {
-                    let mut obj = create_test_object_index_direct(
-                        comp1_id.to_string(),
-                        Uuid::new_v4().to_string(),
-                        format!("Comp1 data {}", i).into_bytes(),
-                    );
-                    obj.created_at = base_time + Duration::minutes(i * 10);
-                    obj
-                }
-            };
-            db.add_object(object).await.unwrap();
-        }
-
-        // Create 3 objects for competition 2
-        for i in 0..3 {
-            let object = match mode {
-                StorageMode::S3 => {
-                    let mut obj = create_test_object_index_s3(
-                        &format!("test/comp2_object_{:02}.jsonl", i),
-                        base_time + Duration::minutes(i * 10),
-                    );
-                    obj.competition_id = comp2_id;
-                    obj
-                }
-                StorageMode::Direct => {
-                    let mut obj = create_test_object_index_direct(
-                        comp2_id.to_string(),
-                        Uuid::new_v4().to_string(),
-                        format!("Comp2 data {}", i).into_bytes(),
-                    );
-                    obj.created_at = base_time + Duration::minutes(i * 10);
-                    obj
-                }
-            };
-            db.add_object(object).await.unwrap();
-        }
-
-        let comp1_objects = db
-            .get_objects(20, None, None, Some(comp1_id))
-            .await
-            .unwrap();
-        assert_eq!(
-            comp1_objects.len(),
-            5,
-            "Should return exactly 5 objects for competition 1"
-        );
-        for obj in &comp1_objects {
-            assert_eq!(
-                obj.competition_id, comp1_id,
-                "All returned objects should belong to competition 1"
-            );
-        }
-
-        let comp2_objects = db
-            .get_objects(20, None, None, Some(comp2_id))
-            .await
-            .unwrap();
-        assert_eq!(
-            comp2_objects.len(),
-            3,
-            "Should return exactly 3 objects for competition 2"
-        );
-        for obj in &comp2_objects {
-            assert_eq!(
-                obj.competition_id, comp2_id,
-                "All returned objects should belong to competition 2"
-            );
-        }
-
-        let all_objects = db.get_objects(20, None, None, None).await.unwrap();
-        assert_eq!(
-            all_objects.len(),
-            8,
-            "Should return all 8 objects when no competition filter is provided"
-        );
-    }
-}
-
-#[tokio::test]
-async fn get_objects_with_competition_id_and_after_id_should_paginate() {
-    for db_factory in get_all_test_databases() {
-        let (db, mode) = db_factory().await;
-
-        let comp_id = uuid::Uuid::new_v4();
-        let base_time = Utc::now() - Duration::hours(10);
-
-        // Create 8 objects for a specific competition
-        let mut comp_objects = Vec::new();
-        for i in 0..8 {
-            let object = match mode {
-                StorageMode::S3 => {
-                    let mut obj = create_test_object_index_s3(
-                        &format!("test/comp_object_{:02}.jsonl", i),
-                        base_time + Duration::minutes(i * 10),
-                    );
-                    obj.competition_id = comp_id;
-                    obj
-                }
-                StorageMode::Direct => {
-                    let mut obj = create_test_object_index_direct(
-                        comp_id.to_string(),
-                        Uuid::new_v4().to_string(),
-                        format!("Competition data {}", i).into_bytes(),
-                    );
-                    obj.created_at = base_time + Duration::minutes(i * 10);
-                    obj
-                }
-            };
-            db.add_object(object.clone()).await.unwrap();
-            comp_objects.push(object);
-        }
-
-        // Create 4 objects for other competitions to ensure filtering works
-        for i in 0..4 {
-            let object = match mode {
-                StorageMode::S3 => {
-                    let mut obj = create_test_object_index_s3(
-                        &format!("test/other_object_{:02}.jsonl", i),
-                        base_time + Duration::minutes(i * 10),
-                    );
-                    obj.competition_id = uuid::Uuid::new_v4();
-                    obj
-                }
-                StorageMode::Direct => {
-                    let mut obj = create_test_object_index_direct(
-                        Uuid::new_v4().to_string(),
-                        Uuid::new_v4().to_string(),
-                        format!("Other data {}", i).into_bytes(),
-                    );
-                    obj.created_at = base_time + Duration::minutes(i * 10);
-                    obj
-                }
-            };
-            db.add_object(object).await.unwrap();
-        }
-
-        let batch1 = db.get_objects(3, None, None, Some(comp_id)).await.unwrap();
-        assert_eq!(batch1.len(), 3, "First batch should contain 3 objects");
-
-        for obj in &batch1 {
-            assert_eq!(
-                obj.competition_id, comp_id,
-                "All objects in first batch should belong to the specified competition"
-            );
-        }
-
-        // Get second batch using pagination
-        let last_object = batch1.last().unwrap();
-        let batch2 = db
-            .get_objects(
-                3,
-                Some(last_object.created_at),
-                Some(last_object.id),
-                Some(comp_id),
-            )
-            .await
-            .unwrap();
-
-        assert_eq!(batch2.len(), 3, "Second batch should contain 3 objects");
-
-        let batch1_ids: std::collections::HashSet<_> = batch1.iter().map(|o| o.id).collect();
-        let batch2_ids: std::collections::HashSet<_> = batch2.iter().map(|o| o.id).collect();
-        assert!(
-            batch1_ids.is_disjoint(&batch2_ids),
-            "Batches should not overlap"
-        );
-
-        for obj in &batch2 {
-            assert_eq!(
-                obj.competition_id, comp_id,
-                "All objects in second batch should belong to the specified competition"
-            );
-        }
-    }
-}
+// Test removed - competition ID filtering is now done at the application level

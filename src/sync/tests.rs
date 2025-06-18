@@ -26,16 +26,25 @@ struct TestEnvironment {
     sync_storage: Arc<FakeSyncStorage>,
     s3_storage: Arc<FakeStorage>,
     recall_storage: Arc<FakeRecallStorage>,
-    synchronizer:
-        Synchronizer<FakeDatabase, FakeSyncStorage, FakeStorage, FakeRecallStorage>,
+    synchronizer: Synchronizer<FakeDatabase, FakeSyncStorage, FakeStorage, FakeRecallStorage>,
 }
 
 impl TestEnvironment {
     fn construct_recall_key(object: &ObjectIndex) -> String {
-        format!(
-            "{}/{}/{}/{}",
-            object.competition_id, object.agent_id, object.data_type, object.id
-        )
+        let mut parts = Vec::new();
+
+        if let Some(competition_id) = &object.competition_id {
+            parts.push(competition_id.to_string());
+        }
+
+        if let Some(agent_id) = &object.agent_id {
+            parts.push(agent_id.to_string());
+        }
+
+        parts.push(object.data_type.clone());
+        parts.push(object.id.to_string());
+
+        parts.join("/")
     }
 
     /// Verify that an object has been properly synchronized
@@ -128,7 +137,10 @@ impl TestEnvironment {
     async fn add_object_to_db_and_s3(&self, object: ObjectIndex, data: &str) {
         self.database.add_object(object.clone()).await.unwrap();
         self.s3_storage
-            .add_object(object.object_key.as_ref().expect("object_key required"), Bytes::from(data.to_string()))
+            .add_object(
+                object.object_key.as_ref().expect("object_key required"),
+                Bytes::from(data.to_string()),
+            )
             .await
             .unwrap();
     }
@@ -205,7 +217,7 @@ async fn when_no_filters_applied_all_objects_are_synchronized() {
 
     let objects = vec![object1, object2];
 
-    env.synchronizer.run(None, None).await.unwrap();
+    env.synchronizer.run(None).await.unwrap();
 
     for obj in &objects {
         env.verify_object_synced(obj)
@@ -225,46 +237,6 @@ async fn when_no_filters_applied_all_objects_are_synchronized() {
     );
 }
 
-#[tokio::test]
-async fn when_competition_id_filter_is_applied_only_matching_objects_are_synchronized() {
-    let env = setup().await;
-
-    let competition_id = uuid::Uuid::new_v4();
-    let now = Utc::now();
-
-    let mut filtered_object = create_test_object_index_s3("test/filtered.jsonl", now);
-    filtered_object.competition_id = competition_id;
-
-    let other_object = create_test_object_index_s3("test/other.jsonl", now + Duration::hours(1));
-
-    env.add_object_to_db_and_s3(filtered_object.clone(), "Filtered test data")
-        .await;
-    env.add_object_to_db_and_s3(other_object.clone(), "Other test data")
-        .await;
-
-    env.synchronizer
-        .run(Some(competition_id.to_string()), None)
-        .await
-        .unwrap();
-
-    env.verify_object_synced(&filtered_object)
-        .await
-        .unwrap_or_else(|e| {
-            panic!(
-                "Filtered object {} verification failed: {}",
-                filtered_object.id, e
-            )
-        });
-
-    env.verify_object_not_synced(&other_object)
-        .await
-        .unwrap_or_else(|e| {
-            panic!(
-                "Object {} should not be synchronized: {}",
-                other_object.id, e
-            )
-        });
-}
 
 #[tokio::test]
 async fn when_timestamp_filter_is_applied_only_newer_objects_are_synchronized() {
@@ -282,7 +254,7 @@ async fn when_timestamp_filter_is_applied_only_newer_objects_are_synchronized() 
         .await;
 
     let filter_time = Utc::now() - Duration::days(2);
-    env.synchronizer.run(None, Some(filter_time)).await.unwrap();
+    env.synchronizer.run(Some(filter_time)).await.unwrap();
 
     env.verify_object_not_synced(&old_object)
         .await
@@ -295,12 +267,7 @@ async fn when_timestamp_filter_is_applied_only_newer_objects_are_synchronized() 
 
     env.verify_object_synced(&new_object)
         .await
-        .unwrap_or_else(|e| {
-            panic!(
-                "Newer object {} verification failed: {}",
-                new_object.id, e
-            )
-        });
+        .unwrap_or_else(|e| panic!("Newer object {} verification failed: {}", new_object.id, e));
 }
 
 #[tokio::test]
@@ -313,8 +280,8 @@ async fn when_object_is_already_being_processed_it_is_skipped() {
 
     let sync_record = SyncRecord::new(
         test_object.id,
-        test_object.competition_id,
-        test_object.agent_id,
+        test_object.competition_id.unwrap_or_default(),
+        test_object.agent_id.unwrap_or_default(),
         test_object.data_type.clone(),
         test_object.created_at,
     );
@@ -325,7 +292,7 @@ async fn when_object_is_already_being_processed_it_is_skipped() {
         .await
         .unwrap();
 
-    env.synchronizer.run(None, None).await.unwrap();
+    env.synchronizer.run(None).await.unwrap();
 
     // The object should still be in Processing status since we didn't let our synchronizer complete it
     let record = env.sync_storage.get_object(test_object.id).await.unwrap();
@@ -333,7 +300,12 @@ async fn when_object_is_already_being_processed_it_is_skipped() {
 
     let exists_in_recall = env
         .recall_storage
-        .has_blob(test_object.object_key.as_ref().expect("object_key required"))
+        .has_blob(
+            test_object
+                .object_key
+                .as_ref()
+                .expect("object_key required"),
+        )
         .await
         .unwrap();
     assert!(
@@ -346,7 +318,7 @@ async fn when_object_is_already_being_processed_it_is_skipped() {
         .set_object_status(test_object.id, SyncStatus::Complete)
         .await
         .unwrap();
-    env.synchronizer.run(None, None).await.unwrap();
+    env.synchronizer.run(None).await.unwrap();
 
     let record = env.sync_storage.get_object(test_object.id).await.unwrap();
     assert_eq!(
@@ -373,7 +345,7 @@ async fn with_batch_size_should_limits_database_fetch() {
             .await;
     }
 
-    env.synchronizer.run(None, None).await.unwrap();
+    env.synchronizer.run(None).await.unwrap();
 
     let completed = env
         .sync_storage
@@ -406,7 +378,7 @@ async fn multiple_sync_runs_with_new_objects() {
             .await;
     }
 
-    env.synchronizer.run(None, None).await.unwrap();
+    env.synchronizer.run(None).await.unwrap();
 
     let synced_records = env
         .sync_storage
@@ -425,7 +397,7 @@ async fn multiple_sync_runs_with_new_objects() {
             .await;
     }
 
-    env.synchronizer.run(None, None).await.unwrap();
+    env.synchronizer.run(None).await.unwrap();
 
     let synced_records = env
         .sync_storage
@@ -478,8 +450,8 @@ async fn when_since_param_includes_already_synced_objects_they_are_skipped() {
     }
 
     // Sync twice to ensure all objects are processed
-    env.synchronizer.run(None, None).await.unwrap();
-    env.synchronizer.run(None, None).await.unwrap();
+    env.synchronizer.run(None).await.unwrap();
+    env.synchronizer.run(None).await.unwrap();
 
     let synced = env
         .sync_storage
@@ -500,7 +472,7 @@ async fn when_since_param_includes_already_synced_objects_they_are_skipped() {
 
     // Sync with 'since' that includes already synced objects starting from the 3rd object
     let since_time = base_time + Duration::hours(2) + Duration::minutes(30);
-    env.synchronizer.run(None, Some(since_time)).await.unwrap();
+    env.synchronizer.run(Some(since_time)).await.unwrap();
 
     for (i, object) in objects.iter().enumerate().take(8) {
         env.verify_object_synced(object)
@@ -536,7 +508,7 @@ async fn when_since_param_skips_unsynced_objects_they_remain_unsynced() {
 
     // Sync with 'since' that skips first 3 objects
     let since_time = base_time + Duration::hours(3) - Duration::minutes(30);
-    env.synchronizer.run(None, Some(since_time)).await.unwrap();
+    env.synchronizer.run(Some(since_time)).await.unwrap();
 
     for (i, object) in objects.iter().enumerate().take(3) {
         env.verify_object_not_synced(object)
@@ -556,7 +528,7 @@ async fn when_since_param_skips_unsynced_objects_they_remain_unsynced() {
             .unwrap_or_else(|e| panic!("Object {} should not be synced: {}", i, e));
     }
 
-    env.synchronizer.run(None, None).await.unwrap();
+    env.synchronizer.run(None).await.unwrap();
 
     for (i, object) in objects.iter().enumerate().take(3) {
         env.verify_object_not_synced(object)
@@ -571,169 +543,6 @@ async fn when_since_param_skips_unsynced_objects_they_remain_unsynced() {
     }
 }
 
-#[tokio::test]
-async fn sync_with_same_competition_id_continues_from_where_it_left_off() {
-    let mut config = create_test_config();
-    config.sync.batch_size = 3;
-    let env = setup_with_config(config).await;
-
-    let base_time = Utc::now() - Duration::hours(10);
-    let comp1_id = Uuid::new_v4();
-    let comp2_id = Uuid::new_v4();
-
-    for i in 0..5 {
-        let mut object = create_test_object_index_s3(
-            &format!("comp1/obj-{}.jsonl", i),
-            base_time + Duration::minutes(i as i64),
-        );
-        object.competition_id = comp1_id;
-        env.add_object_to_db_and_s3(object, &format!("Comp1 data {}", i))
-            .await;
-    }
-
-    for i in 0..4 {
-        let mut object = create_test_object_index_s3(
-            &format!("comp2/obj-{}.jsonl", i),
-            base_time + Duration::minutes((i + 10) as i64),
-        );
-        object.competition_id = comp2_id;
-        env.add_object_to_db_and_s3(object, &format!("Comp2 data {}", i))
-            .await;
-    }
-
-    env.synchronizer
-        .run(Some(comp1_id.to_string()), None)
-        .await
-        .unwrap();
-
-    let synced = env
-        .sync_storage
-        .get_objects_with_status(SyncStatus::Complete)
-        .await
-        .unwrap();
-    assert_eq!(synced.len(), 3, "Should sync 3 objects from comp1");
-
-    // Verify all synced objects are from competition 1
-    for record in &synced {
-        assert_eq!(record.competition_id, comp1_id);
-    }
-
-    // Second sync for competition 1 - should sync remaining 2 objects
-    env.synchronizer
-        .run(Some(comp1_id.to_string()), None)
-        .await
-        .unwrap();
-
-    let synced = env
-        .sync_storage
-        .get_objects_with_status(SyncStatus::Complete)
-        .await
-        .unwrap();
-    assert_eq!(synced.len(), 5, "Should have all 5 comp1 objects synced");
-
-    let comp1_synced = synced
-        .iter()
-        .filter(|r| r.competition_id == comp1_id)
-        .count();
-    let comp2_synced = synced
-        .iter()
-        .filter(|r| r.competition_id == comp2_id)
-        .count();
-
-    assert_eq!(comp1_synced, 5, "All comp1 objects should be synced");
-    assert_eq!(comp2_synced, 0, "No comp2 objects should be synced");
-}
-
-#[tokio::test]
-async fn sync_with_different_competitions_maintains_separate_progress() {
-    let mut config = create_test_config();
-    config.sync.batch_size = 2;
-    let env = setup_with_config(config).await;
-
-    let base_time = Utc::now() - Duration::hours(10);
-    let comp1_id = Uuid::new_v4();
-    let comp2_id = Uuid::new_v4();
-
-    // Add 4 objects for each competition
-    for i in 0..4 {
-        let mut obj1 = create_test_object_index_s3(
-            &format!("comp1/obj-{}.jsonl", i),
-            base_time + Duration::minutes(i as i64),
-        );
-        obj1.competition_id = comp1_id;
-        env.add_object_to_db_and_s3(obj1, &format!("Comp1 data {}", i))
-            .await;
-
-        let mut obj2 = create_test_object_index_s3(
-            &format!("comp2/obj-{}.jsonl", i),
-            base_time + Duration::minutes((i + 10) as i64),
-        );
-        obj2.competition_id = comp2_id;
-        env.add_object_to_db_and_s3(obj2, &format!("Comp2 data {}", i))
-            .await;
-    }
-
-    // Sync comp1 - should sync 2 objects
-    env.synchronizer
-        .run(Some(comp1_id.to_string()), None)
-        .await
-        .unwrap();
-
-    let synced = env
-        .sync_storage
-        .get_objects_with_status(SyncStatus::Complete)
-        .await
-        .unwrap();
-    assert_eq!(synced.len(), 2);
-    assert!(synced.iter().all(|r| r.competition_id == comp1_id));
-
-    // Sync comp2 - should sync 2 objects
-    env.synchronizer
-        .run(Some(comp2_id.to_string()), None)
-        .await
-        .unwrap();
-
-    let synced = env
-        .sync_storage
-        .get_objects_with_status(SyncStatus::Complete)
-        .await
-        .unwrap();
-    assert_eq!(synced.len(), 4); // 2 from comp1 + 2 from comp2
-
-    // Continue syncing comp1 - should sync remaining 2 objects
-    env.synchronizer
-        .run(Some(comp1_id.to_string()), None)
-        .await
-        .unwrap();
-
-    let synced = env
-        .sync_storage
-        .get_objects_with_status(SyncStatus::Complete)
-        .await
-        .unwrap();
-    assert_eq!(synced.len(), 6); // 4 from comp1 + 2 from comp2
-    assert_eq!(
-        synced
-            .iter()
-            .filter(|r| r.competition_id == comp1_id)
-            .count(),
-        4,
-        "All comp1 objects should be synced"
-    );
-
-    // Continue syncing comp2 - should sync remaining 2 objects
-    env.synchronizer
-        .run(Some(comp2_id.to_string()), None)
-        .await
-        .unwrap();
-
-    let synced = env
-        .sync_storage
-        .get_objects_with_status(SyncStatus::Complete)
-        .await
-        .unwrap();
-    assert_eq!(synced.len(), 8); // 4 from comp1 + 4 from comp2
-}
 
 #[tokio::test]
 async fn regular_sync_processes_all_unsynced_objects_from_all_competitions() {
@@ -750,7 +559,7 @@ async fn regular_sync_processes_all_unsynced_objects_from_all_competitions() {
             &format!("comp1/obj-{}.jsonl", i),
             base_time + Duration::minutes(i as i64),
         );
-        object.competition_id = comp1_id;
+        object.competition_id = Some(comp1_id);
         env.add_object_to_db_and_s3(object, &format!("Comp1 data {}", i))
             .await;
 
@@ -758,16 +567,13 @@ async fn regular_sync_processes_all_unsynced_objects_from_all_competitions() {
             &format!("comp2/obj-{}.jsonl", i),
             base_time + Duration::minutes((i + 5) as i64),
         );
-        object.competition_id = comp2_id;
+        object.competition_id = Some(comp2_id);
         env.add_object_to_db_and_s3(object, &format!("Comp2 data {}", i))
             .await;
     }
 
-    // Sync only comp1 objects (batch size 3)
-    env.synchronizer
-        .run(Some(comp1_id.to_string()), None)
-        .await
-        .unwrap();
+    // First sync (batch size 3) - should sync 3 oldest objects regardless of competition
+    env.synchronizer.run(None).await.unwrap();
 
     let synced = env
         .sync_storage
@@ -775,10 +581,9 @@ async fn regular_sync_processes_all_unsynced_objects_from_all_competitions() {
         .await
         .unwrap();
     assert_eq!(synced.len(), 3);
-    assert!(synced.iter().all(|r| r.competition_id == comp1_id));
-
-    // Regular sync (no competition filter) should sync comp2 objects
-    env.synchronizer.run(None, None).await.unwrap();
+    
+    // Second sync - should sync remaining 3 objects
+    env.synchronizer.run(None).await.unwrap();
 
     let synced = env
         .sync_storage
@@ -801,91 +606,6 @@ async fn regular_sync_processes_all_unsynced_objects_from_all_competitions() {
 }
 
 #[tokio::test]
-async fn regular_sync_continues_regardless_of_competition_specific_progress() {
-    let mut config = create_test_config();
-    config.sync.batch_size = 2;
-    let env = setup_with_config(config).await;
-
-    let base_time = Utc::now() - Duration::hours(10);
-    let comp1_id = Uuid::new_v4();
-    let comp2_id = Uuid::new_v4();
-
-    // Add objects with interleaved timestamps
-    let mut all_objects = Vec::new();
-
-    // comp1/obj-0 at time 0
-    let mut obj = create_test_object_index_s3("comp1/obj-0.jsonl", base_time);
-    obj.competition_id = comp1_id;
-    all_objects.push(obj.clone());
-    env.add_object_to_db_and_s3(obj, "Comp1 data 0").await;
-
-    // comp2/obj-0 at time 1
-    let mut obj = create_test_object_index_s3("comp2/obj-0.jsonl", base_time + Duration::minutes(1));
-    obj.competition_id = comp2_id;
-    all_objects.push(obj.clone());
-    env.add_object_to_db_and_s3(obj, "Comp2 data 0").await;
-
-    // comp1/obj-1 at time 2
-    let mut obj = create_test_object_index_s3("comp1/obj-1.jsonl", base_time + Duration::minutes(2));
-    obj.competition_id = comp1_id;
-    all_objects.push(obj.clone());
-    env.add_object_to_db_and_s3(obj, "Comp1 data 1").await;
-
-    // comp2/obj-1 at time 3
-    let mut obj = create_test_object_index_s3("comp2/obj-1.jsonl", base_time + Duration::minutes(3));
-    obj.competition_id = comp2_id;
-    all_objects.push(obj.clone());
-    env.add_object_to_db_and_s3(obj, "Comp2 data 1").await;
-
-    // comp1/obj-2 at time 4
-    let mut obj = create_test_object_index_s3("comp1/obj-2.jsonl", base_time + Duration::minutes(4));
-    obj.competition_id = comp1_id;
-    all_objects.push(obj.clone());
-    env.add_object_to_db_and_s3(obj, "Comp1 data 2").await;
-
-    // Sync comp1 with batch size 2 - should sync comp1/obj-0 and comp1/obj-1
-    env.synchronizer
-        .run(Some(comp1_id.to_string()), None)
-        .await
-        .unwrap();
-
-    let synced = env
-        .sync_storage
-        .get_objects_with_status(SyncStatus::Complete)
-        .await
-        .unwrap();
-    assert_eq!(synced.len(), 2);
-    assert!(synced.iter().all(|r| r.competition_id == comp1_id));
-
-    // Regular sync should start from beginning and sync oldest unsynced objects
-    // Should sync comp2/obj-0 and comp2/obj-1 (batch size 2)
-    env.synchronizer.run(None, None).await.unwrap();
-
-    let synced = env
-        .sync_storage
-        .get_objects_with_status(SyncStatus::Complete)
-        .await
-        .unwrap();
-    assert_eq!(synced.len(), 4);
-
-    // Another regular sync should continue and sync comp1/obj-2
-    env.synchronizer.run(None, None).await.unwrap();
-
-    let synced = env
-        .sync_storage
-        .get_objects_with_status(SyncStatus::Complete)
-        .await
-        .unwrap();
-    assert_eq!(synced.len(), 5); // All objects synced
-
-    for obj in &all_objects {
-        env.verify_object_synced(obj)
-            .await
-            .unwrap_or_else(|e| panic!("Object {} should be synced: {}", obj.id, e));
-    }
-}
-
-#[tokio::test]
 async fn reset_clears_sync_state_and_allows_resyncing() {
     let env = setup().await;
 
@@ -900,7 +620,7 @@ async fn reset_clears_sync_state_and_allows_resyncing() {
             .await;
     }
 
-    env.synchronizer.run(None, None).await.unwrap();
+    env.synchronizer.run(None).await.unwrap();
 
     for obj in &objects {
         env.verify_object_synced(obj)
@@ -918,7 +638,7 @@ async fn reset_clears_sync_state_and_allows_resyncing() {
     }
 
     // Verify sync doesn't re-upload (sync state still shows complete)
-    env.synchronizer.run(None, None).await.unwrap();
+    env.synchronizer.run(None).await.unwrap();
     for obj in &objects {
         let recall_key = TestEnvironment::construct_recall_key(obj);
         let exists = env.recall_storage.has_blob(&recall_key).await.unwrap();
@@ -939,15 +659,12 @@ async fn reset_clears_sync_state_and_allows_resyncing() {
     assert_eq!(synced.len(), 0, "Sync state should be empty after reset");
 
     // Run sync again - should re-sync all objects
-    env.synchronizer.run(None, None).await.unwrap();
+    env.synchronizer.run(None).await.unwrap();
 
     for obj in &objects {
-        env.verify_object_synced(obj).await.unwrap_or_else(|e| {
-            panic!(
-                "Object {} should be re-synced after reset: {}",
-                obj.id, e
-            )
-        });
+        env.verify_object_synced(obj)
+            .await
+            .unwrap_or_else(|e| panic!("Object {} should be re-synced after reset: {}", obj.id, e));
     }
 }
 
@@ -971,7 +688,7 @@ async fn start_synchronizer_runs_at_interval() {
     // Start the synchronizer in a separate task with 1 second interval
     let sync_task = {
         let sync = env.synchronizer.clone();
-        tokio::spawn(async move { sync.start(1, None, None).await })
+        tokio::spawn(async move { sync.start(1, None).await })
     };
 
     // Check after ~0.5 seconds (first immediate run)
@@ -1014,14 +731,14 @@ async fn recall_key_structure_follows_required_format() {
     // Create an object with an S3 key that doesn't match the required format
     let mut object = create_test_object_index_s3("some/random/s3/key.jsonl", Utc::now());
     object.id = object_id;
-    object.competition_id = competition_id;
-    object.agent_id = agent_id;
+    object.competition_id = Some(competition_id);
+    object.agent_id = Some(agent_id);
     object.data_type = "CHAIN_OF_THOUGHT".to_string();
 
     env.add_object_to_db_and_s3(object.clone(), "Test data for recall key format")
         .await;
 
-    env.synchronizer.run(None, None).await.unwrap();
+    env.synchronizer.run(None).await.unwrap();
 
     let record = env.sync_storage.get_object(object_id).await.unwrap();
     assert_eq!(
@@ -1093,7 +810,7 @@ async fn direct_storage_synchronization_works() {
     db.add_object(object2.clone()).await.unwrap();
 
     // Run synchronization
-    synchronizer.run(None, None).await.unwrap();
+    synchronizer.run(None).await.unwrap();
 
     // Verify objects were synchronized
     let synced = sync_storage
@@ -1103,14 +820,8 @@ async fn direct_storage_synchronization_works() {
     assert_eq!(synced.len(), 2);
 
     // Verify data was stored in Recall with proper keys
-    let recall_key1 = format!(
-        "{}/{}/{}/{}",
-        object1.competition_id, object1.agent_id, object1.data_type, object1.id
-    );
-    let recall_key2 = format!(
-        "{}/{}/{}/{}",
-        object2.competition_id, object2.agent_id, object2.data_type, object2.id
-    );
+    let recall_key1 = TestEnvironment::construct_recall_key(&object1);
+    let recall_key2 = TestEnvironment::construct_recall_key(&object2);
 
     assert!(recall_storage.has_blob(&recall_key1).await.unwrap());
     assert!(recall_storage.has_blob(&recall_key2).await.unwrap());

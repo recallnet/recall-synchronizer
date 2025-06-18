@@ -544,20 +544,11 @@ impl SyncStorage for SqliteSyncStorage {
         })?
     }
 
-    async fn get_last_synced_object_id(
-        &self,
-        competition_id: Option<Uuid>,
-    ) -> Result<Option<Uuid>, SyncStorageError> {
-        debug!(
-            "Getting last synced object ID for competition: {:?}",
-            competition_id
-        );
+    async fn get_last_synced_object_id(&self) -> Result<Option<Uuid>, SyncStorageError> {
+        debug!("Getting last synced object ID");
 
         let connection = Arc::clone(&self.connection);
-        let key = match competition_id {
-            None => "last_synced_object_id".to_string(),
-            Some(comp_id) => format!("last_synced_object_id:{}", comp_id),
-        };
+        let key = "last_synced_object_id".to_string();
 
         task::spawn_blocking(move || {
             let conn = match connection.lock() {
@@ -605,22 +596,12 @@ impl SyncStorage for SqliteSyncStorage {
         })?
     }
 
-    async fn set_last_synced_object_id(
-        &self,
-        id: Uuid,
-        competition_id: Option<Uuid>,
-    ) -> Result<(), SyncStorageError> {
-        info!(
-            "Setting last synced object ID: {} for competition: {:?}",
-            id, competition_id
-        );
+    async fn set_last_synced_object_id(&self, id: Uuid) -> Result<(), SyncStorageError> {
+        info!("Setting last synced object ID: {}", id);
 
         let connection = Arc::clone(&self.connection);
         let id_str = id.to_string();
-        let key = match competition_id {
-            None => "last_synced_object_id".to_string(),
-            Some(comp_id) => format!("last_synced_object_id:{}", comp_id),
-        };
+        let key = "last_synced_object_id".to_string();
 
         task::spawn_blocking(move || {
             let conn = match connection.lock() {

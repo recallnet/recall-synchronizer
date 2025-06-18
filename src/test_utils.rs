@@ -53,9 +53,8 @@ pub fn create_test_object_index_s3(object_key: &str, created_at: DateTime<Utc>) 
     ObjectIndex {
         id: Uuid::new_v4(),
         object_key: Some(object_key.to_string()),
-        bucket_name: Some("test-bucket".to_string()),
-        competition_id: Uuid::new_v4(),
-        agent_id: Uuid::new_v4(),
+        competition_id: Some(Uuid::new_v4()),
+        agent_id: Some(Uuid::new_v4()),
         data_type: "TEST_DATA".to_string(),
         size_bytes: Some(1024),
         metadata: None,
@@ -82,8 +81,8 @@ pub fn create_test_object_index_direct(
     let now = Utc::now();
     ObjectIndex {
         id: Uuid::new_v4(),
-        competition_id: Uuid::parse_str(&competition_id).unwrap_or_else(|_| Uuid::new_v4()),
-        agent_id: Uuid::parse_str(&agent_id).unwrap_or_else(|_| Uuid::new_v4()),
+        competition_id: Some(Uuid::parse_str(&competition_id).unwrap_or_else(|_| Uuid::new_v4())),
+        agent_id: Some(Uuid::parse_str(&agent_id).unwrap_or_else(|_| Uuid::new_v4())),
         data_type: "TEST_DATA".to_string(),
         size_bytes: Some(data.len() as i64),
         metadata: None,
@@ -91,6 +90,5 @@ pub fn create_test_object_index_direct(
         created_at: now,
         data: Some(data),
         object_key: None,
-        bucket_name: None,
     }
 }

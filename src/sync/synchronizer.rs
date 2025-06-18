@@ -1,4 +1,4 @@
-use anyhow::{Context, Result};
+use anyhow::Result;
 use chrono::{DateTime, Utc};
 use std::sync::Arc;
 use tokio::time::{interval, Duration};
@@ -88,18 +88,13 @@ where
     async fn get_sync_state(
         &self,
         since: Option<DateTime<Utc>>,
-        competition_id: Option<uuid::Uuid>,
     ) -> Result<(Option<DateTime<Utc>>, Option<uuid::Uuid>)> {
         if let Some(ts) = since {
             // If user provides a specific timestamp, start from there with no ID filter
             Ok((Some(ts), None))
         } else {
-            // Use the appropriate last synced ID based on whether we have a competition filter
-            if let Some(last_id) = self
-                .sync_storage
-                .get_last_synced_object_id(competition_id)
-                .await?
-            {
+            // Get the global last synced ID
+            if let Some(last_id) = self.sync_storage.get_last_synced_object_id().await? {
                 if let Some(last_record) = self.sync_storage.get_object(last_id).await? {
                     Ok((Some(last_record.timestamp), Some(last_id)))
                 } else {
@@ -117,13 +112,16 @@ where
         since_time: Option<DateTime<Utc>>,
         after_id: Option<uuid::Uuid>,
         limit: Option<u32>,
-        competition_id: Option<uuid::Uuid>,
     ) -> Result<Vec<ObjectIndex>> {
-        let batch_size = limit.unwrap_or(self.config.batch_size as u32);
-        self.database
-            .get_objects(batch_size, since_time, after_id, competition_id)
+        let fetch_size = limit.unwrap_or(self.config.batch_size as u32);
+        
+        let objects = self
+            .database
+            .get_objects(fetch_size, since_time, after_id)
             .await
-            .map_err(|e| anyhow::anyhow!("Failed to fetch objects to sync: {}", e))
+            .map_err(|e| anyhow::anyhow!("Failed to fetch objects to sync: {}", e))?;
+
+        Ok(objects)
     }
 
     /// Checks if an object should be processed based on its current status
@@ -146,19 +144,30 @@ where
     }
 
     /// Constructs the Recall key in the required format
-    /// Format: <competition_id>/<agent_id>/<data_type>/<uuid>
+    /// Format: [<competition_id>/][<agent_id>/]<data_type>/<uuid>
+    /// Competition ID and Agent ID are omitted if not present
     fn construct_recall_key(object: &ObjectIndex) -> String {
-        format!(
-            "{}/{}/{}/{}",
-            object.competition_id, object.agent_id, object.data_type, object.id
-        )
+        let mut parts = Vec::new();
+
+        if let Some(competition_id) = &object.competition_id {
+            parts.push(competition_id.to_string());
+        }
+
+        if let Some(agent_id) = &object.agent_id {
+            parts.push(agent_id.to_string());
+        }
+
+        parts.push(object.data_type.clone());
+        parts.push(object.id.to_string());
+
+        parts.join("/")
     }
 
     /// Synchronizes a single object to Recall
     async fn sync_object(&self, object: &ObjectIndex) -> Result<()> {
         let object_id = object.id;
-        let competition_id = object.competition_id;
-        let agent_id = object.agent_id;
+        let competition_id = object.competition_id.unwrap_or_default();
+        let agent_id = object.agent_id.unwrap_or_default();
         let data_type = object.data_type.clone();
         let created_at = object.created_at;
 
@@ -217,19 +226,6 @@ where
         Ok(())
     }
 
-    /// Parse competition ID from string to UUID
-    fn parse_competition_id(competition_id: &Option<String>) -> Result<Option<uuid::Uuid>> {
-        match competition_id {
-            Some(id) => {
-                info!("Filtering by competition ID: {}", id);
-                Ok(Some(uuid::Uuid::parse_str(id).context(format!(
-                    "Invalid competition ID format: {}",
-                    id
-                ))?))
-            }
-            None => Ok(None),
-        }
-    }
 
     /// Process a batch of objects and return the last synced object and count
     async fn process_object_batch<'a>(
@@ -257,17 +253,10 @@ where
     }
 
     /// Runs the synchronization process
-    pub async fn run(
-        &self,
-        competition_id: Option<String>,
-        since: Option<DateTime<Utc>>,
-    ) -> Result<()> {
+    pub async fn run(&self, since: Option<DateTime<Utc>>) -> Result<()> {
         info!("Starting synchronization");
 
-        let competition_uuid = Self::parse_competition_id(&competition_id)?;
-
-        let (mut current_since_time, mut current_after_id) =
-            self.get_sync_state(since, competition_uuid).await?;
+        let (mut current_since_time, mut current_after_id) = self.get_sync_state(since).await?;
 
         if let Some(ts) = current_since_time {
             info!("Synchronizing data since: {}", ts);
@@ -289,12 +278,7 @@ where
             // Fetch objects, but limit to our remaining quota
             let fetch_limit = std::cmp::min(batch_size as u32, remaining_quota as u32);
             let objects = self
-                .fetch_objects_to_sync(
-                    current_since_time,
-                    current_after_id,
-                    Some(fetch_limit),
-                    competition_uuid,
-                )
+                .fetch_objects_to_sync(current_since_time, current_after_id, Some(fetch_limit))
                 .await?;
 
             if objects.is_empty() {
@@ -317,7 +301,7 @@ where
             if let Some(last_object) = last_synced_object {
                 let object_id = last_object.id;
                 self.sync_storage
-                    .set_last_synced_object_id(object_id, competition_uuid)
+                    .set_last_synced_object_id(object_id)
                     .await?;
             }
 
@@ -355,7 +339,6 @@ where
     pub async fn start(
         &self,
         interval_seconds: u64,
-        competition_id: Option<String>,
         since: Option<DateTime<Utc>>,
     ) -> Result<()> {
         let mut interval_timer = interval(Duration::from_secs(interval_seconds));
@@ -366,7 +349,7 @@ where
             interval_timer.tick().await;
 
             info!("Starting synchronization run");
-            match self.run(competition_id.clone(), since).await {
+            match self.run(since).await {
                 Ok(()) => {
                     debug!("Synchronization run completed successfully");
                 }

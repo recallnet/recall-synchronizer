@@ -46,11 +46,7 @@ impl PostgresDatabase {
             )));
         };
 
-        let db = PostgresDatabase {
-            pool,
-            schema,
-            mode,
-        };
+        let db = PostgresDatabase { pool, schema, mode };
 
         // If a schema is specified, create it and the tables
         if let Some(ref schema_name) = db.schema {
@@ -129,17 +125,15 @@ impl PostgresDatabase {
 
 #[async_trait]
 impl Database for PostgresDatabase {
-
     async fn get_objects(
         &self,
         limit: u32,
         since: Option<DateTime<Utc>>,
         after_id: Option<uuid::Uuid>,
-        competition_id: Option<uuid::Uuid>,
     ) -> Result<Vec<ObjectIndex>, DatabaseError> {
         debug!(
-            "Querying objects with limit={}, since={:?}, after_id={:?}, competition_id={:?}",
-            limit, since, after_id, competition_id
+            "Querying objects with limit={}, since={:?}, after_id={:?}",
+            limit, since, after_id
         );
 
         let query_base = format!(
@@ -156,13 +150,6 @@ impl Database for PostgresDatabase {
         let mut where_clauses = Vec::new();
         let mut bind_params: Vec<String> = Vec::new();
         let mut param_count = 1;
-
-        // Competition ID filter
-        if competition_id.is_some() {
-            where_clauses.push(format!("competition_id = ${}", param_count));
-            bind_params.push("competition_id".to_string());
-            param_count += 1;
-        }
 
         // Timestamp and after_id filters
         match (since, after_id) {
@@ -208,9 +195,6 @@ impl Database for PostgresDatabase {
         // Bind parameters in the correct order
         for param in &bind_params {
             match param.as_str() {
-                "competition_id" => {
-                    query_builder = query_builder.bind(competition_id.unwrap());
-                }
                 "since" => {
                     query_builder = query_builder.bind(since.unwrap());
                 }

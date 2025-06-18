@@ -24,7 +24,6 @@ macro_rules! pg_get_optional_field {
     };
 }
 
-
 /// Configuration for which schema to use
 pub enum SchemaMode {
     S3,
@@ -40,9 +39,8 @@ impl S3Schema {
         r#"
         id UUID PRIMARY KEY,
         object_key TEXT UNIQUE NOT NULL,
-        bucket_name VARCHAR(100) NOT NULL,
-        competition_id UUID NOT NULL,
-        agent_id UUID NOT NULL,
+        competition_id UUID,
+        agent_id UUID,
         data_type VARCHAR(50) NOT NULL,
         size_bytes BIGINT,
         metadata JSONB,
@@ -52,7 +50,7 @@ impl S3Schema {
     }
 
     fn select_columns() -> &'static str {
-        "id, object_key, bucket_name, competition_id, agent_id, data_type, size_bytes, metadata, event_timestamp, created_at"
+        "id, object_key, competition_id, agent_id, data_type, size_bytes, metadata, event_timestamp, created_at"
     }
 }
 
@@ -60,8 +58,8 @@ impl DirectSchema {
     fn schema_definition() -> &'static str {
         r#"
         id UUID PRIMARY KEY,
-        competition_id UUID NOT NULL,
-        agent_id UUID NOT NULL,
+        competition_id UUID,
+        agent_id UUID,
         data_type VARCHAR(50) NOT NULL,
         size_bytes BIGINT,
         metadata JSONB,
@@ -96,9 +94,8 @@ impl SchemaMode {
             SchemaMode::S3 => Ok(ObjectIndex {
                 id: pg_get_field!(row, "id"),
                 object_key: Some(pg_get_field!(row, "object_key")),
-                bucket_name: Some(pg_get_field!(row, "bucket_name")),
-                competition_id: pg_get_field!(row, "competition_id"),
-                agent_id: pg_get_field!(row, "agent_id"),
+                competition_id: pg_get_optional_field!(row, "competition_id"),
+                agent_id: pg_get_optional_field!(row, "agent_id"),
                 data_type: pg_get_field!(row, "data_type"),
                 size_bytes: pg_get_field!(row, "size_bytes"),
                 metadata: pg_get_field!(row, "metadata"),
@@ -108,8 +105,8 @@ impl SchemaMode {
             }),
             SchemaMode::Direct => Ok(ObjectIndex {
                 id: pg_get_field!(row, "id"),
-                competition_id: pg_get_field!(row, "competition_id"),
-                agent_id: pg_get_field!(row, "agent_id"),
+                competition_id: pg_get_optional_field!(row, "competition_id"),
+                agent_id: pg_get_optional_field!(row, "agent_id"),
                 data_type: pg_get_field!(row, "data_type"),
                 size_bytes: pg_get_field!(row, "size_bytes"),
                 metadata: pg_get_field!(row, "metadata"),
@@ -117,7 +114,6 @@ impl SchemaMode {
                 created_at: pg_get_field!(row, "created_at"),
                 data: Some(pg_get_field!(row, "data")),
                 object_key: None,
-                bucket_name: None,
             }),
         }
     }
@@ -133,12 +129,11 @@ impl SchemaMode {
                 let query_string = format!(
                     r#"
                     INSERT INTO {} (
-                        id, object_key, bucket_name, competition_id, agent_id,
+                        id, object_key, competition_id, agent_id,
                         data_type, size_bytes, metadata,
                         event_timestamp, created_at
-                    ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+                    ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
                     ON CONFLICT (object_key) DO UPDATE SET
-                        bucket_name = EXCLUDED.bucket_name,
                         competition_id = EXCLUDED.competition_id,
                         agent_id = EXCLUDED.agent_id,
                         data_type = EXCLUDED.data_type,
@@ -151,8 +146,10 @@ impl SchemaMode {
                 );
 
                 let id = object.id;
-                let object_key = object.object_key.clone().expect("object_key required for S3 mode");
-                let bucket_name = object.bucket_name.clone().expect("bucket_name required for S3 mode");
+                let object_key = object
+                    .object_key
+                    .clone()
+                    .expect("object_key required for S3 mode");
                 let competition_id = object.competition_id;
                 let agent_id = object.agent_id;
                 let data_type = object.data_type.clone();
@@ -164,7 +161,6 @@ impl SchemaMode {
                 sqlx::query(&*Box::leak(query_string.into_boxed_str()))
                     .bind(id)
                     .bind(object_key)
-                    .bind(bucket_name)
                     .bind(competition_id)
                     .bind(agent_id)
                     .bind(data_type)
