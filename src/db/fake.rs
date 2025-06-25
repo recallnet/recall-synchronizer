@@ -10,11 +10,10 @@ use uuid::Uuid;
 /// A fake in-memory implementation of the Database trait for testing
 #[derive(Clone)]
 pub struct FakeDatabase {
-    objects: Arc<RwLock<HashMap<String, ObjectIndex>>>,
+    objects: Arc<RwLock<HashMap<Uuid, ObjectIndex>>>,
 }
 
 impl FakeDatabase {
-    /// Create a new empty FakeDatabase
     pub fn new() -> Self {
         FakeDatabase {
             objects: Arc::new(RwLock::new(HashMap::new())),
@@ -29,26 +28,18 @@ impl Database for FakeDatabase {
         limit: u32,
         since: Option<DateTime<Utc>>,
         after_id: Option<Uuid>,
-        competition_id: Option<Uuid>,
     ) -> Result<Vec<ObjectIndex>, DatabaseError> {
         let objects = self.objects.read().unwrap();
 
         let mut filtered: Vec<ObjectIndex> = objects
             .values()
             .filter(|obj| {
-                if let Some(comp_id) = competition_id {
-                    if obj.competition_id != comp_id {
-                        return false;
-                    }
-                }
-
                 match (since, after_id) {
                     (Some(ts), Some(id)) => {
                         // For objects with timestamp > since OR (timestamp == since AND id > after_id)
-                        obj.object_last_modified_at > ts
-                            || (obj.object_last_modified_at == ts && obj.id > id)
+                        obj.created_at > ts || (obj.created_at == ts && obj.id > id)
                     }
-                    (Some(ts), None) => obj.object_last_modified_at > ts,
+                    (Some(ts), None) => obj.created_at > ts,
                     (None, Some(_)) => true, // If only after_id is provided, include all
                     (None, None) => true,
                 }
@@ -56,17 +47,13 @@ impl Database for FakeDatabase {
             .cloned()
             .collect();
 
-        // Sort by last_modified_at in ascending order (oldest first)
+        // Sort by created_at in ascending order (oldest first)
         // For same timestamps, sort by ID ascending
-        // This ensures we complete all objects with the same timestamp before moving to newer ones
-        filtered.sort_by(
-            |a, b| match a.object_last_modified_at.cmp(&b.object_last_modified_at) {
-                std::cmp::Ordering::Equal => a.id.cmp(&b.id),
-                other => other,
-            },
-        );
+        filtered.sort_by(|a, b| match a.created_at.cmp(&b.created_at) {
+            std::cmp::Ordering::Equal => a.id.cmp(&b.id),
+            other => other,
+        });
 
-        // Apply limit after sorting
         filtered.truncate(limit as usize);
 
         Ok(filtered)
@@ -75,7 +62,7 @@ impl Database for FakeDatabase {
     #[cfg(test)]
     async fn add_object(&self, object: ObjectIndex) -> Result<(), DatabaseError> {
         let mut objects = self.objects.write().unwrap();
-        objects.insert(object.object_key.clone(), object);
+        objects.insert(object.id, object);
         Ok(())
     }
 }

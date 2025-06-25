@@ -40,8 +40,9 @@ impl SqliteSyncStorage {
             .execute(
                 "CREATE TABLE IF NOT EXISTS sync_records (
                     id TEXT PRIMARY KEY,
-                    object_key TEXT NOT NULL,
-                    bucket_name TEXT NOT NULL,
+                    competition_id TEXT,
+                    agent_id TEXT,
+                    data_type TEXT NOT NULL,
                     timestamp TEXT NOT NULL,
                     status TEXT NOT NULL
                 )",
@@ -135,15 +136,16 @@ impl SqliteSyncStorage {
 impl SyncStorage for SqliteSyncStorage {
     async fn add_object(&self, record: SyncRecord) -> Result<(), SyncStorageError> {
         debug!(
-            "Adding sync record: id={}, key={}, status={:?}",
-            record.id, record.object_key, record.status
+            "Adding sync record: id={}, competition_id={:?}, agent_id={:?}, data_type={}, status={:?}",
+            record.id, record.competition_id, record.agent_id, record.data_type, record.status
         );
 
         let connection = Arc::clone(&self.connection);
         let id_str = record.id.to_string();
+        let competition_id_str = record.competition_id.map(|id| id.to_string());
+        let agent_id_str = record.agent_id.map(|id| id.to_string());
         let timestamp_str = Self::datetime_to_string(record.timestamp);
         let status_str = Self::status_to_string(record.status);
-        let object_key_clone = record.object_key.clone();
 
         task::spawn_blocking(move || {
             let conn = match connection.lock() {
@@ -155,12 +157,13 @@ impl SyncStorage for SqliteSyncStorage {
             };
 
             conn.execute(
-                "INSERT OR REPLACE INTO sync_records (id, object_key, bucket_name, timestamp, status) 
-                 VALUES (?1, ?2, ?3, ?4, ?5)",
+                "INSERT OR REPLACE INTO sync_records (id, competition_id, agent_id, data_type, timestamp, status) 
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
                 params![
                     id_str,
-                    record.object_key,
-                    record.bucket_name,
+                    competition_id_str,
+                    agent_id_str,
+                    record.data_type,
                     timestamp_str,
                     status_str
                 ],
@@ -170,7 +173,7 @@ impl SyncStorage for SqliteSyncStorage {
                 SyncStorageError::OperationError(format!("Failed to insert record: {}", e))
             })?;
 
-            debug!("Successfully added sync record for key: {}", object_key_clone);
+            debug!("Successfully added sync record for id: {}", id_str);
             Ok(())
         })
         .await
@@ -243,9 +246,9 @@ impl SyncStorage for SqliteSyncStorage {
                 }
             };
 
-            let result: Option<(String, String, String, String, String)> = conn
+            let result: Option<(String, Option<String>, Option<String>, String, String, String)> = conn
                 .query_row(
-                    "SELECT id, object_key, bucket_name, timestamp, status 
+                    "SELECT id, competition_id, agent_id, data_type, timestamp, status 
                      FROM sync_records WHERE id = ?1",
                     params![id_str],
                     |row| {
@@ -255,6 +258,7 @@ impl SyncStorage for SqliteSyncStorage {
                             row.get(2)?,
                             row.get(3)?,
                             row.get(4)?,
+                            row.get(5)?,
                         ))
                     },
                 )
@@ -265,19 +269,47 @@ impl SyncStorage for SqliteSyncStorage {
                 })?;
 
             match result {
-                Some((id_str, object_key, bucket_name, timestamp_str, status_str)) => {
+                Some((
+                    id_str,
+                    competition_id_str,
+                    agent_id_str,
+                    data_type,
+                    timestamp_str,
+                    status_str,
+                )) => {
                     let id = Uuid::parse_str(&id_str).map_err(|e| {
                         error!("Failed to parse UUID from database: {}", e);
                         SyncStorageError::OperationError(format!("Failed to parse UUID: {}", e))
                     })?;
+                    let competition_id = competition_id_str
+                        .map(|s| Uuid::parse_str(&s))
+                        .transpose()
+                        .map_err(|e| {
+                            error!("Failed to parse competition UUID from database: {}", e);
+                            SyncStorageError::OperationError(format!(
+                                "Failed to parse competition UUID: {}",
+                                e
+                            ))
+                        })?;
+                    let agent_id = agent_id_str
+                        .map(|s| Uuid::parse_str(&s))
+                        .transpose()
+                        .map_err(|e| {
+                            error!("Failed to parse agent UUID from database: {}", e);
+                            SyncStorageError::OperationError(format!(
+                                "Failed to parse agent UUID: {}",
+                                e
+                            ))
+                        })?;
                     let timestamp = Self::string_to_datetime(&timestamp_str)?;
                     let status = Self::string_to_status(&status_str)?;
 
-                    debug!("Found sync record: key={}, status={:?}", object_key, status);
+                    debug!("Found sync record: id={}, status={:?}", id_str, status);
                     Ok(Some(SyncRecord::with_status(
                         id,
-                        object_key,
-                        bucket_name,
+                        competition_id,
+                        agent_id,
+                        data_type,
                         timestamp,
                         status,
                     )))
@@ -315,7 +347,7 @@ impl SyncStorage for SqliteSyncStorage {
 
             let mut stmt = conn
                 .prepare(
-                    "SELECT id, object_key, bucket_name, timestamp, status 
+                    "SELECT id, competition_id, agent_id, data_type, timestamp, status 
                      FROM sync_records 
                      WHERE status = ?1 
                      ORDER BY timestamp",
@@ -328,12 +360,20 @@ impl SyncStorage for SqliteSyncStorage {
             let records: Result<Vec<SyncRecord>, SyncStorageError> = stmt
                 .query_map(params![status_str], |row| {
                     let id_str: String = row.get(0)?;
-                    let object_key: String = row.get(1)?;
-                    let bucket_name: String = row.get(2)?;
-                    let timestamp_str: String = row.get(3)?;
-                    let status_str: String = row.get(4)?;
+                    let competition_id_str: Option<String> = row.get(1)?;
+                    let agent_id_str: Option<String> = row.get(2)?;
+                    let data_type: String = row.get(3)?;
+                    let timestamp_str: String = row.get(4)?;
+                    let status_str: String = row.get(5)?;
 
-                    Ok((id_str, object_key, bucket_name, timestamp_str, status_str))
+                    Ok((
+                        id_str,
+                        competition_id_str,
+                        agent_id_str,
+                        data_type,
+                        timestamp_str,
+                        status_str,
+                    ))
                 })
                 .map_err(|e| {
                     error!("Failed to query records by status: {}", e);
@@ -346,18 +386,46 @@ impl SyncStorage for SqliteSyncStorage {
                 })?
                 .into_iter()
                 .map(
-                    |(id_str, object_key, bucket_name, timestamp_str, status_str)| {
+                    |(
+                        id_str,
+                        competition_id_str,
+                        agent_id_str,
+                        data_type,
+                        timestamp_str,
+                        status_str,
+                    )| {
                         let id = Uuid::parse_str(&id_str).map_err(|e| {
                             error!("Failed to parse UUID: {}", e);
                             SyncStorageError::OperationError(format!("Failed to parse UUID: {}", e))
                         })?;
+                        let competition_id = competition_id_str
+                            .map(|s| Uuid::parse_str(&s))
+                            .transpose()
+                            .map_err(|e| {
+                                error!("Failed to parse competition UUID: {}", e);
+                                SyncStorageError::OperationError(format!(
+                                    "Failed to parse competition UUID: {}",
+                                    e
+                                ))
+                            })?;
+                        let agent_id = agent_id_str
+                            .map(|s| Uuid::parse_str(&s))
+                            .transpose()
+                            .map_err(|e| {
+                                error!("Failed to parse agent UUID: {}", e);
+                                SyncStorageError::OperationError(format!(
+                                    "Failed to parse agent UUID: {}",
+                                    e
+                                ))
+                            })?;
                         let timestamp = Self::string_to_datetime(&timestamp_str)?;
                         let status = Self::string_to_status(&status_str)?;
 
                         Ok(SyncRecord::with_status(
                             id,
-                            object_key,
-                            bucket_name,
+                            competition_id,
+                            agent_id,
+                            data_type,
                             timestamp,
                             status,
                         ))
@@ -404,18 +472,26 @@ impl SyncStorage for SqliteSyncStorage {
             // First try the simple query without unwrapping the tuple
             let result = conn
                 .query_row(
-                    "SELECT id, object_key, bucket_name, timestamp, status 
+                    "SELECT id, competition_id, agent_id, data_type, timestamp, status 
                      FROM sync_records 
                      ORDER BY timestamp DESC 
                      LIMIT 1",
                     [],
                     |row| {
                         let id_str: String = row.get(0)?;
-                        let object_key: String = row.get(1)?;
-                        let bucket_name: String = row.get(2)?;
-                        let timestamp_str: String = row.get(3)?;
-                        let status_str: String = row.get(4)?;
-                        Ok((id_str, object_key, bucket_name, timestamp_str, status_str))
+                        let competition_id_str: Option<String> = row.get(1)?;
+                        let agent_id_str: Option<String> = row.get(2)?;
+                        let data_type: String = row.get(3)?;
+                        let timestamp_str: String = row.get(4)?;
+                        let status_str: String = row.get(5)?;
+                        Ok((
+                            id_str,
+                            competition_id_str,
+                            agent_id_str,
+                            data_type,
+                            timestamp_str,
+                            status_str,
+                        ))
                     },
                 )
                 .optional()
@@ -425,22 +501,50 @@ impl SyncStorage for SqliteSyncStorage {
                 })?;
 
             match result {
-                Some((id_str, object_key, bucket_name, timestamp_str, status_str)) => {
+                Some((
+                    id_str,
+                    competition_id_str,
+                    agent_id_str,
+                    data_type,
+                    timestamp_str,
+                    status_str,
+                )) => {
                     let id = Uuid::parse_str(&id_str).map_err(|e| {
                         error!("Failed to parse UUID: {}", e);
                         SyncStorageError::OperationError(format!("Failed to parse UUID: {}", e))
                     })?;
+                    let competition_id = competition_id_str
+                        .map(|s| Uuid::parse_str(&s))
+                        .transpose()
+                        .map_err(|e| {
+                            error!("Failed to parse competition UUID: {}", e);
+                            SyncStorageError::OperationError(format!(
+                                "Failed to parse competition UUID: {}",
+                                e
+                            ))
+                        })?;
+                    let agent_id = agent_id_str
+                        .map(|s| Uuid::parse_str(&s))
+                        .transpose()
+                        .map_err(|e| {
+                            error!("Failed to parse agent UUID: {}", e);
+                            SyncStorageError::OperationError(format!(
+                                "Failed to parse agent UUID: {}",
+                                e
+                            ))
+                        })?;
                     let timestamp = Self::string_to_datetime(&timestamp_str)?;
                     let status = Self::string_to_status(&status_str)?;
 
                     debug!(
-                        "Found last sync record: key={}, timestamp={}",
-                        object_key, timestamp_str
+                        "Found last sync record: id={}, timestamp={}",
+                        id_str, timestamp_str
                     );
                     Ok(Some(SyncRecord::with_status(
                         id,
-                        object_key,
-                        bucket_name,
+                        competition_id,
+                        agent_id,
+                        data_type,
                         timestamp,
                         status,
                     )))
@@ -458,20 +562,11 @@ impl SyncStorage for SqliteSyncStorage {
         })?
     }
 
-    async fn get_last_synced_object_id(
-        &self,
-        competition_id: Option<Uuid>,
-    ) -> Result<Option<Uuid>, SyncStorageError> {
-        debug!(
-            "Getting last synced object ID for competition: {:?}",
-            competition_id
-        );
+    async fn get_last_synced_object_id(&self) -> Result<Option<Uuid>, SyncStorageError> {
+        debug!("Getting last synced object ID");
 
         let connection = Arc::clone(&self.connection);
-        let key = match competition_id {
-            None => "last_synced_object_id".to_string(),
-            Some(comp_id) => format!("last_synced_object_id:{}", comp_id),
-        };
+        let key = "last_synced_object_id".to_string();
 
         task::spawn_blocking(move || {
             let conn = match connection.lock() {
@@ -519,22 +614,12 @@ impl SyncStorage for SqliteSyncStorage {
         })?
     }
 
-    async fn set_last_synced_object_id(
-        &self,
-        id: Uuid,
-        competition_id: Option<Uuid>,
-    ) -> Result<(), SyncStorageError> {
-        info!(
-            "Setting last synced object ID: {} for competition: {:?}",
-            id, competition_id
-        );
+    async fn set_last_synced_object_id(&self, id: Uuid) -> Result<(), SyncStorageError> {
+        info!("Setting last synced object ID: {}", id);
 
         let connection = Arc::clone(&self.connection);
         let id_str = id.to_string();
-        let key = match competition_id {
-            None => "last_synced_object_id".to_string(),
-            Some(comp_id) => format!("last_synced_object_id:{}", comp_id),
-        };
+        let key = "last_synced_object_id".to_string();
 
         task::spawn_blocking(move || {
             let conn = match connection.lock() {

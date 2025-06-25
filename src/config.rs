@@ -6,7 +6,7 @@ use std::path::Path;
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct Config {
     pub database: DatabaseConfig,
-    pub s3: S3Config,
+    pub s3: Option<S3Config>,
     pub recall: RecallConfig,
     pub sync: SyncConfig,
     pub sync_storage: SyncStorageConfig,

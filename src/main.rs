@@ -15,6 +15,7 @@ mod test_utils;
 
 use crate::db::postgres::PostgresDatabase;
 use crate::recall::RecallBlockchain;
+use crate::s3::S3Storage;
 use crate::sync::storage::SqliteSyncStorage;
 use crate::sync::synchronizer::Synchronizer;
 
@@ -43,10 +44,6 @@ struct Cli {
 enum Commands {
     /// Run the synchronizer once
     Run {
-        /// Filter by competition ID
-        #[arg(long)]
-        competition_id: Option<String>,
-
         /// Synchronize only data updated since this timestamp (RFC3339 format)
         #[arg(long)]
         since: Option<String>,
@@ -56,10 +53,6 @@ enum Commands {
         /// Interval in seconds between synchronization runs
         #[arg(short, long, value_name = "SECONDS")]
         interval: u64,
-
-        /// Filter by competition ID
-        #[arg(long)]
-        competition_id: Option<String>,
 
         /// Synchronize only data updated since this timestamp (RFC3339 format)
         #[arg(long)]
@@ -92,25 +85,14 @@ async fn main() -> Result<()> {
     };
 
     match cli.command {
-        Commands::Run {
-            competition_id,
-            since,
-        } => run_synchronizer(config, competition_id, since).await,
-        Commands::Start {
-            interval,
-            competition_id,
-            since,
-        } => start_synchronizer(config, interval, competition_id, since).await,
+        Commands::Run { since } => run_synchronizer(config, since).await,
+        Commands::Start { interval, since } => start_synchronizer(config, interval, since).await,
         Commands::Reset => reset_synchronizer(config).await,
     }
 }
 
 /// Run the synchronizer with real database and storage implementations
-async fn run_synchronizer(
-    config: config::Config,
-    competition_id: Option<String>,
-    since: Option<String>,
-) -> Result<()> {
+async fn run_synchronizer(config: config::Config, since: Option<String>) -> Result<()> {
     let since_time = if let Some(ts) = since {
         Some(
             DateTime::parse_from_rfc3339(&ts)
@@ -123,7 +105,7 @@ async fn run_synchronizer(
 
     let synchronizer = initialize_synchronizer(config).await?;
 
-    if let Err(e) = synchronizer.run(competition_id, since_time).await {
+    if let Err(e) = synchronizer.run(since_time).await {
         error!("Synchronizer failed: {}", e);
         process::exit(1);
     }
@@ -148,7 +130,6 @@ async fn reset_synchronizer(config: config::Config) -> Result<()> {
 async fn start_synchronizer(
     config: config::Config,
     interval: u64,
-    competition_id: Option<String>,
     since: Option<String>,
 ) -> Result<()> {
     let since_time = if let Some(ts) = since {
@@ -168,10 +149,7 @@ async fn start_synchronizer(
         interval
     );
 
-    if let Err(e) = synchronizer
-        .start(interval, competition_id, since_time)
-        .await
-    {
+    if let Err(e) = synchronizer.start(interval, since_time).await {
         error!("Synchronizer failed: {}", e);
         process::exit(1);
     }
@@ -179,25 +157,38 @@ async fn start_synchronizer(
     Ok(())
 }
 
-async fn initialize_synchronizer(
-    config: config::Config,
-) -> Result<
-    Synchronizer<PostgresDatabase, SqliteSyncStorage, s3::S3Storage, RecallBlockchain>,
-    anyhow::Error,
-> {
-    let database = PostgresDatabase::new(&config.database.url).await?;
+type SynchronizerInstance =
+    Synchronizer<PostgresDatabase, SqliteSyncStorage, S3Storage, RecallBlockchain>;
+
+async fn initialize_synchronizer(config: config::Config) -> Result<SynchronizerInstance> {
     let sync_storage = SqliteSyncStorage::new(&config.sync_storage.db_path)?;
-    let s3_storage = crate::s3::S3Storage::new(&config.s3).await?;
     let recall_storage = RecallBlockchain::new(&config.recall).await?;
-    let synchronizer = Synchronizer::new(
-        database,
-        sync_storage,
-        s3_storage,
-        recall_storage,
-        config.sync,
-    );
+
+    let synchronizer = if let Some(s3_config) = config.s3 {
+        // S3 mode - use generic synchronizer with S3
+        info!("Initializing S3-based synchronizer");
+        let database =
+            PostgresDatabase::new(&config.database.url, crate::db::pg_schema::SchemaMode::S3)
+                .await?;
+        let s3_storage = crate::s3::S3Storage::new(&s3_config).await?;
+        Synchronizer::with_s3(
+            database,
+            sync_storage,
+            s3_storage,
+            recall_storage,
+            config.sync,
+        )
+    } else {
+        // Direct mode - use generic synchronizer without S3
+        info!("Initializing direct database synchronizer (no S3)");
+        let database = PostgresDatabase::new(
+            &config.database.url,
+            crate::db::pg_schema::SchemaMode::Direct,
+        )
+        .await?;
+        Synchronizer::without_s3(database, sync_storage, recall_storage, config.sync)
+    };
 
     info!("Synchronizer initialized successfully");
-
     Ok(synchronizer)
 }

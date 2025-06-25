@@ -18,10 +18,12 @@ pub enum SyncStatus {
 pub struct SyncRecord {
     /// UUID from ObjectIndex (maps to object_index.id)
     pub id: Uuid,
-    /// S3 object key from ObjectIndex
-    pub object_key: String,
-    /// S3 bucket name from ObjectIndex
-    pub bucket_name: String,
+    /// Competition ID
+    pub competition_id: Option<Uuid>,
+    /// Agent ID
+    pub agent_id: Option<Uuid>,
+    /// Data type
+    pub data_type: String,
     /// Timestamp when object was last modified (from object_index.object_last_modified_at)
     pub timestamp: DateTime<Utc>,
     /// Current synchronization status
@@ -32,14 +34,16 @@ impl SyncRecord {
     /// Create a new SyncRecord with PendingSync status
     pub fn new(
         id: Uuid,
-        object_key: String,
-        bucket_name: String,
+        competition_id: Option<Uuid>,
+        agent_id: Option<Uuid>,
+        data_type: String,
         timestamp: DateTime<Utc>,
     ) -> Self {
         Self {
             id,
-            object_key,
-            bucket_name,
+            competition_id,
+            agent_id,
+            data_type,
             timestamp,
             status: SyncStatus::PendingSync,
         }
@@ -48,15 +52,17 @@ impl SyncRecord {
     /// Create a SyncRecord with a specific status
     pub fn with_status(
         id: Uuid,
-        object_key: String,
-        bucket_name: String,
+        competition_id: Option<Uuid>,
+        agent_id: Option<Uuid>,
+        data_type: String,
         timestamp: DateTime<Utc>,
         status: SyncStatus,
     ) -> Self {
         Self {
             id,
-            object_key,
-            bucket_name,
+            competition_id,
+            agent_id,
+            data_type,
             timestamp,
             status,
         }
