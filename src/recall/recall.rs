@@ -2,7 +2,10 @@ use crate::config::RecallConfig;
 use crate::recall::error::RecallError;
 use crate::recall::storage::Storage;
 use async_trait::async_trait;
-use recall_provider::{fvm_shared::address::Address, json_rpc::JsonRpcProvider};
+use recall_provider::{
+    fvm_shared::address::{Address, Error, Network},
+    json_rpc::JsonRpcProvider,
+};
 use recall_sdk::{
     machine::{bucket::Bucket, Machine},
     network::{NetworkConfig, NetworkSpec},
@@ -10,7 +13,6 @@ use recall_sdk::{
 use recall_signer::{key::parse_secret_key, AccountKind, Signer, Wallet};
 use std::collections::HashMap;
 use std::fs;
-use std::str::FromStr;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::Mutex;
@@ -25,6 +27,60 @@ pub struct RecallBlockchain {
 }
 
 impl RecallBlockchain {
+    /// Parse an address: tries mainnet, testnet, then EVM address conversion
+    fn parse_address(s: &str) -> Result<Address, RecallError> {
+        // Try Filecoin address formats first
+        Network::Mainnet
+            .parse_address(s)
+            .or_else(|e| match e {
+                Error::UnknownNetwork => Network::Testnet.parse_address(s),
+                _ => Err(e),
+            })
+            .or_else(|_| {
+                // Parse as hex address (expecting 0x prefix)
+                let hex_str = s.strip_prefix("0x")
+                    .or_else(|| s.strip_prefix("0X"))
+                    .ok_or_else(|| RecallError::Configuration(
+                        format!("Address '{}' must start with '0x' or be a valid Filecoin address", s)
+                    ))?;
+
+                let bytes = hex::decode(hex_str).map_err(|e| {
+                    RecallError::Configuration(format!("Invalid hex in address '{}': {}", s, e))
+                })?;
+
+                if bytes.len() != 20 {
+                    return Err(RecallError::Configuration(format!(
+                        "Invalid address '{}': expected 20 bytes, got {}",
+                        s, bytes.len()
+                    )));
+                }
+
+                // EVM-form ID address (0xff prefix)
+                if bytes[0] == 0xff {
+                    if bytes[1..12].iter().all(|&b| b == 0) {
+                        let id_bytes: [u8; 8] = bytes[12..20].try_into().unwrap();
+                        let actor_id = u64::from_be_bytes(id_bytes);
+                        Ok(Address::new_id(actor_id))
+                    } else {
+                        Err(RecallError::Configuration(format!(
+                            "Invalid EVM-form ID address '{}': bytes 1-11 must be 0x00",
+                            s
+                        )))
+                    }
+                } else {
+                    // Standard Ethereum addresses would need EAM actor conversion
+                    Err(RecallError::Configuration(format!(
+                        "Ethereum address '{}' conversion not implemented. Use Filecoin address format.",
+                        s
+                    )))
+                }
+            })
+            .map_err(|e| match e {
+                RecallError::Configuration(msg) => RecallError::Configuration(msg),
+                _ => RecallError::Configuration(format!("Failed to parse address '{}': {}", s, e)),
+            })
+    }
+
     /// Load network configuration from file
     fn load_network_config(config: &RecallConfig) -> Result<NetworkConfig, RecallError> {
         let network_config_path = config.config_path.as_deref().unwrap_or("networks.toml");
@@ -126,13 +182,7 @@ impl RecallBlockchain {
         signer: &mut Wallet,
     ) -> Result<Address, RecallError> {
         if let Some(bucket_addr) = &config.bucket {
-            let address = Address::from_str(bucket_addr).map_err(|e| {
-                error!("Invalid bucket address '{}': {}", bucket_addr, e);
-                RecallError::Configuration(format!(
-                    "Invalid bucket address '{}': {}",
-                    bucket_addr, e
-                ))
-            })?;
+            let address = Self::parse_address(bucket_addr)?;
             info!("Using existing bucket address: {}", address);
             Ok(address)
         } else {
@@ -664,6 +714,49 @@ impl Storage for RecallBlockchain {
                 } else {
                     warn!("Failed to get blob from Recall: {}", e);
                     Err(e)
+                }
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn test_parse_bucket_address() {
+        let test_cases = vec![
+            // Valid addresses
+            ("0xff00000000000000000000000000000000001F25", Ok("f07973")),
+            ("0xff00000000000000000000000000000000001f25", Ok("f07973")),
+            ("t410fkkld55ioe7qg24wvt7fu6pbknb56ht7pt4zamxa", Ok("f410fkkld55ioe7qg24wvt7fu6pbknb56ht7pt4zamxa")),
+            ("f410fkkld55ioe7qg24wvt7fu6pbknb56ht7pt4zamxa", Ok("f410fkkld55ioe7qg24wvt7fu6pbknb56ht7pt4zamxa")),
+            
+            // Error cases
+            ("invalid_address", Err("must start with '0x' or be a valid Filecoin address")),
+            ("0x1234", Err("expected 20 bytes")),
+            ("0xff11111111111111111111111111111111111111", Err("bytes 1-11 must be 0x00")),
+        ];
+
+        for (input, expected) in test_cases {
+            match (RecallBlockchain::parse_address(input), expected) {
+                (Ok(addr), Ok(expected_addr)) => {
+                    assert_eq!(addr.to_string(), expected_addr, "Failed for input: {}", input);
+                }
+                (Err(e), Err(expected_msg)) => {
+                    let error_msg = e.to_string();
+                    assert!(
+                        error_msg.contains(expected_msg),
+                        "Expected error containing '{}' for input '{}', got: {}",
+                        expected_msg, input, error_msg
+                    );
+                }
+                (Ok(addr), Err(_)) => {
+                    panic!("Expected error for input '{}', but got success: {}", input, addr);
+                }
+                (Err(e), Ok(_)) => {
+                    panic!("Expected success for input '{}', but got error: {}", input, e);
                 }
             }
         }
