@@ -62,28 +62,53 @@ impl PostgresDatabase {
 
     /// Ensure the enum type exists in the public schema
     async fn ensure_enum_exists(&self) -> Result<(), DatabaseError> {
-        let create_enum_query = r#"
-            DO $$ BEGIN
+        // First check if the type already exists
+        let check_query = r#"
+            SELECT EXISTS (
+                SELECT 1 FROM pg_type 
+                WHERE typname = 'sync_data_type' 
+                AND typnamespace = 'public'::regnamespace
+            )
+        "#;
+        
+        let exists: bool = sqlx::query_scalar(check_query)
+            .fetch_one(&self.pool)
+            .await
+            .map_err(|e| {
+                error!("Failed to check for sync_data_type enum: {}", e);
+                DatabaseError::QueryError(format!("Failed to check enum type: {}", e))
+            })?;
+
+        if !exists {
+            let create_enum_query = r#"
                 CREATE TYPE sync_data_type AS ENUM (
                     'trade',
                     'agent_rank_history',
                     'agent_rank',
                     'competitions_leaderboard',
                     'portfolio_snapshot'
-                );
-            EXCEPTION
-                WHEN duplicate_object THEN null;
-            END $$;
-        "#;
+                )
+            "#;
 
-        debug!("Ensuring sync_data_type enum exists in public schema");
-        sqlx::query(create_enum_query)
-            .execute(&self.pool)
-            .await
-            .map_err(|e| {
-                error!("Failed to create sync_data_type enum: {}", e);
-                DatabaseError::QueryError(format!("Failed to create enum type: {}", e))
-            })?;
+            debug!("Creating sync_data_type enum in public schema");
+            
+            // Try to create the enum, but ignore errors if it already exists
+            // This handles race conditions where another connection created it
+            match sqlx::query(create_enum_query).execute(&self.pool).await {
+                Ok(_) => {
+                    debug!("Successfully created sync_data_type enum");
+                }
+                Err(e) if e.to_string().contains("already exists") => {
+                    debug!("sync_data_type enum already exists (race condition)");
+                }
+                Err(e) => {
+                    error!("Failed to create sync_data_type enum: {}", e);
+                    return Err(DatabaseError::QueryError(format!("Failed to create enum type: {}", e)));
+                }
+            }
+        } else {
+            debug!("sync_data_type enum already exists");
+        }
 
         Ok(())
     }

@@ -150,10 +150,13 @@ fn get_all_test_databases() -> Vec<DatabaseFactory> {
         databases.push(Box::new(|| {
             Box::pin(async {
                 match create_postgres_s3_with_schema().await {
-                    Ok(db) => (Box::new(db) as Box<dyn Database + Send + Sync>, StorageMode::S3),
+                    Ok(db) => (
+                        Box::new(db) as Box<dyn Database + Send + Sync>,
+                        StorageMode::S3,
+                    ),
                     Err(e) => {
                         panic!(
-                            "Failed to connect to PostgreSQL: {}. Set database.enabled=false in config.toml to skip these tests.",
+                            "PostgreSQL initialization without 'data' column failed: {}",
                             e
                         );
                     }
@@ -164,12 +167,12 @@ fn get_all_test_databases() -> Vec<DatabaseFactory> {
         databases.push(Box::new(|| {
             Box::pin(async {
                 match create_postgres_direct_with_schema().await {
-                    Ok(db) => (Box::new(db) as Box<dyn Database + Send + Sync>, StorageMode::Direct),
+                    Ok(db) => (
+                        Box::new(db) as Box<dyn Database + Send + Sync>,
+                        StorageMode::Direct,
+                    ),
                     Err(e) => {
-                        panic!(
-                            "Failed to connect to PostgreSQL: {}. Set database.enabled=false in config.toml to skip these tests.",
-                            e
-                        );
+                        panic!("PostgreSQL initialization with 'data' column failed: {}", e);
                     }
                 }
             })
