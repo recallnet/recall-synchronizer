@@ -1,3 +1,4 @@
+use crate::db::data_type::DataType;
 use crate::db::database::Database;
 use crate::db::error::DatabaseError;
 use crate::db::models::ObjectIndex;
@@ -20,6 +21,50 @@ impl PostgresDatabase {
     /// Create a new PostgresDatabase with the given connection URL and mode
     pub async fn new(database_url: &str, mode: SchemaMode) -> Result<Self, DatabaseError> {
         Self::new_with_schema(database_url, None, mode).await
+    }
+
+    /// Get the enum values for sync_data_type
+    fn get_enum_values() -> String {
+        DataType::all_variants()
+            .iter()
+            .map(|dt| format!("'{}'", dt))
+            .collect::<Vec<_>>()
+            .join(",\n        ")
+    }
+
+    /// Create enum type, handling race conditions gracefully
+    async fn create_enum_type(&self, schema_prefix: Option<&str>) -> Result<(), DatabaseError> {
+        let (enum_name, debug_name) = match schema_prefix {
+            Some(schema) => (format!("{}.sync_data_type", schema), format!("{}.sync_data_type", schema)),
+            None => ("sync_data_type".to_string(), "sync_data_type".to_string()),
+        };
+
+        let create_enum_query = format!(
+            "CREATE TYPE {} AS ENUM (\n        {}\n    )",
+            enum_name,
+            Self::get_enum_values()
+        );
+
+        debug!("Creating {} enum", debug_name);
+        
+        match sqlx::query(&create_enum_query).execute(&self.pool).await {
+            Ok(_) => {
+                debug!("Successfully created {} enum", debug_name);
+                Ok(())
+            }
+            Err(e) => {
+                let error_str = e.to_string();
+                if error_str.contains("already exists") || 
+                   error_str.contains("duplicate key value") ||
+                   error_str.contains("pg_type_typname_nsp_index") {
+                    debug!("{} enum already exists", debug_name);
+                    Ok(())
+                } else {
+                    error!("Failed to create {} enum: {}", debug_name, e);
+                    Err(DatabaseError::QueryError(format!("Failed to create enum type: {}", e)))
+                }
+            }
+        }
     }
 
     /// Create a new PostgresDatabase with a specific schema
@@ -51,15 +96,26 @@ impl PostgresDatabase {
         // If a schema is specified, create it and the tables
         if let Some(ref schema_name) = db.schema {
             db.initialize_schema(schema_name).await?;
+        } else {
+            // Create enum in public schema if no specific schema is provided
+            db.ensure_enum_exists().await?;
         }
 
         info!("PostgreSQL database connection established successfully");
         Ok(db)
     }
 
+    /// Ensure the enum type exists in the public schema
+    async fn ensure_enum_exists(&self) -> Result<(), DatabaseError> {
+        self.create_enum_type(None).await
+    }
+
     /// Initialize a schema with the required tables
     async fn initialize_schema(&self, schema_name: &str) -> Result<(), DatabaseError> {
         info!("Initializing schema: {}", schema_name);
+
+        // First ensure the enum exists in public schema (needed for type casting)
+        self.ensure_enum_exists().await?;
 
         // Create schema if it doesn't exist
         let create_schema_query = format!("CREATE SCHEMA IF NOT EXISTS {}", schema_name);
@@ -72,15 +128,17 @@ impl PostgresDatabase {
                 DatabaseError::QueryError(format!("Failed to create schema: {}", e))
             })?;
 
+        // Create the enum type in the schema if it doesn't exist
+        self.create_enum_type(Some(schema_name)).await?;
+
         // Create the object_index table in the schema
+        let table_definition = self.mode.table_definition(Some(schema_name));
+
         let create_table_query = format!(
             r#"
-            CREATE TABLE IF NOT EXISTS {}.object_index (
-                {}
-            )
+            CREATE TABLE IF NOT EXISTS {}.object_index ({})
             "#,
-            schema_name,
-            self.mode.schema_definition()
+            schema_name, table_definition
         );
 
         debug!("Creating object_index table in schema '{}'", schema_name);

@@ -8,7 +8,6 @@ services:
     ports:
       - "5432:5432"
     volumes:
-      - ./schema:/docker-entrypoint-initdb.d
       - postgres_data:/var/lib/postgresql/data
     command: ["postgres", "-c", "log_statement=all"]
     healthcheck:

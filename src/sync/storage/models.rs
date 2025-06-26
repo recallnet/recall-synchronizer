@@ -1,3 +1,4 @@
+use crate::db::data_type::DataType;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
@@ -23,7 +24,7 @@ pub struct SyncRecord {
     /// Agent ID
     pub agent_id: Option<Uuid>,
     /// Data type
-    pub data_type: String,
+    pub data_type: DataType,
     /// Timestamp when object was last modified (from object_index.object_last_modified_at)
     pub timestamp: DateTime<Utc>,
     /// Current synchronization status
@@ -36,7 +37,7 @@ impl SyncRecord {
         id: Uuid,
         competition_id: Option<Uuid>,
         agent_id: Option<Uuid>,
-        data_type: String,
+        data_type: DataType,
         timestamp: DateTime<Utc>,
     ) -> Self {
         Self {
@@ -54,7 +55,7 @@ impl SyncRecord {
         id: Uuid,
         competition_id: Option<Uuid>,
         agent_id: Option<Uuid>,
-        data_type: String,
+        data_type: DataType,
         timestamp: DateTime<Utc>,
         status: SyncStatus,
     ) -> Self {

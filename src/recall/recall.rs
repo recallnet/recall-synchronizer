@@ -730,33 +730,57 @@ mod tests {
             // Valid addresses
             ("0xff00000000000000000000000000000000001F25", Ok("f07973")),
             ("0xff00000000000000000000000000000000001f25", Ok("f07973")),
-            ("t410fkkld55ioe7qg24wvt7fu6pbknb56ht7pt4zamxa", Ok("f410fkkld55ioe7qg24wvt7fu6pbknb56ht7pt4zamxa")),
-            ("f410fkkld55ioe7qg24wvt7fu6pbknb56ht7pt4zamxa", Ok("f410fkkld55ioe7qg24wvt7fu6pbknb56ht7pt4zamxa")),
-            
+            (
+                "t410fkkld55ioe7qg24wvt7fu6pbknb56ht7pt4zamxa",
+                Ok("f410fkkld55ioe7qg24wvt7fu6pbknb56ht7pt4zamxa"),
+            ),
+            (
+                "f410fkkld55ioe7qg24wvt7fu6pbknb56ht7pt4zamxa",
+                Ok("f410fkkld55ioe7qg24wvt7fu6pbknb56ht7pt4zamxa"),
+            ),
             // Error cases
-            ("invalid_address", Err("must start with '0x' or be a valid Filecoin address")),
+            (
+                "invalid_address",
+                Err("must start with '0x' or be a valid Filecoin address"),
+            ),
             ("0x1234", Err("expected 20 bytes")),
-            ("0xff11111111111111111111111111111111111111", Err("bytes 1-11 must be 0x00")),
+            (
+                "0xff11111111111111111111111111111111111111",
+                Err("bytes 1-11 must be 0x00"),
+            ),
         ];
 
         for (input, expected) in test_cases {
             match (RecallBlockchain::parse_address(input), expected) {
                 (Ok(addr), Ok(expected_addr)) => {
-                    assert_eq!(addr.to_string(), expected_addr, "Failed for input: {}", input);
+                    assert_eq!(
+                        addr.to_string(),
+                        expected_addr,
+                        "Failed for input: {}",
+                        input
+                    );
                 }
                 (Err(e), Err(expected_msg)) => {
                     let error_msg = e.to_string();
                     assert!(
                         error_msg.contains(expected_msg),
                         "Expected error containing '{}' for input '{}', got: {}",
-                        expected_msg, input, error_msg
+                        expected_msg,
+                        input,
+                        error_msg
                     );
                 }
                 (Ok(addr), Err(_)) => {
-                    panic!("Expected error for input '{}', but got success: {}", input, addr);
+                    panic!(
+                        "Expected error for input '{}', but got success: {}",
+                        input, addr
+                    );
                 }
                 (Err(e), Ok(_)) => {
-                    panic!("Expected success for input '{}', but got error: {}", input, e);
+                    panic!(
+                        "Expected success for input '{}', but got error: {}",
+                        input, e
+                    );
                 }
             }
         }

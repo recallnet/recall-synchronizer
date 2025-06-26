@@ -1,7 +1,7 @@
 use crate::config::{
     Config, DatabaseConfig, RecallConfig, S3Config, SyncConfig, SyncStorageConfig,
 };
-use crate::db::{Database, FakeDatabase, ObjectIndex};
+use crate::db::{data_type::DataType, Database, FakeDatabase, ObjectIndex};
 use crate::recall::fake::FakeRecallStorage;
 use crate::recall::Storage as RecallStorage;
 use crate::s3::{FakeStorage, Storage as S3Storage};
@@ -41,7 +41,7 @@ impl TestEnvironment {
             parts.push(agent_id.to_string());
         }
 
-        parts.push(object.data_type.clone());
+        parts.push(object.data_type.to_string());
         parts.push(object.id.to_string());
 
         parts.join("/")
@@ -237,7 +237,6 @@ async fn when_no_filters_applied_all_objects_are_synchronized() {
     );
 }
 
-
 #[tokio::test]
 async fn when_timestamp_filter_is_applied_only_newer_objects_are_synchronized() {
     let env = setup().await;
@@ -282,7 +281,7 @@ async fn when_object_is_already_being_processed_it_is_skipped() {
         test_object.id,
         test_object.competition_id,
         test_object.agent_id,
-        test_object.data_type.clone(),
+        test_object.data_type,
         test_object.created_at,
     );
     env.sync_storage.add_object(sync_record).await.unwrap();
@@ -543,7 +542,6 @@ async fn when_since_param_skips_unsynced_objects_they_remain_unsynced() {
     }
 }
 
-
 #[tokio::test]
 async fn regular_sync_processes_all_unsynced_objects_from_all_competitions() {
     let mut config = create_test_config();
@@ -581,7 +579,7 @@ async fn regular_sync_processes_all_unsynced_objects_from_all_competitions() {
         .await
         .unwrap();
     assert_eq!(synced.len(), 3);
-    
+
     // Second sync - should sync remaining 3 objects
     env.synchronizer.run(None).await.unwrap();
 
@@ -733,7 +731,7 @@ async fn recall_key_structure_follows_required_format() {
     object.id = object_id;
     object.competition_id = Some(competition_id);
     object.agent_id = Some(agent_id);
-    object.data_type = "CHAIN_OF_THOUGHT".to_string();
+    object.data_type = DataType::AgentRankHistory;
 
     env.add_object_to_db_and_s3(object.clone(), "Test data for recall key format")
         .await;
@@ -749,7 +747,7 @@ async fn recall_key_structure_follows_required_format() {
 
     let expected_key = format!(
         "{}/{}/{}/{}",
-        competition_id, agent_id, "CHAIN_OF_THOUGHT", object_id
+        competition_id, agent_id, "agent_rank_history", object_id
     );
 
     let exists_with_correct_key = env.recall_storage.has_blob(&expected_key).await.unwrap();

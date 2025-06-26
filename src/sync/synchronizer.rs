@@ -114,7 +114,7 @@ where
         limit: Option<u32>,
     ) -> Result<Vec<ObjectIndex>> {
         let fetch_size = limit.unwrap_or(self.config.batch_size as u32);
-        
+
         let objects = self
             .database
             .get_objects(fetch_size, since_time, after_id)
@@ -157,7 +157,7 @@ where
             parts.push(agent_id.to_string());
         }
 
-        parts.push(object.data_type.clone());
+        parts.push(object.data_type.to_string());
         parts.push(object.id.to_string());
 
         parts.join("/")
@@ -168,7 +168,7 @@ where
         let object_id = object.id;
         let competition_id = object.competition_id;
         let agent_id = object.agent_id;
-        let data_type = object.data_type.clone();
+        let data_type = object.data_type;
         let created_at = object.created_at;
 
         // Create sync record with detailed information
@@ -225,7 +225,6 @@ where
 
         Ok(())
     }
-
 
     /// Process a batch of objects and return the last synced object and count
     async fn process_object_batch<'a>(
@@ -336,11 +335,7 @@ where
     }
 
     /// Starts the synchronizer to run continuously at the specified interval
-    pub async fn start(
-        &self,
-        interval_seconds: u64,
-        since: Option<DateTime<Utc>>,
-    ) -> Result<()> {
+    pub async fn start(&self, interval_seconds: u64, since: Option<DateTime<Utc>>) -> Result<()> {
         let mut interval_timer = interval(Duration::from_secs(interval_seconds));
 
         info!("Synchronizer started with {}s interval", interval_seconds);

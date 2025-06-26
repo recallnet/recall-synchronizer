@@ -1,3 +1,4 @@
+use crate::db::data_type::DataType;
 use crate::sync::storage::models::{SyncRecord, SyncStatus};
 use crate::sync::storage::{FakeSyncStorage, SqliteSyncStorage, SyncStorage};
 use crate::test_utils::is_sqlite_enabled;
@@ -15,7 +16,7 @@ fn create_test_record(_object_key: &str, timestamp: chrono::DateTime<Utc>) -> Sy
         Uuid::new_v4(),
         Some(Uuid::new_v4()),
         Some(Uuid::new_v4()),
-        "TEST_DATA".to_string(),
+        DataType::Trade,
         timestamp,
     )
 }
