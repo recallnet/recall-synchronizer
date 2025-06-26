@@ -1,3 +1,4 @@
+use crate::db::data_type::DataType;
 use crate::sync::storage::error::SyncStorageError;
 use crate::sync::storage::models::{SyncRecord, SyncStatus};
 use crate::sync::storage::sync_storage::SyncStorage;
@@ -6,6 +7,7 @@ use chrono::{DateTime, Utc};
 use rusqlite::{params, Connection, OptionalExtension};
 use std::fs;
 use std::path::Path;
+use std::str::FromStr;
 use std::sync::{Arc, Mutex};
 use tokio::task;
 use tracing::{debug, error, info, warn};
@@ -144,6 +146,7 @@ impl SyncStorage for SqliteSyncStorage {
         let id_str = record.id.to_string();
         let competition_id_str = record.competition_id.map(|id| id.to_string());
         let agent_id_str = record.agent_id.map(|id| id.to_string());
+        let data_type_str = record.data_type.to_string();
         let timestamp_str = Self::datetime_to_string(record.timestamp);
         let status_str = Self::status_to_string(record.status);
 
@@ -163,7 +166,7 @@ impl SyncStorage for SqliteSyncStorage {
                     id_str,
                     competition_id_str,
                     agent_id_str,
-                    record.data_type,
+                    data_type_str,
                     timestamp_str,
                     status_str
                 ],
@@ -246,7 +249,14 @@ impl SyncStorage for SqliteSyncStorage {
                 }
             };
 
-            let result: Option<(String, Option<String>, Option<String>, String, String, String)> = conn
+            let result: Option<(
+                String,
+                Option<String>,
+                Option<String>,
+                String,
+                String,
+                String,
+            )> = conn
                 .query_row(
                     "SELECT id, competition_id, agent_id, data_type, timestamp, status 
                      FROM sync_records WHERE id = ?1",
@@ -303,6 +313,13 @@ impl SyncStorage for SqliteSyncStorage {
                         })?;
                     let timestamp = Self::string_to_datetime(&timestamp_str)?;
                     let status = Self::string_to_status(&status_str)?;
+                    let data_type = DataType::from_str(&data_type).map_err(|e| {
+                        error!("Failed to parse data type from database: {}", e);
+                        SyncStorageError::OperationError(format!(
+                            "Failed to parse data type: {}",
+                            e
+                        ))
+                    })?;
 
                     debug!("Found sync record: id={}, status={:?}", id_str, status);
                     Ok(Some(SyncRecord::with_status(
@@ -420,6 +437,13 @@ impl SyncStorage for SqliteSyncStorage {
                             })?;
                         let timestamp = Self::string_to_datetime(&timestamp_str)?;
                         let status = Self::string_to_status(&status_str)?;
+                        let data_type = DataType::from_str(&data_type).map_err(|e| {
+                            error!("Failed to parse data type: {}", e);
+                            SyncStorageError::OperationError(format!(
+                                "Failed to parse data type: {}",
+                                e
+                            ))
+                        })?;
 
                         Ok(SyncRecord::with_status(
                             id,
@@ -535,6 +559,13 @@ impl SyncStorage for SqliteSyncStorage {
                         })?;
                     let timestamp = Self::string_to_datetime(&timestamp_str)?;
                     let status = Self::string_to_status(&status_str)?;
+                    let data_type = DataType::from_str(&data_type).map_err(|e| {
+                        error!("Failed to parse data type: {}", e);
+                        SyncStorageError::OperationError(format!(
+                            "Failed to parse data type: {}",
+                            e
+                        ))
+                    })?;
 
                     debug!(
                         "Found last sync record: id={}, timestamp={}",

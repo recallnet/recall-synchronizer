@@ -1,3 +1,4 @@
+use crate::db::data_type::DataType;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
@@ -11,7 +12,7 @@ pub struct ObjectIndex {
     pub object_key: Option<String>,
     pub competition_id: Option<Uuid>,
     pub agent_id: Option<Uuid>,
-    pub data_type: String,
+    pub data_type: DataType,
     pub size_bytes: Option<i64>,
     pub metadata: Option<serde_json::Value>,
     pub event_timestamp: Option<DateTime<Utc>>,

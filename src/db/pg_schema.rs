@@ -24,6 +24,24 @@ macro_rules! pg_get_optional_field {
     };
 }
 
+/// Helper macro to extract a field that might be TEXT or BYTEA
+/// Tries to read as TEXT first and converts to bytes, falls back to BYTEA
+#[macro_export]
+macro_rules! pg_get_text_or_bytea_field {
+    ($row:expr, $field:expr) => {
+        match $row.try_get::<String, _>($field) {
+            Ok(text) => Ok(Some(text.into_bytes())),
+            Err(_) => match $row.try_get::<Vec<u8>, _>($field) {
+                Ok(bytes) => Ok(Some(bytes)),
+                Err(sqlx::Error::ColumnNotFound(_)) => Ok(None),
+                Err(e) => Err(DatabaseError::DeserializationError(
+                    format!("Failed to read {} column: {}", $field, e)
+                )),
+            },
+        }?
+    };
+}
+
 /// Configuration for which schema to use
 pub enum SchemaMode {
     S3,
@@ -41,7 +59,7 @@ impl S3Schema {
         object_key TEXT UNIQUE NOT NULL,
         competition_id UUID,
         agent_id UUID,
-        data_type VARCHAR(50) NOT NULL,
+        data_type sync_data_type NOT NULL,
         size_bytes BIGINT,
         metadata JSONB,
         event_timestamp TIMESTAMPTZ,
@@ -60,7 +78,7 @@ impl DirectSchema {
         id UUID PRIMARY KEY,
         competition_id UUID,
         agent_id UUID,
-        data_type VARCHAR(50) NOT NULL,
+        data_type sync_data_type NOT NULL,
         size_bytes BIGINT,
         metadata JSONB,
         event_timestamp TIMESTAMPTZ,
@@ -112,9 +130,9 @@ impl SchemaMode {
                 metadata: pg_get_field!(row, "metadata"),
                 event_timestamp: pg_get_field!(row, "event_timestamp"),
                 created_at: pg_get_field!(row, "created_at"),
-                data: Some(pg_get_field!(row, "data")),
+                data: pg_get_text_or_bytea_field!(row, "data"),
                 object_key: None,
-            }),
+            })
         }
     }
 
@@ -152,7 +170,7 @@ impl SchemaMode {
                     .expect("object_key required for S3 mode");
                 let competition_id = object.competition_id;
                 let agent_id = object.agent_id;
-                let data_type = object.data_type.clone();
+                let data_type = object.data_type;
                 let size_bytes = object.size_bytes;
                 let metadata = object.metadata.clone();
                 let event_timestamp = object.event_timestamp;
@@ -193,7 +211,7 @@ impl SchemaMode {
                 let id = object.id;
                 let competition_id = object.competition_id;
                 let agent_id = object.agent_id;
-                let data_type = object.data_type.clone();
+                let data_type = object.data_type;
                 let size_bytes = object.size_bytes;
                 let metadata = object.metadata.clone();
                 let event_timestamp = object.event_timestamp;

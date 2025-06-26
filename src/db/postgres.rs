@@ -72,6 +72,30 @@ impl PostgresDatabase {
                 DatabaseError::QueryError(format!("Failed to create schema: {}", e))
             })?;
 
+        // Create the enum type if it doesn't exist
+        let create_enum_query = r#"
+            DO $$ BEGIN
+                CREATE TYPE sync_data_type AS ENUM (
+                    'trade',
+                    'agent_rank_history',
+                    'agent_rank',
+                    'competitions_leaderboard',
+                    'portfolio_snapshot'
+                );
+            EXCEPTION
+                WHEN duplicate_object THEN null;
+            END $$;
+        "#;
+
+        debug!("Creating sync_data_type enum");
+        sqlx::query(create_enum_query)
+            .execute(&self.pool)
+            .await
+            .map_err(|e| {
+                error!("Failed to create sync_data_type enum: {}", e);
+                DatabaseError::QueryError(format!("Failed to create enum type: {}", e))
+            })?;
+
         // Create the object_index table in the schema
         let create_table_query = format!(
             r#"

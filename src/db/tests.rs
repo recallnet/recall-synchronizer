@@ -1,5 +1,6 @@
 use crate::db::{
-    pg_schema::SchemaMode, postgres::PostgresDatabase, Database, FakeDatabase, ObjectIndex,
+    data_type::DataType, pg_schema::SchemaMode, postgres::PostgresDatabase, Database, FakeDatabase,
+    ObjectIndex,
 };
 use crate::test_utils::{
     create_test_object_index_direct, create_test_object_index_s3, is_db_enabled, load_test_config,
@@ -82,9 +83,9 @@ async fn add_test_objects_s3(db: &(dyn Database + Send + Sync)) -> Vec<ObjectInd
         // Vary other attributes for realistic testing
         object.size_bytes = Some(1024 * (i + 1));
         object.data_type = match i % 3 {
-            0 => "LOGS".to_string(),
-            1 => "METRICS".to_string(),
-            _ => "EVENTS".to_string(),
+            0 => DataType::Trade,
+            1 => DataType::AgentRank,
+            _ => DataType::PortfolioSnapshot,
         };
 
         db.add_object(object.clone()).await.unwrap();
@@ -112,9 +113,9 @@ async fn add_test_objects_direct(db: &(dyn Database + Send + Sync)) -> Vec<Objec
         object.event_timestamp = Some(modified_at);
 
         object.data_type = match i % 3 {
-            0 => "LOGS".to_string(),
-            1 => "METRICS".to_string(),
-            _ => "EVENTS".to_string(),
+            0 => DataType::Trade,
+            1 => DataType::AgentRank,
+            _ => DataType::PortfolioSnapshot,
         };
 
         db.add_object(object.clone()).await.unwrap();

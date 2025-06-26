@@ -1,3 +1,4 @@
+pub mod data_type;
 pub mod database;
 pub mod error;
 #[cfg(test)]
