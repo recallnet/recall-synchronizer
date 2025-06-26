@@ -92,6 +92,9 @@ impl PostgresDatabase {
     async fn initialize_schema(&self, schema_name: &str) -> Result<(), DatabaseError> {
         info!("Initializing schema: {}", schema_name);
 
+        // First ensure the enum exists in public schema (needed for type casting)
+        self.ensure_enum_exists().await?;
+
         // Create schema if it doesn't exist
         let create_schema_query = format!("CREATE SCHEMA IF NOT EXISTS {}", schema_name);
         debug!("Executing: {}", create_schema_query);
