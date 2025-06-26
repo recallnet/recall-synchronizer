@@ -34,9 +34,10 @@ macro_rules! pg_get_text_or_bytea_field {
             Err(_) => match $row.try_get::<Vec<u8>, _>($field) {
                 Ok(bytes) => Ok(Some(bytes)),
                 Err(sqlx::Error::ColumnNotFound(_)) => Ok(None),
-                Err(e) => Err(DatabaseError::DeserializationError(
-                    format!("Failed to read {} column: {}", $field, e)
-                )),
+                Err(e) => Err(DatabaseError::DeserializationError(format!(
+                    "Failed to read {} column: {}",
+                    $field, e
+                ))),
             },
         }?
     };
@@ -136,7 +137,7 @@ impl SchemaMode {
                 created_at: pg_get_field!(row, "created_at"),
                 data: pg_get_text_or_bytea_field!(row, "data"),
                 object_key: None,
-            })
+            }),
         }
     }
 
@@ -153,7 +154,7 @@ impl SchemaMode {
         } else {
             "sync_data_type".to_string()
         };
-        
+
         match self {
             SchemaMode::S3 => {
                 let query_string = format!(
