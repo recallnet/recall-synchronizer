@@ -51,10 +51,41 @@ impl PostgresDatabase {
         // If a schema is specified, create it and the tables
         if let Some(ref schema_name) = db.schema {
             db.initialize_schema(schema_name).await?;
+        } else {
+            // Create enum in public schema if no specific schema is provided
+            db.ensure_enum_exists().await?;
         }
 
         info!("PostgreSQL database connection established successfully");
         Ok(db)
+    }
+
+    /// Ensure the enum type exists in the public schema
+    async fn ensure_enum_exists(&self) -> Result<(), DatabaseError> {
+        let create_enum_query = r#"
+            DO $$ BEGIN
+                CREATE TYPE sync_data_type AS ENUM (
+                    'trade',
+                    'agent_rank_history',
+                    'agent_rank',
+                    'competitions_leaderboard',
+                    'portfolio_snapshot'
+                );
+            EXCEPTION
+                WHEN duplicate_object THEN null;
+            END $$;
+        "#;
+
+        debug!("Ensuring sync_data_type enum exists in public schema");
+        sqlx::query(create_enum_query)
+            .execute(&self.pool)
+            .await
+            .map_err(|e| {
+                error!("Failed to create sync_data_type enum: {}", e);
+                DatabaseError::QueryError(format!("Failed to create enum type: {}", e))
+            })?;
+
+        Ok(())
     }
 
     /// Initialize a schema with the required tables
@@ -72,10 +103,11 @@ impl PostgresDatabase {
                 DatabaseError::QueryError(format!("Failed to create schema: {}", e))
             })?;
 
-        // Create the enum type if it doesn't exist
-        let create_enum_query = r#"
+        // Create the enum type in the schema if it doesn't exist
+        let create_enum_query = format!(
+            r#"
             DO $$ BEGIN
-                CREATE TYPE sync_data_type AS ENUM (
+                CREATE TYPE {}.sync_data_type AS ENUM (
                     'trade',
                     'agent_rank_history',
                     'agent_rank',
@@ -85,10 +117,12 @@ impl PostgresDatabase {
             EXCEPTION
                 WHEN duplicate_object THEN null;
             END $$;
-        "#;
+            "#,
+            schema_name
+        );
 
         debug!("Creating sync_data_type enum");
-        sqlx::query(create_enum_query)
+        sqlx::query(&create_enum_query)
             .execute(&self.pool)
             .await
             .map_err(|e| {
@@ -97,14 +131,14 @@ impl PostgresDatabase {
             })?;
 
         // Create the object_index table in the schema
+        let table_definition = self.mode.table_definition(Some(schema_name));
+
         let create_table_query = format!(
             r#"
-            CREATE TABLE IF NOT EXISTS {}.object_index (
-                {}
-            )
+            CREATE TABLE IF NOT EXISTS {}.object_index ({})
             "#,
             schema_name,
-            self.mode.schema_definition()
+            table_definition
         );
 
         debug!("Creating object_index table in schema '{}'", schema_name);

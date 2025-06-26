@@ -53,57 +53,61 @@ struct S3Schema;
 struct DirectSchema;
 
 impl S3Schema {
-    fn schema_definition() -> &'static str {
-        r#"
-        id UUID PRIMARY KEY,
-        object_key TEXT UNIQUE NOT NULL,
-        competition_id UUID,
-        agent_id UUID,
-        data_type sync_data_type NOT NULL,
-        size_bytes BIGINT,
-        metadata JSONB,
-        event_timestamp TIMESTAMPTZ,
-        created_at TIMESTAMPTZ NOT NULL
-        "#
-    }
-
     fn select_columns() -> &'static str {
         "id, object_key, competition_id, agent_id, data_type, size_bytes, metadata, event_timestamp, created_at"
     }
 }
 
 impl DirectSchema {
-    fn schema_definition() -> &'static str {
-        r#"
-        id UUID PRIMARY KEY,
-        competition_id UUID,
-        agent_id UUID,
-        data_type sync_data_type NOT NULL,
-        size_bytes BIGINT,
-        metadata JSONB,
-        event_timestamp TIMESTAMPTZ,
-        created_at TIMESTAMPTZ NOT NULL,
-        data BYTEA NOT NULL
-        "#
-    }
-
     fn select_columns() -> &'static str {
         "id, competition_id, agent_id, data_type, size_bytes, metadata, event_timestamp, created_at, data"
     }
 }
 
 impl SchemaMode {
-    pub fn schema_definition(&self) -> &'static str {
-        match self {
-            SchemaMode::S3 => S3Schema::schema_definition(),
-            SchemaMode::Direct => DirectSchema::schema_definition(),
-        }
-    }
-
     pub fn select_columns(&self) -> &'static str {
         match self {
             SchemaMode::S3 => S3Schema::select_columns(),
             SchemaMode::Direct => DirectSchema::select_columns(),
+        }
+    }
+
+    /// Generate the table definition for the object_index table
+    pub fn table_definition(&self, schema_name: Option<&str>) -> String {
+        let enum_type = match schema_name {
+            Some(schema) => format!("{}.sync_data_type", schema),
+            None => "sync_data_type".to_string(),
+        };
+
+        match self {
+            SchemaMode::S3 => format!(
+                r#"
+                id UUID PRIMARY KEY,
+                object_key TEXT UNIQUE NOT NULL,
+                competition_id UUID,
+                agent_id UUID,
+                data_type {} NOT NULL,
+                size_bytes BIGINT,
+                metadata JSONB,
+                event_timestamp TIMESTAMPTZ,
+                created_at TIMESTAMPTZ NOT NULL
+                "#,
+                enum_type
+            ),
+            SchemaMode::Direct => format!(
+                r#"
+                id UUID PRIMARY KEY,
+                competition_id UUID,
+                agent_id UUID,
+                data_type {} NOT NULL,
+                size_bytes BIGINT,
+                metadata JSONB,
+                event_timestamp TIMESTAMPTZ,
+                created_at TIMESTAMPTZ NOT NULL,
+                data BYTEA NOT NULL
+                "#,
+                enum_type
+            ),
         }
     }
 
@@ -142,6 +146,14 @@ impl SchemaMode {
         object: &ObjectIndex,
         table_name: &str,
     ) -> sqlx::query::Query<'static, sqlx::Postgres, sqlx::postgres::PgArguments> {
+        // Extract schema from table name if present
+        let enum_cast = if table_name.contains('.') {
+            let parts: Vec<&str> = table_name.split('.').collect();
+            format!("{}.sync_data_type", parts[0])
+        } else {
+            "sync_data_type".to_string()
+        };
+        
         match self {
             SchemaMode::S3 => {
                 let query_string = format!(
@@ -150,7 +162,7 @@ impl SchemaMode {
                         id, object_key, competition_id, agent_id,
                         data_type, size_bytes, metadata,
                         event_timestamp, created_at
-                    ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+                    ) VALUES ($1, $2, $3, $4, $5::text::{}, $6, $7, $8, $9)
                     ON CONFLICT (object_key) DO UPDATE SET
                         competition_id = EXCLUDED.competition_id,
                         agent_id = EXCLUDED.agent_id,
@@ -160,7 +172,7 @@ impl SchemaMode {
                         event_timestamp = EXCLUDED.event_timestamp,
                         created_at = EXCLUDED.created_at
                     "#,
-                    table_name
+                    table_name, enum_cast
                 );
 
                 let id = object.id;
@@ -194,7 +206,7 @@ impl SchemaMode {
                         id, competition_id, agent_id,
                         data_type, size_bytes, metadata,
                         event_timestamp, created_at, data
-                    ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+                    ) VALUES ($1, $2, $3, $4::text::{}, $5, $6, $7, $8, $9)
                     ON CONFLICT (id) DO UPDATE SET
                         competition_id = EXCLUDED.competition_id,
                         agent_id = EXCLUDED.agent_id,
@@ -205,7 +217,7 @@ impl SchemaMode {
                         created_at = EXCLUDED.created_at,
                         data = EXCLUDED.data
                     "#,
-                    table_name
+                    table_name, enum_cast
                 );
 
                 let id = object.id;
