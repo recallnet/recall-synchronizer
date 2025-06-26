@@ -18,15 +18,29 @@ pub enum DataType {
     PortfolioSnapshot,
 }
 
+impl DataType {
+    /// Get all enum variants
+    pub fn all_variants() -> &'static [DataType] {
+        &[
+            DataType::Trade,
+            DataType::AgentRankHistory,
+            DataType::AgentRank,
+            DataType::CompetitionsLeaderboard,
+            DataType::PortfolioSnapshot,
+        ]
+    }
+}
+
 impl fmt::Display for DataType {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            DataType::Trade => write!(f, "trade"),
-            DataType::AgentRankHistory => write!(f, "agent_rank_history"),
-            DataType::AgentRank => write!(f, "agent_rank"),
-            DataType::CompetitionsLeaderboard => write!(f, "competitions_leaderboard"),
-            DataType::PortfolioSnapshot => write!(f, "portfolio_snapshot"),
-        }
+        let s = match self {
+            DataType::Trade => "trade",
+            DataType::AgentRankHistory => "agent_rank_history",
+            DataType::AgentRank => "agent_rank",
+            DataType::CompetitionsLeaderboard => "competitions_leaderboard",
+            DataType::PortfolioSnapshot => "portfolio_snapshot",
+        };
+        write!(f, "{}", s)
     }
 }
 

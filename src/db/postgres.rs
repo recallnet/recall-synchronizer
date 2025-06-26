@@ -1,3 +1,4 @@
+use crate::db::data_type::DataType;
 use crate::db::database::Database;
 use crate::db::error::DatabaseError;
 use crate::db::models::ObjectIndex;
@@ -23,12 +24,12 @@ impl PostgresDatabase {
     }
 
     /// Get the enum values for sync_data_type
-    fn get_enum_values() -> &'static str {
-        "'trade',
-        'agent_rank_history',
-        'agent_rank',
-        'competitions_leaderboard',
-        'portfolio_snapshot'"
+    fn get_enum_values() -> String {
+        DataType::all_variants()
+            .iter()
+            .map(|dt| format!("'{}'", dt))
+            .collect::<Vec<_>>()
+            .join(",\n        ")
     }
 
     /// Create enum type, handling race conditions gracefully
@@ -39,7 +40,7 @@ impl PostgresDatabase {
         };
 
         let create_enum_query = format!(
-            "CREATE TYPE {} AS ENUM ({})",
+            "CREATE TYPE {} AS ENUM (\n        {}\n    )",
             enum_name,
             Self::get_enum_values()
         );
