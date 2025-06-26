@@ -22,6 +22,50 @@ impl PostgresDatabase {
         Self::new_with_schema(database_url, None, mode).await
     }
 
+    /// Get the enum values for sync_data_type
+    fn get_enum_values() -> &'static str {
+        "'trade',
+        'agent_rank_history',
+        'agent_rank',
+        'competitions_leaderboard',
+        'portfolio_snapshot'"
+    }
+
+    /// Create enum type, handling race conditions gracefully
+    async fn create_enum_type(&self, schema_prefix: Option<&str>) -> Result<(), DatabaseError> {
+        let (enum_name, debug_name) = match schema_prefix {
+            Some(schema) => (format!("{}.sync_data_type", schema), format!("{}.sync_data_type", schema)),
+            None => ("sync_data_type".to_string(), "sync_data_type".to_string()),
+        };
+
+        let create_enum_query = format!(
+            "CREATE TYPE {} AS ENUM ({})",
+            enum_name,
+            Self::get_enum_values()
+        );
+
+        debug!("Creating {} enum", debug_name);
+        
+        match sqlx::query(&create_enum_query).execute(&self.pool).await {
+            Ok(_) => {
+                debug!("Successfully created {} enum", debug_name);
+                Ok(())
+            }
+            Err(e) => {
+                let error_str = e.to_string();
+                if error_str.contains("already exists") || 
+                   error_str.contains("duplicate key value") ||
+                   error_str.contains("pg_type_typname_nsp_index") {
+                    debug!("{} enum already exists", debug_name);
+                    Ok(())
+                } else {
+                    error!("Failed to create {} enum: {}", debug_name, e);
+                    Err(DatabaseError::QueryError(format!("Failed to create enum type: {}", e)))
+                }
+            }
+        }
+    }
+
     /// Create a new PostgresDatabase with a specific schema
     pub async fn new_with_schema(
         database_url: &str,
@@ -62,35 +106,7 @@ impl PostgresDatabase {
 
     /// Ensure the enum type exists in the public schema
     async fn ensure_enum_exists(&self) -> Result<(), DatabaseError> {
-        let create_enum_query = r#"
-            DO $$ 
-            BEGIN
-                IF NOT EXISTS (
-                    SELECT 1 FROM pg_type 
-                    WHERE typname = 'sync_data_type' 
-                    AND typnamespace = 'public'::regnamespace
-                ) THEN
-                    CREATE TYPE sync_data_type AS ENUM (
-                        'trade',
-                        'agent_rank_history',
-                        'agent_rank',
-                        'competitions_leaderboard',
-                        'portfolio_snapshot'
-                    );
-                END IF;
-            END $$;
-        "#;
-
-        debug!("Ensuring sync_data_type enum exists in public schema");
-        sqlx::query(create_enum_query)
-            .execute(&self.pool)
-            .await
-            .map_err(|e| {
-                error!("Failed to create sync_data_type enum: {}", e);
-                DatabaseError::QueryError(format!("Failed to create enum type: {}", e))
-            })?;
-
-        Ok(())
+        self.create_enum_type(None).await
     }
 
     /// Initialize a schema with the required tables
@@ -112,43 +128,7 @@ impl PostgresDatabase {
             })?;
 
         // Create the enum type in the schema if it doesn't exist
-        let create_enum_query = format!(
-            r#"
-            DO $$ 
-            BEGIN
-                IF NOT EXISTS (
-                    SELECT 1 FROM pg_type t
-                    JOIN pg_namespace n ON n.oid = t.typnamespace
-                    WHERE t.typname = 'sync_data_type' 
-                    AND n.nspname = '{}'
-                ) THEN
-                    CREATE TYPE {}.sync_data_type AS ENUM (
-                        'trade',
-                        'agent_rank_history',
-                        'agent_rank',
-                        'competitions_leaderboard',
-                        'portfolio_snapshot'
-                    );
-                END IF;
-            END $$;
-            "#,
-            schema_name, schema_name
-        );
-
-        debug!(
-            "Ensuring sync_data_type enum exists in schema {}",
-            schema_name
-        );
-        sqlx::query(&create_enum_query)
-            .execute(&self.pool)
-            .await
-            .map_err(|e| {
-                error!(
-                    "Failed to create {}.sync_data_type enum: {}",
-                    schema_name, e
-                );
-                DatabaseError::QueryError(format!("Failed to create enum type: {}", e))
-            })?;
+        self.create_enum_type(Some(schema_name)).await?;
 
         // Create the object_index table in the schema
         let table_definition = self.mode.table_definition(Some(schema_name));
