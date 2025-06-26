@@ -62,55 +62,70 @@ impl PostgresDatabase {
 
     /// Ensure the enum type exists in the public schema
     async fn ensure_enum_exists(&self) -> Result<(), DatabaseError> {
-        // First check if the type already exists
-        let check_query = r#"
-            SELECT EXISTS (
-                SELECT 1 FROM pg_type 
-                WHERE typname = 'sync_data_type' 
-                AND typnamespace = 'public'::regnamespace
-            )
-        "#;
-        
-        let exists: bool = sqlx::query_scalar(check_query)
-            .fetch_one(&self.pool)
+        // Use advisory lock to prevent race conditions
+        // Lock id is a hash of 'sync_data_type_public'
+        let lock_query = "SELECT pg_advisory_lock(12345)";
+        sqlx::query(lock_query)
+            .execute(&self.pool)
             .await
             .map_err(|e| {
-                error!("Failed to check for sync_data_type enum: {}", e);
-                DatabaseError::QueryError(format!("Failed to check enum type: {}", e))
+                error!("Failed to acquire advisory lock: {}", e);
+                DatabaseError::QueryError(format!("Failed to acquire lock: {}", e))
             })?;
 
-        if !exists {
-            let create_enum_query = r#"
-                CREATE TYPE sync_data_type AS ENUM (
-                    'trade',
-                    'agent_rank_history',
-                    'agent_rank',
-                    'competitions_leaderboard',
-                    'portfolio_snapshot'
+        // Within the lock, check and create if needed
+        let result: Result<(), DatabaseError> = async {
+            // First check if the type already exists
+            let check_query = r#"
+                SELECT EXISTS (
+                    SELECT 1 FROM pg_type 
+                    WHERE typname = 'sync_data_type' 
+                    AND typnamespace = 'public'::regnamespace
                 )
             "#;
-
-            debug!("Creating sync_data_type enum in public schema");
             
-            // Try to create the enum, but ignore errors if it already exists
-            // This handles race conditions where another connection created it
-            match sqlx::query(create_enum_query).execute(&self.pool).await {
-                Ok(_) => {
-                    debug!("Successfully created sync_data_type enum");
-                }
-                Err(e) if e.to_string().contains("already exists") => {
-                    debug!("sync_data_type enum already exists (race condition)");
-                }
-                Err(e) => {
-                    error!("Failed to create sync_data_type enum: {}", e);
-                    return Err(DatabaseError::QueryError(format!("Failed to create enum type: {}", e)));
-                }
-            }
-        } else {
-            debug!("sync_data_type enum already exists");
-        }
+            let exists: bool = sqlx::query_scalar(check_query)
+                .fetch_one(&self.pool)
+                .await
+                .map_err(|e| {
+                    error!("Failed to check for sync_data_type enum: {}", e);
+                    DatabaseError::QueryError(format!("Failed to check enum type: {}", e))
+                })?;
 
-        Ok(())
+            if !exists {
+                let create_enum_query = r#"
+                    CREATE TYPE sync_data_type AS ENUM (
+                        'trade',
+                        'agent_rank_history',
+                        'agent_rank',
+                        'competitions_leaderboard',
+                        'portfolio_snapshot'
+                    )
+                "#;
+
+                debug!("Creating sync_data_type enum in public schema");
+                
+                sqlx::query(create_enum_query)
+                    .execute(&self.pool)
+                    .await
+                    .map_err(|e| {
+                        error!("Failed to create sync_data_type enum: {}", e);
+                        DatabaseError::QueryError(format!("Failed to create enum type: {}", e))
+                    })?;
+                    
+                debug!("Successfully created sync_data_type enum");
+            } else {
+                debug!("sync_data_type enum already exists");
+            }
+
+            Ok(())
+        }.await;
+
+        // Always release the lock
+        let unlock_query = "SELECT pg_advisory_unlock(12345)";
+        let _ = sqlx::query(unlock_query).execute(&self.pool).await;
+
+        result
     }
 
     /// Initialize a schema with the required tables
@@ -132,31 +147,73 @@ impl PostgresDatabase {
             })?;
 
         // Create the enum type in the schema if it doesn't exist
-        let create_enum_query = format!(
-            r#"
-            DO $$ BEGIN
-                CREATE TYPE {}.sync_data_type AS ENUM (
-                    'trade',
-                    'agent_rank_history',
-                    'agent_rank',
-                    'competitions_leaderboard',
-                    'portfolio_snapshot'
-                );
-            EXCEPTION
-                WHEN duplicate_object THEN null;
-            END $$;
-            "#,
-            schema_name
-        );
-
-        debug!("Creating sync_data_type enum");
-        sqlx::query(&create_enum_query)
+        // Use advisory lock to prevent race conditions
+        // Lock id is a hash of the schema name + 'sync_data_type'
+        let lock_id: i64 = (schema_name.len() as i64) * 1000 + 67890; // Simple but unique per schema
+        let lock_query = format!("SELECT pg_advisory_lock({})", lock_id);
+        sqlx::query(&lock_query)
             .execute(&self.pool)
             .await
             .map_err(|e| {
-                error!("Failed to create sync_data_type enum: {}", e);
-                DatabaseError::QueryError(format!("Failed to create enum type: {}", e))
+                error!("Failed to acquire advisory lock for schema {}: {}", schema_name, e);
+                DatabaseError::QueryError(format!("Failed to acquire lock: {}", e))
             })?;
+
+        let result: Result<(), DatabaseError> = async {
+            let check_schema_enum_query = format!(
+                r#"
+                SELECT EXISTS (
+                    SELECT 1 FROM pg_type t
+                    JOIN pg_namespace n ON n.oid = t.typnamespace
+                    WHERE t.typname = 'sync_data_type' 
+                    AND n.nspname = '{}'
+                )
+                "#,
+                schema_name
+            );
+            
+            let schema_enum_exists: bool = sqlx::query_scalar(&check_schema_enum_query)
+                .fetch_one(&self.pool)
+                .await
+                .map_err(|e| {
+                    error!("Failed to check for {}.sync_data_type enum: {}", schema_name, e);
+                    DatabaseError::QueryError(format!("Failed to check schema enum type: {}", e))
+                })?;
+
+            if !schema_enum_exists {
+                let create_enum_query = format!(
+                    r#"CREATE TYPE {}.sync_data_type AS ENUM (
+                        'trade',
+                        'agent_rank_history',
+                        'agent_rank',
+                        'competitions_leaderboard',
+                        'portfolio_snapshot'
+                    )"#,
+                    schema_name
+                );
+
+                debug!("Creating sync_data_type enum in schema {}", schema_name);
+                
+                sqlx::query(&create_enum_query)
+                    .execute(&self.pool)
+                    .await
+                    .map_err(|e| {
+                        error!("Failed to create {}.sync_data_type enum: {}", schema_name, e);
+                        DatabaseError::QueryError(format!("Failed to create enum type: {}", e))
+                    })?;
+                    
+                debug!("Successfully created {}.sync_data_type enum", schema_name);
+            } else {
+                debug!("{}.sync_data_type enum already exists", schema_name);
+            }
+            Ok(())
+        }.await;
+
+        // Always release the lock
+        let unlock_query = format!("SELECT pg_advisory_unlock({})", lock_id);
+        let _ = sqlx::query(&unlock_query).execute(&self.pool).await;
+
+        result?;
 
         // Create the object_index table in the schema
         let table_definition = self.mode.table_definition(Some(schema_name));
