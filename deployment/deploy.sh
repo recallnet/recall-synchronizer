@@ -6,16 +6,18 @@ set -e
 
 COMPOSE_FILE="${COMPOSE_FILE:-docker-compose.yaml}"
 LOG_DIR="./logs"
+SYNC_STATE_DIR="${SYNC_STATE_DIR:-./sync_state}"
 
 echo "Starting deployment of recall-synchronizer..."
 echo "Using compose file: $COMPOSE_FILE"
+echo "Using sync state directory: $SYNC_STATE_DIR"
 
 echo "Creating required directories..."
 mkdir -p "$LOG_DIR"
-mkdir -p /home/islam/sync_state
+mkdir -p "$SYNC_STATE_DIR"
 
 chmod 777 "$LOG_DIR"
-chmod 777 /home/islam/sync_state
+chmod 777 "$SYNC_STATE_DIR"
 
 echo "Checking configuration files..."
 if [ ! -f "./config.toml" ]; then

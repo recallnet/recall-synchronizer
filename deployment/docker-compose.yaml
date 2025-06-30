@@ -13,7 +13,7 @@ services:
     volumes:
       - ./config.toml:/app/config.toml:ro
       - ./networks.toml:/app/networks.toml:ro
-      - /home/islam/sync_state:/data
+      - ${SYNC_STATE_DIR:-./sync_state}:/data
       - ./logs:/app/logs
     command: start --config /app/config.toml --log-file /app/logs/synchronizer.log -i 60
     labels:

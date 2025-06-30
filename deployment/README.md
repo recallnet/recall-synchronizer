@@ -22,7 +22,7 @@ This directory contains the Docker Compose configuration and scripts for deployi
 
 ```bash
 # From the project root directory
-docker build -t textilemachine/recall-synchronizer:latest .
+docker build -t textile/recall-synchronizer:latest .
 ```
 
 ### Push to Docker Hub
@@ -32,17 +32,17 @@ docker build -t textilemachine/recall-synchronizer:latest .
 docker login
 
 # Push the image
-docker push textilemachine/recall-synchronizer:latest
+docker push textile/recall-synchronizer:latest
 ```
 
 ### Tag with Version
 
 ```bash
 # Tag with specific version
-docker tag textilemachine/recall-synchronizer:latest textilemachine/recall-synchronizer:v0.1.0
+docker tag textile/recall-synchronizer:latest textile/recall-synchronizer:v0.1.0
 
 # Push versioned tag
-docker push textilemachine/recall-synchronizer:v0.1.0
+docker push textile/recall-synchronizer:v0.1.0
 ```
 
 ## Deployment
@@ -59,16 +59,27 @@ The deploy script automatically:
 - Pulls the latest Docker image
 - Starts the service with health checks
 
+#### Custom Sync State Directory
+
+To use a different sync state directory:
+
+```bash
+SYNC_STATE_DIR=/path/to/your/data ./deploy.sh
+```
+
 ### Manual Deployment
 
 If deploying manually, ensure directories exist and have proper permissions:
 
 ```bash
+# Set sync state directory (optional, defaults to ./sync_state)
+export SYNC_STATE_DIR=/path/to/your/data
+
 # Create directories
-mkdir -p ./logs /home/islam/sync_state
+mkdir -p ./logs "${SYNC_STATE_DIR:-./sync_state}"
 
 # Set permissions for container access
-chmod 777 ./logs /home/islam/sync_state
+chmod 777 ./logs "${SYNC_STATE_DIR:-./sync_state}"
 
 # Start services
 docker-compose up -d
@@ -85,7 +96,7 @@ The service requires IPv6 support for connecting to PostgreSQL:
 
 - `./config.toml:/app/config.toml:ro` - Service configuration (read-only)
 - `./networks.toml:/app/networks.toml:ro` - Network configuration (read-only)
-- `/home/islam/sync_state:/data` - Persistent state storage
+- `${SYNC_STATE_DIR}:/data` - Persistent state storage (defaults to `./sync_state`)
 - `./logs:/app/logs` - Application log files
 
 
@@ -140,8 +151,8 @@ docker-compose ps
 If you see "Permission denied" errors for logs or database:
 
 ```bash
-# Fix permissions
-chmod 777 ./logs /home/islam/sync_state
+# Fix permissions (adjust path if using custom SYNC_STATE_DIR)
+chmod 777 ./logs ${SYNC_STATE_DIR:-./sync_state}
 ```
 
 #### Container Can't Start
@@ -160,10 +171,10 @@ docker-compose exec synchronizer /bin/sh
 
 #### Verify State Directory
 ```bash
-ls -la /home/islam/sync_state/
+ls -la ${SYNC_STATE_DIR:-./sync_state}/
 ```
 
 #### Check Permissions
 ```bash
-ls -ld ./logs /home/islam/sync_state
+ls -ld ./logs ${SYNC_STATE_DIR:-./sync_state}
 ```
