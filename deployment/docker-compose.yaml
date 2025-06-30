@@ -15,6 +15,6 @@ services:
       - ./networks.toml:/app/networks.toml:ro
       - ${SYNC_STATE_DIR:-./sync_state}:/data
       - ./logs:/app/logs
-    command: start --config /app/config.toml --log-file /app/logs/synchronizer.log -i 60
+    command: start --config /app/config.toml -i 60
     labels:
       - "traefik.enable=false"

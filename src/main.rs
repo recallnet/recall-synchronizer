@@ -33,14 +33,6 @@ struct Cli {
     )]
     config: String,
 
-    /// Show verbose output
-    #[arg(short, long, global = true)]
-    verbose: bool,
-
-    /// Path to log file
-    #[arg(short, long, global = true, default_value = "./logs.log")]
-    log_file: String,
-
     #[command(subcommand)]
     command: Commands,
 }
@@ -71,19 +63,15 @@ enum Commands {
 async fn main() -> Result<()> {
     let cli = Cli::parse();
 
-    let _guard = logging::init_logging(&cli.log_file, cli.verbose)?;
-
-    info!("Recall Data Synchronizer v{}", env!("CARGO_PKG_VERSION"));
-    info!("Loading configuration from: {}", cli.config);
-    info!("Logging to file: {}", cli.log_file);
-
     let config = match config::load_config(&cli.config) {
         Ok(cfg) => cfg,
         Err(e) => {
-            error!("Failed to load configuration: {}", e);
+            eprintln!("Failed to load configuration: {}", e);
             process::exit(1);
         }
     };
+
+    let _guard = logging::init_logging(config.logging.as_ref())?;
 
     match cli.command {
         Commands::Run { since } => run_synchronizer(config, since).await,

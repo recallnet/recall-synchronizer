@@ -7662,6 +7662,7 @@ dependencies = [
  "toml 0.8.22",
  "tracing",
  "tracing-appender",
+ "tracing-rolling-file",
  "tracing-subscriber",
  "url",
  "uuid 1.16.0",
@@ -10416,6 +10417,15 @@ dependencies = [
  "log",
  "once_cell",
  "tracing-core",
+]
+
+[[package]]
+name = "tracing-rolling-file"
+version = "0.1.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "9cdf73ffe536cc623d6a101a3acb6ea7b5db28af8fca9709e3a8f8bce722cd16"
+dependencies = [
+ "chrono",
 ]
 
 [[package]]

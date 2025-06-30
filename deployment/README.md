@@ -69,16 +69,14 @@ SYNC_STATE_DIR=/path/to/your/data ./deploy.sh
 
 ### Manual Deployment
 
-If deploying manually, ensure directories exist and have proper permissions:
+If deploying manually:
 
 ```bash
 # Set sync state directory (optional, defaults to ./sync_state)
 export SYNC_STATE_DIR=/path/to/your/data
 
-# Create directories
+# Create directories with write permissions
 mkdir -p ./logs "${SYNC_STATE_DIR:-./sync_state}"
-
-# Set permissions for container access
 chmod 777 ./logs "${SYNC_STATE_DIR:-./sync_state}"
 
 # Start services
@@ -104,9 +102,18 @@ The service requires IPv6 support for connecting to PostgreSQL:
 
 ### Logging
 
-The synchronizer logs to both console and file. Use `--log-file` to specify the log file path (default: `./logs.log`).
+The synchronizer always logs to console. File logging is optional and configured in `config.toml`:
 
-In Docker, logs are written to `/app/logs/synchronizer.log` which is mounted to `./logs` on the host.
+```toml
+# Optional - if omitted, only logs to console
+[logging]
+path = "/app/logs/synchronizer.log"
+level = "info"  # Options: trace, debug, info, warn, error
+size = 50  # Maximum log file size in MB before rotation
+max_files = 5  # Number of rotated files to keep (default: 5)
+```
+
+When file logging is enabled in Docker, ensure the path is under `/app/logs/` (mounted to `./logs` on the host).
 
 Docker logs (console output):
 ```bash
@@ -118,7 +125,7 @@ File logs (on host):
 tail -f ./logs/synchronizer.log
 ```
 
-Use `--verbose` or `-v` flag to enable DEBUG level logging (default is INFO).
+The log level is configured in the `config.toml` file (default is INFO).
 
 
 ## Maintenance
@@ -148,10 +155,10 @@ docker-compose ps
 
 #### Permission Denied Errors
 
-If you see "Permission denied" errors for logs or database:
+If you see "Permission denied" errors:
 
 ```bash
-# Fix permissions (adjust path if using custom SYNC_STATE_DIR)
+# Ensure directories have write permissions
 chmod 777 ./logs ${SYNC_STATE_DIR:-./sync_state}
 ```
 
