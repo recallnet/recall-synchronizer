@@ -1,0 +1,20 @@
+name: recall-synchronizer
+
+networks:
+  default:
+    name: recall-synchronizer
+    enable_ipv6: true
+
+services:
+  synchronizer:
+    image: textile/recall-synchronizer:latest
+    platform: linux/amd64
+    restart: always
+    volumes:
+      - ./config.toml:/app/config.toml:ro
+      - ./networks.toml:/app/networks.toml:ro
+      - /home/islam/sync_state:/data
+      - ./logs:/app/logs
+    command: start --config /app/config.toml --log-file /app/logs/synchronizer.log -i 60
+    labels:
+      - "traefik.enable=false"
