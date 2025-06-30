@@ -3,10 +3,11 @@ use anyhow::{Context, Result};
 use chrono::{DateTime, Utc};
 use clap::{Parser, Subcommand};
 use std::process;
-use tracing::{error, info, Level};
+use tracing::{error, info};
 
 mod config;
 mod db;
+mod logging;
 mod recall;
 mod s3;
 mod sync;
@@ -35,6 +36,10 @@ struct Cli {
     /// Show verbose output
     #[arg(short, long, global = true)]
     verbose: bool,
+
+    /// Path to log file
+    #[arg(short, long, global = true, default_value = "./logs.log")]
+    log_file: String,
 
     #[command(subcommand)]
     command: Commands,
@@ -66,15 +71,11 @@ enum Commands {
 async fn main() -> Result<()> {
     let cli = Cli::parse();
 
-    let log_level = if cli.verbose {
-        Level::DEBUG
-    } else {
-        Level::INFO
-    };
-    tracing_subscriber::fmt().with_max_level(log_level).init();
+    let _guard = logging::init_logging(&cli.log_file, cli.verbose)?;
 
     info!("Recall Data Synchronizer v{}", env!("CARGO_PKG_VERSION"));
     info!("Loading configuration from: {}", cli.config);
+    info!("Logging to file: {}", cli.log_file);
 
     let config = match config::load_config(&cli.config) {
         Ok(cfg) => cfg,
