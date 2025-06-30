@@ -35,7 +35,10 @@ impl PostgresDatabase {
     /// Create enum type, handling race conditions gracefully
     async fn create_enum_type(&self, schema_prefix: Option<&str>) -> Result<(), DatabaseError> {
         let (enum_name, debug_name) = match schema_prefix {
-            Some(schema) => (format!("{}.sync_data_type", schema), format!("{}.sync_data_type", schema)),
+            Some(schema) => (
+                format!("{}.sync_data_type", schema),
+                format!("{}.sync_data_type", schema),
+            ),
             None => ("sync_data_type".to_string(), "sync_data_type".to_string()),
         };
 
@@ -46,7 +49,7 @@ impl PostgresDatabase {
         );
 
         debug!("Creating {} enum", debug_name);
-        
+
         match sqlx::query(&create_enum_query).execute(&self.pool).await {
             Ok(_) => {
                 debug!("Successfully created {} enum", debug_name);
@@ -54,14 +57,18 @@ impl PostgresDatabase {
             }
             Err(e) => {
                 let error_str = e.to_string();
-                if error_str.contains("already exists") || 
-                   error_str.contains("duplicate key value") ||
-                   error_str.contains("pg_type_typname_nsp_index") {
+                if error_str.contains("already exists")
+                    || error_str.contains("duplicate key value")
+                    || error_str.contains("pg_type_typname_nsp_index")
+                {
                     debug!("{} enum already exists", debug_name);
                     Ok(())
                 } else {
                     error!("Failed to create {} enum: {}", debug_name, e);
-                    Err(DatabaseError::QueryError(format!("Failed to create enum type: {}", e)))
+                    Err(DatabaseError::QueryError(format!(
+                        "Failed to create enum type: {}",
+                        e
+                    )))
                 }
             }
         }

@@ -170,6 +170,7 @@ fn create_test_config() -> Config {
         sync_storage: SyncStorageConfig {
             db_path: ":memory:".to_string(),
         },
+        logging: None,
     }
 }
 
