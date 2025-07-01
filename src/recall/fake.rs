@@ -41,8 +41,7 @@ impl Storage for FakeRecallStorage {
         let fail_blobs = self.fail_blobs.lock().unwrap();
         if fail_blobs.contains(key) {
             return Err(RecallError::Operation(format!(
-                "Simulated failure for blob: {}",
-                key
+                "Simulated failure for blob: {key}"
             )));
         }
         drop(fail_blobs);
@@ -57,8 +56,7 @@ impl Storage for FakeRecallStorage {
         let fail_blobs = self.fail_blobs.lock().unwrap();
         if fail_blobs.contains(key) {
             return Err(RecallError::Operation(format!(
-                "Simulated failure for blob: {}",
-                key
+                "Simulated failure for blob: {key}"
             )));
         }
         drop(fail_blobs);
@@ -110,8 +108,7 @@ impl Storage for FakeRecallStorage {
         let fail_blobs = self.fail_blobs.lock().unwrap();
         if fail_blobs.contains(key) {
             return Err(RecallError::Operation(format!(
-                "Simulated failure for blob: {}",
-                key
+                "Simulated failure for blob: {key}"
             )));
         }
         drop(fail_blobs);

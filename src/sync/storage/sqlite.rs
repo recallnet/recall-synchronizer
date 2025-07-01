@@ -21,21 +21,21 @@ pub struct SqliteSyncStorage {
 impl SqliteSyncStorage {
     /// Create a new SqliteSyncStorage with the given database path
     pub fn new(db_path: &str) -> Result<Self, SyncStorageError> {
-        info!("Creating SQLite sync storage at path: {}", db_path);
+        info!("Creating SQLite sync storage at path: {db_path}");
 
         if let Some(parent) = Path::new(db_path).parent() {
             if !parent.exists() {
                 debug!("Creating parent directory: {:?}", parent);
                 fs::create_dir_all(parent).map_err(|e| {
-                    error!("Failed to create directory {:?}: {}", parent, e);
-                    SyncStorageError::OpenError(format!("Failed to create directory: {}", e))
+                    error!("Failed to create directory {parent:?}: {e}");
+                    SyncStorageError::OpenError(format!("Failed to create directory: {e}"))
                 })?;
             }
         }
 
         let connection = Connection::open(db_path).map_err(|e| {
-            error!("Failed to open SQLite database at {}: {}", db_path, e);
-            SyncStorageError::OpenError(format!("Failed to open SQLite database: {}", e))
+            error!("Failed to open SQLite database at {db_path}: {e}");
+            SyncStorageError::OpenError(format!("Failed to open SQLite database: {e}"))
         })?;
 
         connection
@@ -51,8 +51,8 @@ impl SqliteSyncStorage {
                 [],
             )
             .map_err(|e| {
-                error!("Failed to create sync_records table: {}", e);
-                SyncStorageError::OpenError(format!("Failed to create sync_records table: {}", e))
+                error!("Failed to create sync_records table: {e}");
+                SyncStorageError::OpenError(format!("Failed to create sync_records table: {e}"))
             })?;
 
         connection
@@ -64,8 +64,8 @@ impl SqliteSyncStorage {
                 [],
             )
             .map_err(|e| {
-                error!("Failed to create sync_state table: {}", e);
-                SyncStorageError::OpenError(format!("Failed to create sync_state table: {}", e))
+                error!("Failed to create sync_state table: {e}");
+                SyncStorageError::OpenError(format!("Failed to create sync_state table: {e}"))
             })?;
 
         // Create indexes for efficient querying
@@ -75,8 +75,8 @@ impl SqliteSyncStorage {
                 [],
             )
             .map_err(|e| {
-                error!("Failed to create status index: {}", e);
-                SyncStorageError::OpenError(format!("Failed to create status index: {}", e))
+                error!("Failed to create status index: {e}");
+                SyncStorageError::OpenError(format!("Failed to create status index: {e}"))
             })?;
 
         connection
@@ -85,14 +85,11 @@ impl SqliteSyncStorage {
                 [],
             )
             .map_err(|e| {
-                error!("Failed to create timestamp index: {}", e);
-                SyncStorageError::OpenError(format!("Failed to create timestamp index: {}", e))
+                error!("Failed to create timestamp index: {e}");
+                SyncStorageError::OpenError(format!("Failed to create timestamp index: {e}"))
             })?;
 
-        info!(
-            "SQLite sync storage initialized successfully at: {}",
-            db_path
-        );
+        info!("SQLite sync storage initialized successfully at: {db_path}");
         Ok(SqliteSyncStorage {
             connection: Arc::new(Mutex::new(connection)),
         })
@@ -107,9 +104,7 @@ impl SqliteSyncStorage {
     fn string_to_datetime(s: &str) -> Result<DateTime<Utc>, SyncStorageError> {
         DateTime::parse_from_rfc3339(s)
             .map(|dt| dt.with_timezone(&Utc))
-            .map_err(|e| {
-                SyncStorageError::OperationError(format!("Failed to parse datetime: {}", e))
-            })
+            .map_err(|e| SyncStorageError::OperationError(format!("Failed to parse datetime: {e}")))
     }
 
     // Helper function to convert SyncStatus to/from string
@@ -127,8 +122,7 @@ impl SqliteSyncStorage {
             "PROCESSING" => Ok(SyncStatus::Processing),
             "COMPLETE" => Ok(SyncStatus::Complete),
             _ => Err(SyncStorageError::OperationError(format!(
-                "Invalid status: {}",
-                s
+                "Invalid status: {s}"
             ))),
         }
     }
@@ -172,17 +166,17 @@ impl SyncStorage for SqliteSyncStorage {
                 ],
             )
             .map_err(|e| {
-                error!("Failed to insert sync record: {}", e);
-                SyncStorageError::OperationError(format!("Failed to insert record: {}", e))
+                error!("Failed to insert sync record: {e}");
+                SyncStorageError::OperationError(format!("Failed to insert record: {e}"))
             })?;
 
-            debug!("Successfully added sync record for id: {}", id_str);
+            debug!("Successfully added sync record for id: {id_str}");
             Ok(())
         })
         .await
         .map_err(|e| {
-            error!("Task panic while adding object: {}", e);
-            SyncStorageError::OperationError(format!("Task panic: {}", e))
+            error!("Task panic while adding object: {e}");
+            SyncStorageError::OperationError(format!("Task panic: {e}"))
         })?
     }
 
@@ -191,7 +185,7 @@ impl SyncStorage for SqliteSyncStorage {
         id: Uuid,
         status: SyncStatus,
     ) -> Result<(), SyncStorageError> {
-        debug!("Updating object status: id={}, status={:?}", id, status);
+        debug!("Updating object status: id={id}, status={status:?}");
 
         let connection = Arc::clone(&self.connection);
         let id_str = id.to_string();
@@ -212,30 +206,27 @@ impl SyncStorage for SqliteSyncStorage {
                     params![status_str, id_str],
                 )
                 .map_err(|e| {
-                    error!("Failed to update object status: {}", e);
-                    SyncStorageError::OperationError(format!("Failed to update status: {}", e))
+                    error!("Failed to update object status: {e}");
+                    SyncStorageError::OperationError(format!("Failed to update status: {e}"))
                 })?;
 
             if rows_affected == 0 {
-                warn!("Object not found for status update: id={}", id_str);
+                warn!("Object not found for status update: id={id_str}");
                 return Err(SyncStorageError::ObjectNotFound(id_str));
             }
 
-            debug!(
-                "Successfully updated status to {} for object: {}",
-                status_str, id_str
-            );
+            debug!("Successfully updated status to {status_str} for object: {id_str}");
             Ok(())
         })
         .await
         .map_err(|e| {
-            error!("Task panic while updating object status: {}", e);
-            SyncStorageError::OperationError(format!("Task panic: {}", e))
+            error!("Task panic while updating object status: {e}");
+            SyncStorageError::OperationError(format!("Task panic: {e}"))
         })?
     }
 
     async fn get_object(&self, id: Uuid) -> Result<Option<SyncRecord>, SyncStorageError> {
-        debug!("Getting sync record by id: {}", id);
+        debug!("Getting sync record by id: {id}");
 
         let connection = Arc::clone(&self.connection);
         let id_str = id.to_string();
@@ -274,8 +265,8 @@ impl SyncStorage for SqliteSyncStorage {
                 )
                 .optional()
                 .map_err(|e| {
-                    error!("Failed to query sync record: {}", e);
-                    SyncStorageError::OperationError(format!("Failed to query record: {}", e))
+                    error!("Failed to query sync record: {e}");
+                    SyncStorageError::OperationError(format!("Failed to query record: {e}"))
                 })?;
 
             match result {
@@ -288,40 +279,35 @@ impl SyncStorage for SqliteSyncStorage {
                     status_str,
                 )) => {
                     let id = Uuid::parse_str(&id_str).map_err(|e| {
-                        error!("Failed to parse UUID from database: {}", e);
-                        SyncStorageError::OperationError(format!("Failed to parse UUID: {}", e))
+                        error!("Failed to parse UUID from database: {e}");
+                        SyncStorageError::OperationError(format!("Failed to parse UUID: {e}"))
                     })?;
                     let competition_id = competition_id_str
                         .map(|s| Uuid::parse_str(&s))
                         .transpose()
                         .map_err(|e| {
-                            error!("Failed to parse competition UUID from database: {}", e);
+                            error!("Failed to parse competition UUID from database: {e}");
                             SyncStorageError::OperationError(format!(
-                                "Failed to parse competition UUID: {}",
-                                e
+                                "Failed to parse competition UUID: {e}"
                             ))
                         })?;
                     let agent_id = agent_id_str
                         .map(|s| Uuid::parse_str(&s))
                         .transpose()
                         .map_err(|e| {
-                            error!("Failed to parse agent UUID from database: {}", e);
+                            error!("Failed to parse agent UUID from database: {e}");
                             SyncStorageError::OperationError(format!(
-                                "Failed to parse agent UUID: {}",
-                                e
+                                "Failed to parse agent UUID: {e}"
                             ))
                         })?;
                     let timestamp = Self::string_to_datetime(&timestamp_str)?;
                     let status = Self::string_to_status(&status_str)?;
                     let data_type = DataType::from_str(&data_type).map_err(|e| {
-                        error!("Failed to parse data type from database: {}", e);
-                        SyncStorageError::OperationError(format!(
-                            "Failed to parse data type: {}",
-                            e
-                        ))
+                        error!("Failed to parse data type from database: {e}");
+                        SyncStorageError::OperationError(format!("Failed to parse data type: {e}"))
                     })?;
 
-                    debug!("Found sync record: id={}, status={:?}", id_str, status);
+                    debug!("Found sync record: id={id_str}, status={status:?}");
                     Ok(Some(SyncRecord::with_status(
                         id,
                         competition_id,
@@ -332,15 +318,15 @@ impl SyncStorage for SqliteSyncStorage {
                     )))
                 }
                 None => {
-                    debug!("No sync record found for id: {}", id_str);
+                    debug!("No sync record found for id: {id_str}");
                     Ok(None)
                 }
             }
         })
         .await
         .map_err(|e| {
-            error!("Task panic while getting object: {}", e);
-            SyncStorageError::OperationError(format!("Task panic: {}", e))
+            error!("Task panic while getting object: {e}");
+            SyncStorageError::OperationError(format!("Task panic: {e}"))
         })?
     }
 
@@ -370,8 +356,8 @@ impl SyncStorage for SqliteSyncStorage {
                      ORDER BY timestamp",
                 )
                 .map_err(|e| {
-                    error!("Failed to prepare statement for status query: {}", e);
-                    SyncStorageError::OperationError(format!("Failed to prepare statement: {}", e))
+                    error!("Failed to prepare statement for status query: {e}");
+                    SyncStorageError::OperationError(format!("Failed to prepare statement: {e}"))
                 })?;
 
             let records: Result<Vec<SyncRecord>, SyncStorageError> = stmt
@@ -393,13 +379,13 @@ impl SyncStorage for SqliteSyncStorage {
                     ))
                 })
                 .map_err(|e| {
-                    error!("Failed to query records by status: {}", e);
-                    SyncStorageError::OperationError(format!("Failed to query records: {}", e))
+                    error!("Failed to query records by status: {e}");
+                    SyncStorageError::OperationError(format!("Failed to query records: {e}"))
                 })?
                 .collect::<Result<Vec<_>, _>>()
                 .map_err(|e| {
-                    error!("Failed to collect records: {}", e);
-                    SyncStorageError::OperationError(format!("Failed to collect records: {}", e))
+                    error!("Failed to collect records: {e}");
+                    SyncStorageError::OperationError(format!("Failed to collect records: {e}"))
                 })?
                 .into_iter()
                 .map(
@@ -412,36 +398,33 @@ impl SyncStorage for SqliteSyncStorage {
                         status_str,
                     )| {
                         let id = Uuid::parse_str(&id_str).map_err(|e| {
-                            error!("Failed to parse UUID: {}", e);
-                            SyncStorageError::OperationError(format!("Failed to parse UUID: {}", e))
+                            error!("Failed to parse UUID: {e}");
+                            SyncStorageError::OperationError(format!("Failed to parse UUID: {e}"))
                         })?;
                         let competition_id = competition_id_str
                             .map(|s| Uuid::parse_str(&s))
                             .transpose()
                             .map_err(|e| {
-                                error!("Failed to parse competition UUID: {}", e);
+                                error!("Failed to parse competition UUID: {e}");
                                 SyncStorageError::OperationError(format!(
-                                    "Failed to parse competition UUID: {}",
-                                    e
+                                    "Failed to parse competition UUID: {e}"
                                 ))
                             })?;
                         let agent_id = agent_id_str
                             .map(|s| Uuid::parse_str(&s))
                             .transpose()
                             .map_err(|e| {
-                                error!("Failed to parse agent UUID: {}", e);
+                                error!("Failed to parse agent UUID: {e}");
                                 SyncStorageError::OperationError(format!(
-                                    "Failed to parse agent UUID: {}",
-                                    e
+                                    "Failed to parse agent UUID: {e}"
                                 ))
                             })?;
                         let timestamp = Self::string_to_datetime(&timestamp_str)?;
                         let status = Self::string_to_status(&status_str)?;
                         let data_type = DataType::from_str(&data_type).map_err(|e| {
-                            error!("Failed to parse data type: {}", e);
+                            error!("Failed to parse data type: {e}");
                             SyncStorageError::OperationError(format!(
-                                "Failed to parse data type: {}",
-                                e
+                                "Failed to parse data type: {e}"
                             ))
                         })?;
 
@@ -466,7 +449,7 @@ impl SyncStorage for SqliteSyncStorage {
                     );
                 }
                 Err(e) => {
-                    error!("Error collecting records with status: {}", e);
+                    error!("Error collecting records with status: {e}");
                 }
             }
 
@@ -474,8 +457,8 @@ impl SyncStorage for SqliteSyncStorage {
         })
         .await
         .map_err(|e| {
-            error!("Task panic while getting objects with status: {}", e);
-            SyncStorageError::OperationError(format!("Task panic: {}", e))
+            error!("Task panic while getting objects with status: {e}");
+            SyncStorageError::OperationError(format!("Task panic: {e}"))
         })?
     }
 
@@ -520,8 +503,8 @@ impl SyncStorage for SqliteSyncStorage {
                 )
                 .optional()
                 .map_err(|e| {
-                    error!("Failed to query last object: {}", e);
-                    SyncStorageError::OperationError(format!("Failed to query last object: {}", e))
+                    error!("Failed to query last object: {e}");
+                    SyncStorageError::OperationError(format!("Failed to query last object: {e}"))
                 })?;
 
             match result {
@@ -534,43 +517,35 @@ impl SyncStorage for SqliteSyncStorage {
                     status_str,
                 )) => {
                     let id = Uuid::parse_str(&id_str).map_err(|e| {
-                        error!("Failed to parse UUID: {}", e);
-                        SyncStorageError::OperationError(format!("Failed to parse UUID: {}", e))
+                        error!("Failed to parse UUID: {e}");
+                        SyncStorageError::OperationError(format!("Failed to parse UUID: {e}"))
                     })?;
                     let competition_id = competition_id_str
                         .map(|s| Uuid::parse_str(&s))
                         .transpose()
                         .map_err(|e| {
-                            error!("Failed to parse competition UUID: {}", e);
+                            error!("Failed to parse competition UUID: {e}");
                             SyncStorageError::OperationError(format!(
-                                "Failed to parse competition UUID: {}",
-                                e
+                                "Failed to parse competition UUID: {e}"
                             ))
                         })?;
                     let agent_id = agent_id_str
                         .map(|s| Uuid::parse_str(&s))
                         .transpose()
                         .map_err(|e| {
-                            error!("Failed to parse agent UUID: {}", e);
+                            error!("Failed to parse agent UUID: {e}");
                             SyncStorageError::OperationError(format!(
-                                "Failed to parse agent UUID: {}",
-                                e
+                                "Failed to parse agent UUID: {e}"
                             ))
                         })?;
                     let timestamp = Self::string_to_datetime(&timestamp_str)?;
                     let status = Self::string_to_status(&status_str)?;
                     let data_type = DataType::from_str(&data_type).map_err(|e| {
-                        error!("Failed to parse data type: {}", e);
-                        SyncStorageError::OperationError(format!(
-                            "Failed to parse data type: {}",
-                            e
-                        ))
+                        error!("Failed to parse data type: {e}");
+                        SyncStorageError::OperationError(format!("Failed to parse data type: {e}"))
                     })?;
 
-                    debug!(
-                        "Found last sync record: id={}, timestamp={}",
-                        id_str, timestamp_str
-                    );
+                    debug!("Found last sync record: id={id_str}, timestamp={timestamp_str}");
                     Ok(Some(SyncRecord::with_status(
                         id,
                         competition_id,
@@ -588,8 +563,8 @@ impl SyncStorage for SqliteSyncStorage {
         })
         .await
         .map_err(|e| {
-            error!("Task panic while getting last object: {}", e);
-            SyncStorageError::OperationError(format!("Task panic: {}", e))
+            error!("Task panic while getting last object: {e}");
+            SyncStorageError::OperationError(format!("Task panic: {e}"))
         })?
     }
 
@@ -616,37 +591,34 @@ impl SyncStorage for SqliteSyncStorage {
                 )
                 .optional()
                 .map_err(|e| {
-                    error!("Failed to query last synced ID: {}", e);
-                    SyncStorageError::OperationError(format!(
-                        "Failed to query last synced ID: {}",
-                        e
-                    ))
+                    error!("Failed to query last synced ID: {e}");
+                    SyncStorageError::OperationError(format!("Failed to query last synced ID: {e}"))
                 })?;
 
             match result {
                 Some(id_str) => {
                     let id = Uuid::parse_str(&id_str).map_err(|e| {
-                        error!("Failed to parse UUID: {}", e);
-                        SyncStorageError::OperationError(format!("Failed to parse UUID: {}", e))
+                        error!("Failed to parse UUID: {e}");
+                        SyncStorageError::OperationError(format!("Failed to parse UUID: {e}"))
                     })?;
-                    debug!("Found last synced object ID: {} for key: {}", id, key);
+                    debug!("Found last synced object ID: {id} for key: {key}");
                     Ok(Some(id))
                 }
                 None => {
-                    debug!("No last synced object ID found for key: {}", key);
+                    debug!("No last synced object ID found for key: {key}");
                     Ok(None)
                 }
             }
         })
         .await
         .map_err(|e| {
-            error!("Task panic while getting last synced object ID: {}", e);
-            SyncStorageError::OperationError(format!("Task panic: {}", e))
+            error!("Task panic while getting last synced object ID: {e}");
+            SyncStorageError::OperationError(format!("Task panic: {e}"))
         })?
     }
 
     async fn set_last_synced_object_id(&self, id: Uuid) -> Result<(), SyncStorageError> {
-        info!("Setting last synced object ID: {}", id);
+        info!("Setting last synced object ID: {id}");
 
         let connection = Arc::clone(&self.connection);
         let id_str = id.to_string();
@@ -666,20 +638,17 @@ impl SyncStorage for SqliteSyncStorage {
                 params![key, id_str],
             )
             .map_err(|e| {
-                error!("Failed to set last synced ID: {}", e);
-                SyncStorageError::OperationError(format!("Failed to set last synced ID: {}", e))
+                error!("Failed to set last synced ID: {e}");
+                SyncStorageError::OperationError(format!("Failed to set last synced ID: {e}"))
             })?;
 
-            debug!(
-                "Successfully set last synced ID {} for key: {}",
-                id_str, key
-            );
+            debug!("Successfully set last synced ID {id_str} for key: {key}");
             Ok(())
         })
         .await
         .map_err(|e| {
-            error!("Task panic while setting last synced object ID: {}", e);
-            SyncStorageError::OperationError(format!("Task panic: {}", e))
+            error!("Task panic while setting last synced object ID: {e}");
+            SyncStorageError::OperationError(format!("Task panic: {e}"))
         })?
     }
 
@@ -698,26 +667,26 @@ impl SyncStorage for SqliteSyncStorage {
             };
 
             let records_deleted = conn.execute("DELETE FROM sync_records", []).map_err(|e| {
-                error!("Failed to clear sync records: {}", e);
-                SyncStorageError::OperationError(format!("Failed to clear records: {}", e))
+                error!("Failed to clear sync records: {e}");
+                SyncStorageError::OperationError(format!("Failed to clear records: {e}"))
             })?;
 
-            debug!("Deleted {} sync records", records_deleted);
+            debug!("Deleted {records_deleted} sync records");
 
             let state_deleted = conn.execute("DELETE FROM sync_state", []).map_err(|e| {
-                error!("Failed to clear sync state: {}", e);
-                SyncStorageError::OperationError(format!("Failed to clear sync state: {}", e))
+                error!("Failed to clear sync state: {e}");
+                SyncStorageError::OperationError(format!("Failed to clear sync state: {e}"))
             })?;
 
-            debug!("Deleted {} sync state entries", state_deleted);
+            debug!("Deleted {state_deleted} sync state entries");
 
             info!("Successfully cleared all sync storage data");
             Ok(())
         })
         .await
         .map_err(|e| {
-            error!("Task panic while clearing all data: {}", e);
-            SyncStorageError::OperationError(format!("Task panic: {}", e))
+            error!("Task panic while clearing all data: {e}");
+            SyncStorageError::OperationError(format!("Task panic: {e}"))
         })?
     }
 }

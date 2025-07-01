@@ -29,31 +29,31 @@ static SCHEMA_COUNTER: AtomicU64 = AtomicU64::new(0);
 fn generate_test_schema() -> String {
     let count = SCHEMA_COUNTER.fetch_add(1, Ordering::SeqCst);
     let timestamp = chrono::Utc::now().timestamp_nanos_opt().unwrap();
-    format!("test_{}_{}", timestamp, count)
+    format!("test_{timestamp}_{count}")
 }
 
 /// Creates a new PostgreSQL database connection with a unique schema for test isolation (S3 mode)
 async fn create_postgres_s3_with_schema() -> Result<Arc<PostgresDatabase>, String> {
-    let config = load_test_config().map_err(|e| format!("Failed to load test config: {}", e))?;
+    let config = load_test_config().map_err(|e| format!("Failed to load test config: {e}"))?;
     let db_url = config.database.url;
     let schema = generate_test_schema();
 
     let pg_db = PostgresDatabase::new_with_schema(&db_url, Some(schema), SchemaMode::S3)
         .await
-        .map_err(|e| format!("Failed to connect to PostgreSQL: {}", e))?;
+        .map_err(|e| format!("Failed to connect to PostgreSQL: {e}"))?;
 
     Ok(Arc::new(pg_db))
 }
 
 /// Creates a new PostgreSQL database connection with a unique schema for test isolation (Direct mode)
 async fn create_postgres_direct_with_schema() -> Result<Arc<PostgresDatabase>, String> {
-    let config = load_test_config().map_err(|e| format!("Failed to load test config: {}", e))?;
+    let config = load_test_config().map_err(|e| format!("Failed to load test config: {e}"))?;
     let db_url = config.database.url;
     let schema = generate_test_schema();
 
     let pg_db = PostgresDatabase::new_with_schema(&db_url, Some(schema), SchemaMode::Direct)
         .await
-        .map_err(|e| format!("Failed to connect to PostgreSQL: {}", e))?;
+        .map_err(|e| format!("Failed to connect to PostgreSQL: {e}"))?;
 
     Ok(Arc::new(pg_db))
 }
@@ -78,7 +78,7 @@ async fn add_test_objects_s3(db: &(dyn Database + Send + Sync)) -> Vec<ObjectInd
     for i in 0..15 {
         let modified_at = base_time + Duration::minutes(i * 30);
         let mut object =
-            create_test_object_index_s3(&format!("test/object_{:02}.jsonl", i), modified_at);
+            create_test_object_index_s3(&format!("test/object_{i:02}.jsonl"), modified_at);
 
         // Vary other attributes for realistic testing
         object.size_bytes = Some(1024 * (i + 1));
@@ -105,7 +105,7 @@ async fn add_test_objects_direct(db: &(dyn Database + Send + Sync)) -> Vec<Objec
     // Create 15 objects with different timestamps for comprehensive testing
     for i in 0..15 {
         let modified_at = base_time + Duration::minutes(i * 30);
-        let data = format!("Test data for object {}", i).into_bytes();
+        let data = format!("Test data for object {i}").into_bytes();
         let mut object =
             create_test_object_index_direct(competition_id.to_string(), agent_id.to_string(), data);
 
@@ -155,10 +155,7 @@ fn get_all_test_databases() -> Vec<DatabaseFactory> {
                         StorageMode::S3,
                     ),
                     Err(e) => {
-                        panic!(
-                            "PostgreSQL initialization without 'data' column failed: {}",
-                            e
-                        );
+                        panic!("PostgreSQL initialization without 'data' column failed: {e}");
                     }
                 }
             })
@@ -172,7 +169,7 @@ fn get_all_test_databases() -> Vec<DatabaseFactory> {
                         StorageMode::Direct,
                     ),
                     Err(e) => {
-                        panic!("PostgreSQL initialization with 'data' column failed: {}", e);
+                        panic!("PostgreSQL initialization with 'data' column failed: {e}");
                     }
                 }
             })
@@ -240,8 +237,7 @@ async fn get_objects_with_past_timestamp_returns_recent_objects() {
         assert_eq!(
             objects.len(),
             expected_count,
-            "Should return exactly {} objects modified after the midpoint timestamp",
-            expected_count
+            "Should return exactly {expected_count} objects modified after the midpoint timestamp"
         );
 
         for obj in &objects {
@@ -335,14 +331,14 @@ async fn get_objects_with_same_timestamp_and_after_id_should_paginate() {
         for i in 0..7 {
             let mut object = match mode {
                 StorageMode::S3 => create_test_object_index_s3(
-                    &format!("test/same_time_{:02}.jsonl", i),
+                    &format!("test/same_time_{i:02}.jsonl"),
                     shared_timestamp,
                 ),
                 StorageMode::Direct => {
                     let mut obj = create_test_object_index_direct(
                         Uuid::new_v4().to_string(),
                         Uuid::new_v4().to_string(),
-                        format!("Test data {}", i).into_bytes(),
+                        format!("Test data {i}").into_bytes(),
                     );
                     obj.created_at = shared_timestamp;
                     obj
@@ -425,14 +421,14 @@ async fn get_objects_with_mixed_timestamps_and_after_id_filters_correctly() {
         for i in 0..5 {
             let mut object = match mode {
                 StorageMode::S3 => create_test_object_index_s3(
-                    &format!("test/same_time_{:02}.jsonl", i),
+                    &format!("test/same_time_{i:02}.jsonl"),
                     shared_timestamp,
                 ),
                 StorageMode::Direct => {
                     let mut obj = create_test_object_index_direct(
                         Uuid::new_v4().to_string(),
                         Uuid::new_v4().to_string(),
-                        format!("Test data {}", i).into_bytes(),
+                        format!("Test data {i}").into_bytes(),
                     );
                     obj.created_at = shared_timestamp;
                     obj
@@ -518,14 +514,14 @@ async fn get_objects_with_after_id_returns_with_consistent_ordering() {
         for i in 0..5 {
             let mut object = match mode {
                 StorageMode::S3 => create_test_object_index_s3(
-                    &format!("test/same_time_{:02}.jsonl", i),
+                    &format!("test/same_time_{i:02}.jsonl"),
                     shared_timestamp,
                 ),
                 StorageMode::Direct => {
                     let mut obj = create_test_object_index_direct(
                         Uuid::new_v4().to_string(),
                         Uuid::new_v4().to_string(),
-                        format!("Test data {}", i).into_bytes(),
+                        format!("Test data {i}").into_bytes(),
                     );
                     obj.created_at = shared_timestamp;
                     obj

@@ -66,7 +66,7 @@ async fn main() -> Result<()> {
     let config = match config::load_config(&cli.config) {
         Ok(cfg) => cfg,
         Err(e) => {
-            eprintln!("Failed to load configuration: {}", e);
+            eprintln!("Failed to load configuration: {e}");
             process::exit(1);
         }
     };
@@ -85,7 +85,7 @@ async fn run_synchronizer(config: config::Config, since: Option<String>) -> Resu
     let since_time = if let Some(ts) = since {
         Some(
             DateTime::parse_from_rfc3339(&ts)
-                .context(format!("Failed to parse timestamp: {}", ts))?
+                .context(format!("Failed to parse timestamp: {ts}"))?
                 .with_timezone(&Utc),
         )
     } else {
@@ -95,7 +95,7 @@ async fn run_synchronizer(config: config::Config, since: Option<String>) -> Resu
     let synchronizer = initialize_synchronizer(config).await?;
 
     if let Err(e) = synchronizer.run(since_time).await {
-        error!("Synchronizer failed: {}", e);
+        error!("Synchronizer failed: {e}");
         process::exit(1);
     }
 
@@ -124,7 +124,7 @@ async fn start_synchronizer(
     let since_time = if let Some(ts) = since {
         Some(
             DateTime::parse_from_rfc3339(&ts)
-                .context(format!("Failed to parse timestamp: {}", ts))?
+                .context(format!("Failed to parse timestamp: {ts}"))?
                 .with_timezone(&Utc),
         )
     } else {
@@ -133,13 +133,10 @@ async fn start_synchronizer(
 
     let synchronizer = initialize_synchronizer(config).await?;
 
-    info!(
-        "Starting synchronizer with interval of {} seconds",
-        interval
-    );
+    info!("Starting synchronizer with interval of {interval} seconds");
 
     if let Err(e) = synchronizer.start(interval, since_time).await {
-        error!("Synchronizer failed: {}", e);
+        error!("Synchronizer failed: {e}");
         process::exit(1);
     }
 

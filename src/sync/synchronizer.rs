@@ -119,7 +119,7 @@ where
             .database
             .get_objects(fetch_size, since_time, after_id)
             .await
-            .map_err(|e| anyhow::anyhow!("Failed to fetch objects to sync: {}", e))?;
+            .map_err(|e| anyhow::anyhow!("Failed to fetch objects to sync: {e}"))?;
 
         Ok(objects)
     }
@@ -130,11 +130,11 @@ where
         match self.sync_storage.get_object(object_id).await? {
             Some(record) => match record.status {
                 SyncStatus::Complete => {
-                    debug!("Object {} already synchronized, skipping", object_id);
+                    debug!("Object {object_id} already synchronized, skipping");
                     Ok(false)
                 }
                 SyncStatus::Processing => {
-                    debug!("Object {} is already being processed, skipping", object_id);
+                    debug!("Object {object_id} is already being processed, skipping");
                     Ok(false)
                 }
                 _ => Ok(true),
@@ -191,7 +191,7 @@ where
                     .get_object(s3_key)
                     .await
                     .map(|bytes| bytes.to_vec())
-                    .map_err(|e| anyhow::anyhow!("Failed to get object from S3: {}", e)),
+                    .map_err(|e| anyhow::anyhow!("Failed to get object from S3: {e}")),
                 None => Err(anyhow::anyhow!("S3 storage required but not configured")),
             }
         } else {
@@ -206,19 +206,19 @@ where
                 let recall_key = Self::construct_recall_key(object);
                 match self.recall_storage.add_blob(&recall_key, data).await {
                     Ok(()) => {
-                        info!("Successfully synchronized to Recall as {}", recall_key);
+                        info!("Successfully synchronized to Recall as {recall_key}");
                         self.sync_storage
                             .set_object_status(object_id, SyncStatus::Complete)
                             .await?;
                     }
                     Err(e) => {
-                        error!("Failed to submit {} to Recall: {}", recall_key, e);
+                        error!("Failed to submit {recall_key} to Recall: {e}");
                         // TODO: Implement retry logic
                     }
                 }
             }
             Err(e) => {
-                error!("Failed to get data: {}", e);
+                error!("Failed to get data: {e}");
                 // TODO: Implement retry logic
             }
         }
@@ -258,7 +258,7 @@ where
         let (mut current_since_time, mut current_after_id) = self.get_sync_state(since).await?;
 
         if let Some(ts) = current_since_time {
-            info!("Synchronizing data since: {}", ts);
+            info!("Synchronizing data since: {ts}");
         } else {
             info!("No previous sync timestamp found, syncing all objects");
         }
@@ -270,7 +270,7 @@ where
             // Calculate how many more objects we can process
             let remaining_quota = batch_size.saturating_sub(total_processed);
             if remaining_quota == 0 {
-                debug!("Batch quota filled. Total processed: {}", total_processed);
+                debug!("Batch quota filled. Total processed: {total_processed}");
                 break;
             }
 
@@ -284,10 +284,7 @@ where
                 if total_processed == 0 {
                     info!("No objects found to synchronize");
                 } else {
-                    info!(
-                        "Synchronization completed. Processed {} objects",
-                        total_processed
-                    );
+                    info!("Synchronization completed. Processed {total_processed} objects");
                 }
                 return Ok(());
             }
@@ -314,8 +311,7 @@ where
                 current_after_id = Some(last_obj.id);
 
                 debug!(
-                    "Total processed: {}, continuing to fill batch of {}",
-                    total_processed, batch_size
+                    "Total processed: {total_processed}, continuing to fill batch of {batch_size}"
                 );
             } else {
                 break;
@@ -338,7 +334,7 @@ where
     pub async fn start(&self, interval_seconds: u64, since: Option<DateTime<Utc>>) -> Result<()> {
         let mut interval_timer = interval(Duration::from_secs(interval_seconds));
 
-        info!("Synchronizer started with {}s interval", interval_seconds);
+        info!("Synchronizer started with {interval_seconds}s interval");
 
         loop {
             interval_timer.tick().await;
@@ -349,7 +345,7 @@ where
                     debug!("Synchronization run completed successfully");
                 }
                 Err(e) => {
-                    warn!("Synchronization run failed: {}", e);
+                    warn!("Synchronization run failed: {e}");
                     // Continue to next interval even if this run failed
                 }
             }

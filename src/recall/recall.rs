@@ -41,17 +41,17 @@ impl RecallBlockchain {
                 let hex_str = s.strip_prefix("0x")
                     .or_else(|| s.strip_prefix("0X"))
                     .ok_or_else(|| RecallError::Configuration(
-                        format!("Address '{}' must start with '0x' or be a valid Filecoin address", s)
+                        format!("Address '{s}' must start with '0x' or be a valid Filecoin address")
                     ))?;
 
                 let bytes = hex::decode(hex_str).map_err(|e| {
-                    RecallError::Configuration(format!("Invalid hex in address '{}': {}", s, e))
+                    RecallError::Configuration(format!("Invalid hex in address '{s}': {e}"))
                 })?;
 
                 if bytes.len() != 20 {
                     return Err(RecallError::Configuration(format!(
-                        "Invalid address '{}': expected 20 bytes, got {}",
-                        s, bytes.len()
+                        "Invalid address '{s}': expected 20 bytes, got {}",
+                        bytes.len()
                     )));
                 }
 
@@ -63,21 +63,19 @@ impl RecallBlockchain {
                         Ok(Address::new_id(actor_id))
                     } else {
                         Err(RecallError::Configuration(format!(
-                            "Invalid EVM-form ID address '{}': bytes 1-11 must be 0x00",
-                            s
+                            "Invalid EVM-form ID address '{s}': bytes 1-11 must be 0x00"
                         )))
                     }
                 } else {
                     // Standard Ethereum addresses would need EAM actor conversion
                     Err(RecallError::Configuration(format!(
-                        "Ethereum address '{}' conversion not implemented. Use Filecoin address format.",
-                        s
+                        "Ethereum address '{s}' conversion not implemented. Use Filecoin address format."
                     )))
                 }
             })
             .map_err(|e| match e {
                 RecallError::Configuration(msg) => RecallError::Configuration(msg),
-                _ => RecallError::Configuration(format!("Failed to parse address '{}': {}", s, e)),
+                _ => RecallError::Configuration(format!("Failed to parse address '{s}': {e}")),
             })
     }
 
@@ -86,43 +84,35 @@ impl RecallBlockchain {
         let network_config_path = config.config_path.as_deref().unwrap_or("networks.toml");
 
         let config_text = fs::read_to_string(network_config_path).map_err(|e| {
-            error!(
-                "Failed to read network config file '{}': {}",
-                network_config_path, e
-            );
+            error!("Failed to read network config file '{network_config_path}': {e}");
             RecallError::Configuration(format!(
-                "Failed to read network config file '{}': {}",
-                network_config_path, e
+                "Failed to read network config file '{network_config_path}': {e}"
             ))
         })?;
 
         let mut networks: HashMap<String, NetworkSpec> =
             toml::from_str(&config_text).map_err(|e| {
-                error!(
-                    "Failed to parse network config file '{}': {}",
-                    network_config_path, e
-                );
+                error!("Failed to parse network config file '{network_config_path}': {e}");
                 RecallError::Configuration(format!(
-                    "Failed to parse network config file '{}': {}",
-                    network_config_path, e
+                    "Failed to parse network config file '{network_config_path}': {e}"
                 ))
             })?;
 
         let network_spec = networks.remove(&config.network).ok_or_else(|| {
             error!(
-                "Network '{}' not found in {}",
-                config.network, network_config_path
+                "Network '{}' not found in {network_config_path}",
+                config.network
             );
             RecallError::Configuration(format!(
-                "Network '{}' not found in {}",
-                config.network, network_config_path
+                "Network '{}' not found in {network_config_path}",
+                config.network
             ))
         })?;
 
         // Convert NetworkSpec to NetworkConfig
         network_spec.into_network_config().map_err(|e| {
-            error!("Failed to convert network spec: {}", e);
-            RecallError::Configuration(format!("Failed to convert network spec: {}", e))
+            error!("Failed to convert network spec: {e}");
+            RecallError::Configuration(format!("Failed to convert network spec: {e}"))
         })
     }
 
@@ -143,8 +133,8 @@ impl RecallBlockchain {
             Some(network_config.object_api_url.clone()),
         )
         .map_err(|e| {
-            error!("Failed to create provider: {}", e);
-            RecallError::Connection(format!("Failed to create provider: {}", e))
+            error!("Failed to create provider: {e}");
+            RecallError::Connection(format!("Failed to create provider: {e}"))
         })?;
 
         // Create secret key from hex string (strip "0x" prefix if present)
@@ -153,20 +143,20 @@ impl RecallBlockchain {
             .strip_prefix("0x")
             .map_or(config.private_key.as_str(), |s| s);
         let pk = parse_secret_key(private_key).map_err(|e| {
-            error!("Failed to parse private key: {}", e);
-            RecallError::Configuration(format!("Failed to parse private key: {}", e))
+            error!("Failed to parse private key: {e}");
+            RecallError::Configuration(format!("Failed to parse private key: {e}"))
         })?;
 
         let mut signer =
             Wallet::new_secp256k1(pk, AccountKind::Ethereum, network_config.subnet_id.clone())
                 .map_err(|e| {
-                    error!("Failed to create wallet: {}", e);
-                    RecallError::Configuration(format!("Failed to create wallet: {}", e))
+                    error!("Failed to create wallet: {e}");
+                    RecallError::Configuration(format!("Failed to create wallet: {e}"))
                 })?;
 
         // Initialize sequence - this might fail with sequence errors in concurrent scenarios
         if let Err(e) = signer.init_sequence(&provider).await {
-            warn!("Wallet sequence initialization error: {}. This may be retried if it's a sequence error.", e);
+            warn!("Wallet sequence initialization error: {e}. This may be retried if it's a sequence error.");
             // Don't fail here - let the caller handle sequence errors with retry logic
         }
 
@@ -183,7 +173,7 @@ impl RecallBlockchain {
     ) -> Result<Address, RecallError> {
         if let Some(bucket_addr) = &config.bucket {
             let address = Self::parse_address(bucket_addr)?;
-            info!("Using existing bucket address: {}", address);
+            info!("Using existing bucket address: {address}");
             Ok(address)
         } else {
             Self::create_bucket(provider, signer).await
@@ -206,12 +196,12 @@ impl RecallBlockchain {
         )
         .await
         .map_err(|e| {
-            error!("Failed to create new bucket: {}", e);
-            RecallError::Configuration(format!("Failed to create new bucket: {}", e))
+            error!("Failed to create new bucket: {e}");
+            RecallError::Configuration(format!("Failed to create new bucket: {e}"))
         })?;
 
         let bucket_address = bucket.address();
-        info!("Created new bucket at address: {}", bucket_address);
+        info!("Created new bucket at address: {bucket_address}");
 
         Ok(bucket_address)
     }
@@ -283,26 +273,23 @@ impl RecallBlockchain {
 
         let current_balance = Account::balance(&Void::new(to_address), subnet_config)
             .await
-            .map_err(|e| RecallError::Operation(format!("Failed to get balance: {}", e)))?;
+            .map_err(|e| RecallError::Operation(format!("Failed to get balance: {e}")))?;
 
-        info!(
-            "Current token balance for {}: {} attoRECALL",
-            to_address, current_balance
-        );
+        info!("Current token balance for {to_address}: {current_balance} attoRECALL");
 
         let credit_balance = Credits::balance(&provider, to_address, FvmQueryHeight::Committed)
             .await
-            .map_err(|e| RecallError::Operation(format!("Failed to get credit balance: {}", e)))?;
+            .map_err(|e| RecallError::Operation(format!("Failed to get credit balance: {e}")))?;
 
-        info!("Current credit balance: {:?}", credit_balance);
+        info!("Current credit balance: {credit_balance:?}");
 
         // Parse credit_free as TokenAmount since it's in atto units
         // Handle decimal format by parsing as float first, then converting to integer
         let credit_free_atto = {
             let credit_value = credit_balance.credit_free.parse::<f64>().map_err(|e| {
                 RecallError::Operation(format!(
-                    "Failed to parse credit balance {}: {}",
-                    credit_balance.credit_free, e
+                    "Failed to parse credit balance {}: {e}",
+                    credit_balance.credit_free
                 ))
             })?;
             TokenAmount::from_atto(credit_value as i128)
@@ -312,10 +299,7 @@ impl RecallBlockchain {
         let needs_credits = credit_free_atto < amount;
 
         if needs_credits {
-            info!(
-                "Proceeding to buy {} RECALL worth of credits",
-                credit_amount
-            );
+            info!("Proceeding to buy {credit_amount} RECALL worth of credits");
 
             let buy_options = BuyOptions {
                 broadcast_mode: BroadcastMode::Commit,
@@ -325,8 +309,8 @@ impl RecallBlockchain {
             Credits::buy(&provider, &mut signer, to_address, amount, buy_options)
                 .await
                 .map_err(|e| {
-                    error!("Failed to buy credits: {}", e);
-                    RecallError::Operation(format!("Failed to buy credits: {}", e))
+                    error!("Failed to buy credits: {e}");
+                    RecallError::Operation(format!("Failed to buy credits: {e}"))
                 })?;
         } else {
             info!("Credits are sufficient, skipping credit purchase");
@@ -347,7 +331,7 @@ impl RecallBlockchain {
         const MAX_RETRIES: u32 = 10;
         const BASE_DELAY_MS: u64 = 500;
 
-        debug!("Starting retry_on_sequence_error for {}", operation_name);
+        debug!("Starting retry_on_sequence_error for {operation_name}");
 
         for attempt in 0..MAX_RETRIES {
             match operation().await {
@@ -355,15 +339,13 @@ impl RecallBlockchain {
                 Err(e) => {
                     let error_msg = e.to_string();
                     debug!(
-                        "{}: Error on attempt {}: {}",
-                        operation_name,
-                        attempt + 1,
-                        error_msg
+                        "{operation_name}: Error on attempt {}: {error_msg}",
+                        attempt + 1
                     );
 
                     // Check if this is a sequence error
                     if error_msg.contains("expected sequence") && error_msg.contains("got") {
-                        debug!("{}: Detected sequence error, will retry", operation_name);
+                        debug!("{operation_name}: Detected sequence error, will retry");
                         if attempt < MAX_RETRIES - 1 {
                             // Calculate exponential backoff with jitter
                             use rand::Rng;
@@ -372,12 +354,8 @@ impl RecallBlockchain {
                                 Duration::from_millis(BASE_DELAY_MS * 2u64.pow(attempt) + jitter);
 
                             info!(
-                                "{}: Sequence error on attempt {}/{}: {}. Retrying in {:?}...",
-                                operation_name,
-                                attempt + 1,
-                                MAX_RETRIES,
-                                error_msg,
-                                delay
+                                "{operation_name}: Sequence error on attempt {}/{MAX_RETRIES}: {error_msg}. Retrying in {delay:?}...",
+                                attempt + 1
                             );
 
                             tokio::time::sleep(delay).await;
@@ -387,17 +365,15 @@ impl RecallBlockchain {
 
                     // Not a sequence error or max retries reached
                     return Err(RecallError::Operation(format!(
-                        "{} failed: {}",
-                        operation_name, e
+                        "{operation_name} failed: {e}"
                     )));
                 }
             }
         }
 
-        warn!("{}: Failed after {} retries", operation_name, MAX_RETRIES);
+        warn!("{operation_name}: Failed after {MAX_RETRIES} retries");
         Err(RecallError::Operation(format!(
-            "{} failed after {} retries",
-            operation_name, MAX_RETRIES
+            "{operation_name} failed after {MAX_RETRIES} retries"
         )))
     }
 }
@@ -405,7 +381,7 @@ impl RecallBlockchain {
 #[async_trait]
 impl Storage for RecallBlockchain {
     async fn add_blob(&self, key: &str, data: Vec<u8>) -> Result<(), RecallError> {
-        debug!("Storing blob to Recall: {}", key);
+        debug!("Storing blob to Recall: {key}");
 
         // Create an async reader from the data
         let data_len = data.len() as u64;
@@ -417,7 +393,7 @@ impl Storage for RecallBlockchain {
         let signer = Arc::clone(&self.signer);
 
         let tx_result = self
-            .retry_on_sequence_error(&format!("add_blob({})", key), || async {
+            .retry_on_sequence_error(&format!("add_blob({key})"), || async {
                 let mut signer_guard = signer.lock().await;
 
                 // Attach to the bucket
@@ -447,27 +423,27 @@ impl Storage for RecallBlockchain {
                     )
                     .await
                     .map_err(|e| {
-                        debug!("SDK error in add_blob: {}", e);
+                        debug!("SDK error in add_blob: {e}");
                         e
                     })
             })
             .await;
 
         tx_result.map_err(|e| {
-            error!("Failed to add blob to Recall: {}", e);
-            RecallError::Operation(format!("Failed to add blob: {}", e))
+            error!("Failed to add blob to Recall: {e}");
+            RecallError::Operation(format!("Failed to add blob: {e}"))
         })?;
 
-        info!("Successfully stored blob to Recall: {}", key);
+        info!("Successfully stored blob to Recall: {key}");
         Ok(())
     }
 
     async fn has_blob(&self, key: &str) -> Result<bool, RecallError> {
-        debug!("Checking if blob exists: {}", key);
+        debug!("Checking if blob exists: {key}");
 
         let bucket = Bucket::attach(self.bucket_address)
             .await
-            .map_err(|e| RecallError::Operation(format!("Failed to attach to bucket: {}", e)))?;
+            .map_err(|e| RecallError::Operation(format!("Failed to attach to bucket: {e}")))?;
 
         let query_options = recall_sdk::machine::bucket::QueryOptions {
             prefix: key.to_string(),
@@ -481,21 +457,21 @@ impl Storage for RecallBlockchain {
             .query(&*self.provider, query_options)
             .await
             .map_err(|e| {
-                error!("Failed to query blob existence: {}", e);
-                RecallError::Operation(format!("Failed to query blob existence: {}", e))
+                error!("Failed to query blob existence: {e}");
+                RecallError::Operation(format!("Failed to query blob existence: {e}"))
             })?;
 
         let exists = !result.objects.is_empty();
-        debug!("Blob {} exists on Recall: {}", key, exists);
+        debug!("Blob {key} exists on Recall: {exists}");
         Ok(exists)
     }
 
     async fn list_blobs(&self, prefix: &str) -> Result<Vec<String>, RecallError> {
-        debug!("Listing blobs with prefix: {}", prefix);
+        debug!("Listing blobs with prefix: {prefix}");
 
         let bucket = Bucket::attach(self.bucket_address)
             .await
-            .map_err(|e| RecallError::Operation(format!("Failed to attach to bucket: {}", e)))?;
+            .map_err(|e| RecallError::Operation(format!("Failed to attach to bucket: {e}")))?;
 
         let query_options = recall_sdk::machine::bucket::QueryOptions {
             prefix: prefix.to_string(),
@@ -509,8 +485,8 @@ impl Storage for RecallBlockchain {
             .query(&*self.provider, query_options)
             .await
             .map_err(|e| {
-                error!("Failed to list blobs: {}", e);
-                RecallError::Operation(format!("Failed to list blobs: {}", e))
+                error!("Failed to list blobs: {e}");
+                RecallError::Operation(format!("Failed to list blobs: {e}"))
             })?;
 
         let mut all_blobs = Vec::with_capacity(result.objects.len());
@@ -519,13 +495,13 @@ impl Storage for RecallBlockchain {
                 all_blobs.push(key_str);
             }
         }
-        debug!("Found {} blobs with prefix: {}", all_blobs.len(), prefix);
+        debug!("Found {} blobs with prefix: {prefix}", all_blobs.len());
         Ok(all_blobs)
     }
 
     #[cfg(test)]
     async fn delete_blob(&self, key: &str) -> Result<(), RecallError> {
-        debug!("Deleting blob: {}", key);
+        debug!("Deleting blob: {key}");
 
         if !self.has_blob(key).await? {
             return Err(RecallError::BlobNotFound(key.to_string()));
@@ -537,7 +513,7 @@ impl Storage for RecallBlockchain {
         let signer = Arc::clone(&self.signer);
 
         let result = self
-            .retry_on_sequence_error(&format!("delete_blob({})", key), || async {
+            .retry_on_sequence_error(&format!("delete_blob({key})"), || async {
                 let mut signer_guard = signer.lock().await;
 
                 let bucket = Bucket::attach(bucket_address).await?;
@@ -555,11 +531,11 @@ impl Storage for RecallBlockchain {
 
         match result {
             Ok(_) => {
-                info!("Successfully deleted blob from Recall: {}", key);
+                info!("Successfully deleted blob from Recall: {key}");
                 Ok(())
             }
             Err(e) => {
-                warn!("Failed to delete blob from Recall: {}", e);
+                warn!("Failed to delete blob from Recall: {e}");
                 // Return Ok for testing purposes
                 Ok(())
             }
@@ -568,19 +544,18 @@ impl Storage for RecallBlockchain {
 
     #[cfg(test)]
     async fn clear_prefix(&self, prefix: &str) -> Result<(), RecallError> {
-        debug!("Clearing all blobs with prefix: {}", prefix);
+        debug!("Clearing all blobs with prefix: {prefix}");
 
         let blobs = self.list_blobs(prefix).await?;
 
         if blobs.is_empty() {
-            debug!("No blobs found with prefix: {}", prefix);
+            debug!("No blobs found with prefix: {prefix}");
             return Ok(());
         }
 
         debug!(
-            "Found {} blobs to delete with prefix: {}",
-            blobs.len(),
-            prefix
+            "Found {} blobs to delete with prefix: {prefix}",
+            blobs.len()
         );
 
         let mut deleted_count = 0;
@@ -590,24 +565,20 @@ impl Storage for RecallBlockchain {
             match self.delete_blob(blob_key).await {
                 Ok(_) => {
                     deleted_count += 1;
-                    debug!("Deleted blob: {}", blob_key);
+                    debug!("Deleted blob: {blob_key}");
                 }
                 Err(e) => {
                     failed_count += 1;
-                    warn!("Failed to delete blob {}: {}", blob_key, e);
+                    warn!("Failed to delete blob {blob_key}: {e}");
                 }
             }
         }
 
-        info!(
-            "Cleared prefix '{}': {} blobs deleted, {} failed",
-            prefix, deleted_count, failed_count
-        );
+        info!("Cleared prefix '{prefix}': {deleted_count} blobs deleted, {failed_count} failed");
 
         if failed_count > 0 {
             return Err(RecallError::Operation(format!(
-                "Failed to delete {} out of {} blobs",
-                failed_count,
+                "Failed to delete {failed_count} out of {} blobs",
                 blobs.len()
             )));
         }
@@ -621,7 +592,7 @@ impl Storage for RecallBlockchain {
         use std::task::{Context, Poll};
         use tokio::io::AsyncWrite;
 
-        debug!("Getting blob from Recall: {}", key);
+        debug!("Getting blob from Recall: {key}");
 
         let key_owned = key.to_string();
         let bucket_address = self.bucket_address;
@@ -671,7 +642,7 @@ impl Storage for RecallBlockchain {
 
         // Wrap the bucket.get operation in retry logic
         let result = self
-            .retry_on_sequence_error(&format!("get_blob({})", key), || async {
+            .retry_on_sequence_error(&format!("get_blob({key})"), || async {
                 let bucket = Bucket::attach(bucket_address).await?;
 
                 let get_options = recall_sdk::machine::bucket::GetOptions {
@@ -689,7 +660,7 @@ impl Storage for RecallBlockchain {
                     )
                     .await
                     .map_err(|e| {
-                        debug!("SDK error in get_blob: {}", e);
+                        debug!("SDK error in get_blob: {e}");
                         e
                     })
             })
@@ -699,8 +670,7 @@ impl Storage for RecallBlockchain {
             Ok(_) => {
                 let data = buffer.lock().await.clone();
                 info!(
-                    "Successfully retrieved blob from Recall: {} ({} bytes)",
-                    key,
+                    "Successfully retrieved blob from Recall: {key} ({} bytes)",
                     data.len()
                 );
                 Ok(data)
@@ -709,10 +679,10 @@ impl Storage for RecallBlockchain {
                 // Check if this is an "object not found" error
                 let error_msg = e.to_string();
                 if error_msg.contains("not found") {
-                    debug!("Blob not found: {}", key);
+                    debug!("Blob not found: {key}");
                     Err(RecallError::BlobNotFound(key.to_string()))
                 } else {
-                    warn!("Failed to get blob from Recall: {}", e);
+                    warn!("Failed to get blob from Recall: {e}");
                     Err(e)
                 }
             }
@@ -753,34 +723,20 @@ mod tests {
         for (input, expected) in test_cases {
             match (RecallBlockchain::parse_address(input), expected) {
                 (Ok(addr), Ok(expected_addr)) => {
-                    assert_eq!(
-                        addr.to_string(),
-                        expected_addr,
-                        "Failed for input: {}",
-                        input
-                    );
+                    assert_eq!(addr.to_string(), expected_addr, "Failed for input: {input}");
                 }
                 (Err(e), Err(expected_msg)) => {
                     let error_msg = e.to_string();
                     assert!(
                         error_msg.contains(expected_msg),
-                        "Expected error containing '{}' for input '{}', got: {}",
-                        expected_msg,
-                        input,
-                        error_msg
+                        "Expected error containing '{expected_msg}' for input '{input}', got: {error_msg}"
                     );
                 }
                 (Ok(addr), Err(_)) => {
-                    panic!(
-                        "Expected error for input '{}', but got success: {}",
-                        input, addr
-                    );
+                    panic!("Expected error for input '{input}', but got success: {addr}");
                 }
                 (Err(e), Ok(_)) => {
-                    panic!(
-                        "Expected success for input '{}', but got error: {}",
-                        input, e
-                    );
+                    panic!("Expected success for input '{input}', but got error: {e}");
                 }
             }
         }

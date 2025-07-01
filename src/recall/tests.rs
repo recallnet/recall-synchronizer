@@ -48,7 +48,7 @@ fn get_test_storages() -> Vec<(&'static str, StorageFactory)> {
                             println!("Successfully prepared wallet {} with credits", test_wallet.address);
                         }
                         Err(e) => {
-                            println!("Warning: Failed to prepare wallet {} with credits: {}. Tests may fail if account lacks credits.", test_wallet.address, e);
+                            println!("Warning: Failed to prepare wallet {} with credits: {e}. Tests may fail if account lacks credits.", test_wallet.address);
                         }
                     }
 
@@ -58,7 +58,7 @@ fn get_test_storages() -> Vec<(&'static str, StorageFactory)> {
                             Box::new(Arc::new(blockchain)) as Box<dyn Storage + Send + Sync>
                         },
                         Err(e) => {
-                            panic!("Failed to connect to real Recall storage: {}\n\nMake sure the Recall container is running and accessible", e);
+                            panic!("Failed to connect to real Recall storage: {e}\n\nMake sure the Recall container is running and accessible");
                         }
                     }
                 })
@@ -73,16 +73,16 @@ fn get_test_storages() -> Vec<(&'static str, StorageFactory)> {
 async fn add_blob_and_has_blob_work_correctly() {
     for (name, storage_factory) in get_test_storages() {
         let storage = storage_factory().await;
-        let key = format!("test-blob-{}-{}", name, Uuid::new_v4());
+        let key = format!("test-blob-{name}-{}", Uuid::new_v4());
         let data = b"test data".to_vec();
 
         let exists = storage.has_blob(&key).await.unwrap();
-        assert!(!exists, "Blob should not exist initially for {}", name);
+        assert!(!exists, "Blob should not exist initially for {name}");
 
         storage.add_blob(&key, data.clone()).await.unwrap();
 
         let exists = storage.has_blob(&key).await.unwrap();
-        assert!(exists, "Blob should exist after adding for {}", name);
+        assert!(exists, "Blob should exist after adding for {name}");
 
         // Clean up
         //storage.delete_blob(&key).await.unwrap();
@@ -107,19 +107,18 @@ async fn add_blob_and_has_blob_work_correctly() {
 async fn blob_lifecycle_operations() {
     for (name, storage_factory) in get_test_storages() {
         let storage = storage_factory().await;
-        let key = format!("test-lifecycle-{}-{}", name, Uuid::new_v4());
+        let key = format!("test-lifecycle-{name}-{}", Uuid::new_v4());
         let original_data = b"test data for lifecycle operations".to_vec();
 
         // Test 1: Getting non-existent blob should fail
         let result = storage.get_blob(&key).await;
         assert!(
             result.is_err(),
-            "Getting non-existent blob should fail for {}",
-            name
+            "Getting non-existent blob should fail for {name}"
         );
 
         // Test 2: Add blob
-        println!("Adding blob with key: {}", key);
+        println!("Adding blob with key: {key}");
         storage.add_blob(&key, original_data.clone()).await.unwrap();
 
         // Wait for blob to be available with retry
@@ -130,9 +129,9 @@ async fn blob_lifecycle_operations() {
                 break;
             }
             if start.elapsed() > max_wait {
-                panic!("Blob did not become available within timeout for {}", name);
+                panic!("Blob did not become available within timeout for {name}");
             }
-            println!("Waiting for blob to be available for {}...", name);
+            println!("Waiting for blob to be available for {name}...");
             tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
         }
 
@@ -146,18 +145,17 @@ async fn blob_lifecycle_operations() {
                     break;
                 }
                 Err(_) => {
-                    println!("Waiting for blob to be retrievable for {}...", name);
+                    println!("Waiting for blob to be retrievable for {name}...");
                     tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
                 }
             }
         }
 
         let retrieved_data = retrieved_data
-            .unwrap_or_else(|| panic!("Failed to retrieve blob within timeout for {}", name));
+            .unwrap_or_else(|| panic!("Failed to retrieve blob within timeout for {name}"));
         assert_eq!(
             retrieved_data, original_data,
-            "Retrieved data should match original for {}",
-            name
+            "Retrieved data should match original for {name}"
         );
 
         // Test 4: Delete blob
@@ -171,22 +169,20 @@ async fn blob_lifecycle_operations() {
                 blob_deleted = true;
                 break;
             }
-            println!("Waiting for blob to be deleted for {}...", name);
+            println!("Waiting for blob to be deleted for {name}...");
             tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
         }
 
         assert!(
             blob_deleted,
-            "Blob should not exist after deletion for {}",
-            name
+            "Blob should not exist after deletion for {name}"
         );
 
         // Test 5: Deleting non-existent blob should fail
         let result = storage.delete_blob(&key).await;
         assert!(
             result.is_err(),
-            "Deleting non-existent blob should fail for {}",
-            name
+            "Deleting non-existent blob should fail for {name}"
         );
     }
 }
@@ -195,21 +191,17 @@ async fn blob_lifecycle_operations() {
 async fn list_blobs_works_correctly() {
     for (name, storage_factory) in get_test_storages() {
         let storage = storage_factory().await;
-        let prefix = format!("test-prefix-{}-{}/", name, Uuid::new_v4());
+        let prefix = format!("test-prefix-{name}-{}/", Uuid::new_v4());
 
         storage.clear_prefix(&prefix).await.unwrap();
 
         let blobs = storage.list_blobs(&prefix).await.unwrap();
-        assert!(
-            blobs.is_empty(),
-            "Should be no blobs initially for {}",
-            name
-        );
+        assert!(blobs.is_empty(), "Should be no blobs initially for {name}");
 
         let keys = vec![
-            format!("{}file1.txt", prefix),
-            format!("{}file2.txt", prefix),
-            format!("{}dir/file3.txt", prefix),
+            format!("{prefix}file1.txt"),
+            format!("{prefix}file2.txt"),
+            format!("{prefix}dir/file3.txt"),
         ];
 
         for key in &keys {
@@ -217,24 +209,18 @@ async fn list_blobs_works_correctly() {
         }
 
         let blobs = storage.list_blobs(&prefix).await.unwrap();
-        assert_eq!(blobs.len(), 3, "Should have 3 blobs for {}", name);
+        assert_eq!(blobs.len(), 3, "Should have 3 blobs for {name}");
 
         for key in &keys {
-            assert!(
-                blobs.contains(key),
-                "Should contain key {} for {}",
-                key,
-                name
-            );
+            assert!(blobs.contains(key), "Should contain key {key} for {name}");
         }
 
-        let dir_prefix = format!("{}dir/", prefix);
+        let dir_prefix = format!("{prefix}dir/");
         let dir_blobs = storage.list_blobs(&dir_prefix).await.unwrap();
-        assert_eq!(dir_blobs.len(), 1, "Should have 1 blob in dir for {}", name);
+        assert_eq!(dir_blobs.len(), 1, "Should have 1 blob in dir for {name}");
         assert!(
             dir_blobs.contains(&keys[2]),
-            "Should contain dir file for {}",
-            name
+            "Should contain dir file for {name}"
         );
 
         storage.clear_prefix(&prefix).await.unwrap();
@@ -245,13 +231,13 @@ async fn list_blobs_works_correctly() {
 async fn clear_prefix_works_correctly() {
     for (name, storage_factory) in get_test_storages() {
         let storage = storage_factory().await;
-        let prefix = format!("test-clear-{}-{}/", name, Uuid::new_v4());
-        let other_prefix = format!("test-other-{}-{}/", name, Uuid::new_v4());
+        let prefix = format!("test-clear-{name}-{}/", Uuid::new_v4());
+        let other_prefix = format!("test-other-{name}-{}/", Uuid::new_v4());
 
         let our_keys = vec![
-            format!("{}file1.txt", prefix),
-            format!("{}file2.txt", prefix),
-            format!("{}dir/file3.txt", prefix),
+            format!("{prefix}file1.txt"),
+            format!("{prefix}file2.txt"),
+            format!("{prefix}dir/file3.txt"),
         ];
 
         for key in &our_keys {
@@ -259,8 +245,8 @@ async fn clear_prefix_works_correctly() {
         }
 
         let other_keys = vec![
-            format!("{}file1.txt", other_prefix),
-            format!("{}file2.txt", other_prefix),
+            format!("{other_prefix}file1.txt"),
+            format!("{other_prefix}file2.txt"),
         ];
 
         for key in &other_keys {
@@ -272,16 +258,14 @@ async fn clear_prefix_works_correctly() {
         let our_blobs = storage.list_blobs(&prefix).await.unwrap();
         assert!(
             our_blobs.is_empty(),
-            "Our blobs should be cleared for {}",
-            name
+            "Our blobs should be cleared for {name}"
         );
 
         let other_blobs = storage.list_blobs(&other_prefix).await.unwrap();
         assert_eq!(
             other_blobs.len(),
             2,
-            "Other blobs should still exist for {}",
-            name
+            "Other blobs should still exist for {name}"
         );
 
         storage.clear_prefix(&other_prefix).await.unwrap();
@@ -321,16 +305,16 @@ async fn fake_storage_failure_simulation() {
 async fn concurrent_operations() {
     for (name, storage_factory) in get_test_storages() {
         let storage = Arc::new(storage_factory().await);
-        let prefix = format!("test-concurrent-{}-{}/", name, Uuid::new_v4());
+        let prefix = format!("test-concurrent-{name}-{}/", Uuid::new_v4());
 
         // Spawn multiple tasks that add blobs concurrently
         let mut handles = vec![];
         for i in 0..10 {
             let storage_clone = storage.clone();
-            let key = format!("{}file{}.txt", prefix, i);
+            let key = format!("{prefix}file{i}.txt");
             let handle = tokio::spawn(async move {
                 storage_clone
-                    .add_blob(&key, format!("data{}", i).into_bytes())
+                    .add_blob(&key, format!("data{i}").into_bytes())
                     .await
             });
             handles.push(handle);
@@ -342,7 +326,7 @@ async fn concurrent_operations() {
         }
 
         let blobs = storage.list_blobs(&prefix).await.unwrap();
-        assert_eq!(blobs.len(), 10, "Should have 10 blobs for {}", name);
+        assert_eq!(blobs.len(), 10, "Should have 10 blobs for {name}");
 
         storage.clear_prefix(&prefix).await.unwrap();
     }

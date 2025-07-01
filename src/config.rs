@@ -62,7 +62,7 @@ fn default_max_files() -> usize {
 pub fn load_config(path: &str) -> Result<Config> {
     let config_path = Path::new(path);
     let config_text =
-        fs::read_to_string(config_path).context(format!("Failed to read config file: {}", path))?;
+        fs::read_to_string(config_path).context(format!("Failed to read config file: {path}"))?;
 
     let mut config: Config = config::Config::builder()
         .add_source(config::File::from_str(
