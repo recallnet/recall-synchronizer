@@ -10,6 +10,7 @@ pub struct Config {
     pub recall: RecallConfig,
     pub sync: SyncConfig,
     pub sync_storage: SyncStorageConfig,
+    pub logging: Option<LoggingConfig>,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -45,10 +46,23 @@ pub struct SyncStorageConfig {
     pub db_path: String,
 }
 
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct LoggingConfig {
+    pub path: String,
+    pub level: String,
+    pub size: u64, // Size in MB
+    #[serde(default = "default_max_files")]
+    pub max_files: usize, // Number of rotated files to keep
+}
+
+fn default_max_files() -> usize {
+    5
+}
+
 pub fn load_config(path: &str) -> Result<Config> {
     let config_path = Path::new(path);
     let config_text =
-        fs::read_to_string(config_path).context(format!("Failed to read config file: {}", path))?;
+        fs::read_to_string(config_path).context(format!("Failed to read config file: {path}"))?;
 
     let mut config: Config = config::Config::builder()
         .add_source(config::File::from_str(

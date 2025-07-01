@@ -29,7 +29,7 @@ async fn setup_test_data(storage: &dyn SyncStorage) -> Vec<SyncRecord> {
     storage.clear_all().await.unwrap();
 
     for i in 0..15 {
-        let object_key = format!("test/object_{:02}.jsonl", i);
+        let object_key = format!("test/object_{i:02}.jsonl");
         let timestamp = base_time + Duration::minutes(i * 30);
         let record = create_test_record(&object_key, timestamp);
 
@@ -350,7 +350,7 @@ async fn get_objects_with_status_returns_records_ordered_by_timestamp() {
         ];
 
         for (i, timestamp) in timestamps.iter().enumerate() {
-            let record = create_test_record(&format!("test/object_{}.jsonl", i), *timestamp);
+            let record = create_test_record(&format!("test/object_{i}.jsonl"), *timestamp);
             records.push(record.clone());
             storage.add_object(record).await.unwrap();
         }

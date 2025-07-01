@@ -35,8 +35,8 @@ macro_rules! pg_get_text_or_bytea_field {
                 Ok(bytes) => Ok(Some(bytes)),
                 Err(sqlx::Error::ColumnNotFound(_)) => Ok(None),
                 Err(e) => Err(DatabaseError::DeserializationError(format!(
-                    "Failed to read {} column: {}",
-                    $field, e
+                    "Failed to read {} column: {e}",
+                    $field
                 ))),
             },
         }?
@@ -76,7 +76,7 @@ impl SchemaMode {
     /// Generate the table definition for the object_index table
     pub fn table_definition(&self, schema_name: Option<&str>) -> String {
         let enum_type = match schema_name {
-            Some(schema) => format!("{}.sync_data_type", schema),
+            Some(schema) => format!("{schema}.sync_data_type"),
             None => "sync_data_type".to_string(),
         };
 
@@ -93,7 +93,7 @@ impl SchemaMode {
                 event_timestamp TIMESTAMPTZ,
                 created_at TIMESTAMPTZ NOT NULL
                 "#,
-                enum_type
+                { enum_type }
             ),
             SchemaMode::Direct => format!(
                 r#"
@@ -107,7 +107,7 @@ impl SchemaMode {
                 created_at TIMESTAMPTZ NOT NULL,
                 data BYTEA NOT NULL
                 "#,
-                enum_type
+                { enum_type }
             ),
         }
     }
@@ -159,11 +159,11 @@ impl SchemaMode {
             SchemaMode::S3 => {
                 let query_string = format!(
                     r#"
-                    INSERT INTO {} (
+                    INSERT INTO {table_name} (
                         id, object_key, competition_id, agent_id,
                         data_type, size_bytes, metadata,
                         event_timestamp, created_at
-                    ) VALUES ($1, $2, $3, $4, $5::text::{}, $6, $7, $8, $9)
+                    ) VALUES ($1, $2, $3, $4, $5::text::{enum_cast}, $6, $7, $8, $9)
                     ON CONFLICT (object_key) DO UPDATE SET
                         competition_id = EXCLUDED.competition_id,
                         agent_id = EXCLUDED.agent_id,
@@ -172,8 +172,7 @@ impl SchemaMode {
                         metadata = EXCLUDED.metadata,
                         event_timestamp = EXCLUDED.event_timestamp,
                         created_at = EXCLUDED.created_at
-                    "#,
-                    table_name, enum_cast
+                    "#
                 );
 
                 let id = object.id;
@@ -203,11 +202,11 @@ impl SchemaMode {
             SchemaMode::Direct => {
                 let query_string = format!(
                     r#"
-                    INSERT INTO {} (
+                    INSERT INTO {table_name} (
                         id, competition_id, agent_id,
                         data_type, size_bytes, metadata,
                         event_timestamp, created_at, data
-                    ) VALUES ($1, $2, $3, $4::text::{}, $5, $6, $7, $8, $9)
+                    ) VALUES ($1, $2, $3, $4::text::{enum_cast}, $5, $6, $7, $8, $9)
                     ON CONFLICT (id) DO UPDATE SET
                         competition_id = EXCLUDED.competition_id,
                         agent_id = EXCLUDED.agent_id,
@@ -217,8 +216,7 @@ impl SchemaMode {
                         event_timestamp = EXCLUDED.event_timestamp,
                         created_at = EXCLUDED.created_at,
                         data = EXCLUDED.data
-                    "#,
-                    table_name, enum_cast
+                    "#
                 );
 
                 let id = object.id;

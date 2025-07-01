@@ -52,7 +52,7 @@ fn get_test_storages() -> Vec<(&'static str, StorageFactory)> {
                                     if let Err(e) =
                                         real_storage.create_bucket(&s3_config.bucket).await
                                     {
-                                        eprintln!("Warning: Failed to create test bucket: {}", e);
+                                        eprintln!("Warning: Failed to create test bucket: {e}");
                                         // Continue anyway, as bucket might exist but we can't check
                                     }
                                 }
@@ -60,7 +60,7 @@ fn get_test_storages() -> Vec<(&'static str, StorageFactory)> {
                                 real_storage as Arc<dyn Storage + Send + Sync>
                             }
                             Err(e) => {
-                                panic!("Failed to create S3 storage for tests: {}", e);
+                                panic!("Failed to create S3 storage for tests: {e}");
                             }
                         }
                     })
@@ -82,17 +82,13 @@ async fn if_object_exists_get_object_returns_data() {
             .await;
         assert!(
             result.is_ok(),
-            "Failed to add object with {}: {:?}",
-            name,
-            result
+            "Failed to add object with {name}: {result:?}"
         );
 
         let result = storage.get_object("test_key").await;
         assert!(
             result.is_ok(),
-            "Failed to get existing object with {}: {:?}",
-            name,
-            result
+            "Failed to get existing object with {name}: {result:?}"
         );
         assert_eq!(result.unwrap(), Bytes::from("test data"));
     }
@@ -105,9 +101,7 @@ async fn if_object_not_exists_get_object_returns_error() {
         let result = storage.get_object("nonexistent_key").await;
         assert!(
             matches!(result, Err(StorageError::ObjectNotFound(_))),
-            "Expected ObjectNotFound error with {}, got: {:?}",
-            name,
-            result
+            "Expected ObjectNotFound error with {name}, got: {result:?}"
         );
     }
 }
@@ -116,7 +110,7 @@ async fn if_object_not_exists_get_object_returns_error() {
 async fn add_and_remove_object_works_correctly() {
     for (name, storage_factory) in get_test_storages() {
         let storage = storage_factory().await;
-        let key = format!("test_add_remove_{}", name);
+        let key = format!("test_add_remove_{name}");
         let data = Bytes::from("new test data");
 
         storage.add_object(&key, data.clone()).await.unwrap();
@@ -129,8 +123,7 @@ async fn add_and_remove_object_works_correctly() {
         let result = storage.get_object(&key).await;
         assert!(
             matches!(result, Err(StorageError::ObjectNotFound(_))),
-            "Object should not exist after removal with {}",
-            name
+            "Object should not exist after removal with {name}"
         );
     }
 }
@@ -167,42 +160,33 @@ async fn fake_fail_object_causes_object_specific_failures() {
 async fn has_bucket_and_create_bucket_work_correctly() {
     for (name, storage_factory) in get_test_storages() {
         let storage = storage_factory().await;
-        let bucket_name = format!("test-bucket-{}-{}", name, uuid::Uuid::new_v4().simple());
+        let bucket_name = format!("test-bucket-{name}-{}", uuid::Uuid::new_v4().simple());
 
         let exists = storage.has_bucket(&bucket_name).await.unwrap();
         assert!(
             !exists,
-            "Bucket {} should not exist initially for {}",
-            bucket_name, name
+            "Bucket {bucket_name} should not exist initially for {name}"
         );
 
         storage
             .create_bucket(&bucket_name)
             .await
-            .unwrap_or_else(|_| panic!("Failed to create bucket {} for {}", bucket_name, name));
+            .unwrap_or_else(|_| panic!("Failed to create bucket {bucket_name} for {name}"));
 
         let exists = storage.has_bucket(&bucket_name).await.unwrap();
         assert!(
             exists,
-            "Bucket {} should exist after creation for {}",
-            bucket_name, name
+            "Bucket {bucket_name} should exist after creation for {name}"
         );
 
         storage
             .create_bucket(&bucket_name)
             .await
             .unwrap_or_else(|_| {
-                panic!(
-                    "Creating bucket {} again should succeed for {}",
-                    bucket_name, name
-                )
+                panic!("Creating bucket {bucket_name} again should succeed for {name}")
             });
 
         let exists = storage.has_bucket(&bucket_name).await.unwrap();
-        assert!(
-            exists,
-            "Bucket {} should still exist for {}",
-            bucket_name, name
-        );
+        assert!(exists, "Bucket {bucket_name} should still exist for {name}");
     }
 }

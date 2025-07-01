@@ -73,12 +73,12 @@ impl Storage for S3Storage {
         {
             let mut cache = self.cache.lock().await;
             if let Some(data) = cache.get(key) {
-                debug!("Cache hit for object: {}", key);
+                debug!("Cache hit for object: {key}");
                 return Ok(data.clone());
             }
         }
 
-        debug!("Fetching object from S3: {}", key);
+        debug!("Fetching object from S3: {key}");
 
         // Get from S3 if not in cache
         let response = self
@@ -135,7 +135,7 @@ impl Storage for S3Storage {
             cache.put(key.to_string(), data.clone());
         }
 
-        debug!("Successfully fetched object from S3: {}", key);
+        debug!("Successfully fetched object from S3: {key}");
         Ok(data)
     }
 
@@ -150,8 +150,8 @@ impl Storage for S3Storage {
             .await
             .map_err(|e| {
                 let error_msg = format!(
-                    "Failed to put object '{}' to bucket '{}': {}",
-                    key, self.bucket, e
+                    "Failed to put object '{key}' to bucket '{}': {e}",
+                    self.bucket
                 );
                 if e.to_string().contains("NoSuchBucket") {
                     StorageError::Other(anyhow::anyhow!(
@@ -178,14 +178,14 @@ impl Storage for S3Storage {
             .send()
             .await
             .map_err(|e| {
-                eprintln!("Error deleting object '{}': {}", key, e);
-                StorageError::Other(anyhow::anyhow!("Failed to delete object '{}': {}", key, e))
+                eprintln!("Error deleting object '{key}': {e}");
+                StorageError::Other(anyhow::anyhow!("Failed to delete object '{key}': {e}"))
             })?;
 
         let mut cache = self.cache.lock().await;
         cache.pop(key);
 
-        debug!("Successfully removed object: {}", key);
+        debug!("Successfully removed object: {key}");
         Ok(())
     }
 
@@ -195,7 +195,7 @@ impl Storage for S3Storage {
 
         match result {
             Ok(_) => {
-                info!("Bucket '{}' exists", bucket);
+                info!("Bucket '{bucket}' exists");
                 Ok(true)
             }
             Err(e) => {
@@ -204,10 +204,10 @@ impl Storage for S3Storage {
                     let metadata = err.meta();
 
                     if let Some(code) = metadata.code() {
-                        debug!("has_bucket error for '{}': code={}", bucket, code);
+                        debug!("has_bucket error for '{bucket}': code={code}");
 
                         if code == "NoSuchBucket" || code == "NotFound" {
-                            info!("Bucket '{}' does not exist", bucket);
+                            info!("Bucket '{bucket}' does not exist");
                             return Ok(false);
                         }
                     }
@@ -218,13 +218,12 @@ impl Storage for S3Storage {
                     || error_str.contains("404")
                     || error_str.contains("NotFound")
                 {
-                    info!("Bucket '{}' does not exist", bucket);
+                    info!("Bucket '{bucket}' does not exist");
                     Ok(false)
                 } else {
-                    eprintln!("Error checking bucket '{}': {:?}", bucket, e);
+                    eprintln!("Error checking bucket '{bucket}': {e:?}");
                     Err(StorageError::Other(anyhow::anyhow!(
-                        "Error checking bucket existence: {}",
-                        e
+                        "Error checking bucket existence: {e}"
                     )))
                 }
             }
@@ -233,11 +232,11 @@ impl Storage for S3Storage {
 
     #[cfg(test)]
     async fn create_bucket(&self, bucket: &str) -> Result<(), StorageError> {
-        info!("Creating bucket '{}'", bucket);
+        info!("Creating bucket '{bucket}'");
 
         match self.client.create_bucket().bucket(bucket).send().await {
             Ok(_) => {
-                info!("Successfully created bucket '{}'", bucket);
+                info!("Successfully created bucket '{bucket}'");
                 Ok(())
             }
             Err(create_err) => {
@@ -247,7 +246,7 @@ impl Storage for S3Storage {
 
                     match metadata.code() {
                         Some("BucketAlreadyExists") | Some("BucketAlreadyOwnedByYou") => {
-                            info!("Bucket '{}' already exists", bucket);
+                            info!("Bucket '{bucket}' already exists");
                             return Ok(());
                         }
                         _ => {}
@@ -259,14 +258,12 @@ impl Storage for S3Storage {
                     || error_str.contains("BucketAlreadyOwnedByYou")
                     || error_str.contains("already exists")
                 {
-                    info!("Bucket '{}' already exists", bucket);
+                    info!("Bucket '{bucket}' already exists");
                     Ok(())
                 } else {
-                    eprintln!("Failed to create bucket '{}': {:?}", bucket, create_err);
+                    eprintln!("Failed to create bucket '{bucket}': {create_err:?}");
                     Err(StorageError::Other(anyhow::anyhow!(
-                        "Failed to create bucket '{}': {}",
-                        bucket,
-                        create_err
+                        "Failed to create bucket '{bucket}': {create_err}"
                     )))
                 }
             }

@@ -40,7 +40,7 @@ impl fmt::Display for DataType {
             DataType::CompetitionsLeaderboard => "competitions_leaderboard",
             DataType::PortfolioSnapshot => "portfolio_snapshot",
         };
-        write!(f, "{}", s)
+        write!(f, "{s}")
     }
 }
 
@@ -54,7 +54,7 @@ impl FromStr for DataType {
             "agent_rank" => Ok(DataType::AgentRank),
             "competitions_leaderboard" => Ok(DataType::CompetitionsLeaderboard),
             "portfolio_snapshot" => Ok(DataType::PortfolioSnapshot),
-            _ => Err(format!("Unknown data type: {}", s)),
+            _ => Err(format!("Unknown data type: {s}")),
         }
     }
 }

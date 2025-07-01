@@ -53,7 +53,7 @@ impl TestEnvironment {
             .sync_storage
             .get_object(object.id)
             .await
-            .map_err(|e| format!("Failed to get object: {}", e))?;
+            .map_err(|e| format!("Failed to get object: {e}"))?;
 
         match record {
             Some(r) if r.status == SyncStatus::Complete => {
@@ -74,7 +74,7 @@ impl TestEnvironment {
             .s3_storage
             .get_object(object.object_key.as_ref().expect("object_key required"))
             .await
-            .map_err(|e| format!("Failed to get object from S3: {}", e))?;
+            .map_err(|e| format!("Failed to get object from S3: {e}"))?;
 
         // Use the correct Recall key format
         let recall_key = Self::construct_recall_key(object);
@@ -82,7 +82,7 @@ impl TestEnvironment {
             .recall_storage
             .get_blob(&recall_key)
             .await
-            .map_err(|e| format!("Failed to get blob from Recall: {}", e))?;
+            .map_err(|e| format!("Failed to get blob from Recall: {e}"))?;
 
         if s3_data.as_ref() != recall_data.as_slice() {
             return Err(format!(
@@ -103,7 +103,7 @@ impl TestEnvironment {
             .sync_storage
             .get_object(object.id)
             .await
-            .map_err(|e| format!("Failed to get object: {}", e))?;
+            .map_err(|e| format!("Failed to get object: {e}"))?;
 
         // Object should either not exist or not be Complete
         if let Some(r) = record {
@@ -121,12 +121,12 @@ impl TestEnvironment {
             .recall_storage
             .has_blob(&recall_key)
             .await
-            .map_err(|e| format!("Failed to check blob existence in Recall: {}", e))?;
+            .map_err(|e| format!("Failed to check blob existence in Recall: {e}"))?;
 
         if exists_in_recall {
             return Err(format!(
-                "Object {} unexpectedly found in Recall storage with key {}",
-                object.id, recall_key
+                "Object {} unexpectedly found in Recall storage with key {recall_key}",
+                object.id
             ));
         }
 
@@ -170,6 +170,7 @@ fn create_test_config() -> Config {
         sync_storage: SyncStorageConfig {
             db_path: ":memory:".to_string(),
         },
+        logging: None,
     }
 }
 
@@ -222,7 +223,7 @@ async fn when_no_filters_applied_all_objects_are_synchronized() {
     for obj in &objects {
         env.verify_object_synced(obj)
             .await
-            .unwrap_or_else(|e| panic!("Object {} verification failed: {}", obj.id, e));
+            .unwrap_or_else(|e| panic!("Object {} verification failed: {e}", obj.id));
     }
 
     let completed_objects = env
@@ -259,14 +260,14 @@ async fn when_timestamp_filter_is_applied_only_newer_objects_are_synchronized() 
         .await
         .unwrap_or_else(|e| {
             panic!(
-                "Old object {} should not be synchronized: {}",
-                old_object.id, e
+                "Old object {} should not be synchronized: {e}",
+                old_object.id
             )
         });
 
     env.verify_object_synced(&new_object)
         .await
-        .unwrap_or_else(|e| panic!("Newer object {} verification failed: {}", new_object.id, e));
+        .unwrap_or_else(|e| panic!("Newer object {} verification failed: {e}", new_object.id));
 }
 
 #[tokio::test]
@@ -337,10 +338,10 @@ async fn with_batch_size_should_limits_database_fetch() {
     let base_time = Utc::now() - Duration::hours(24);
     for i in 0..10 {
         let object = create_test_object_index_s3(
-            &format!("test/batch-{}.jsonl", i),
+            &format!("test/batch-{i}.jsonl"),
             base_time + Duration::hours(i as i64),
         );
-        env.add_object_to_db_and_s3(object, &format!("Test data {}", i))
+        env.add_object_to_db_and_s3(object, &format!("Test data {i}"))
             .await;
     }
 
@@ -371,9 +372,9 @@ async fn multiple_sync_runs_with_new_objects() {
     let batch1_time = base_time - Duration::hours(2);
     let mut batch1_objects = Vec::new();
     for i in 0..5 {
-        let object = create_test_object_index_s3(&format!("test/batch1-{}.jsonl", i), batch1_time);
+        let object = create_test_object_index_s3(&format!("test/batch1-{i}.jsonl"), batch1_time);
         batch1_objects.push(object.clone());
-        env.add_object_to_db_and_s3(object, &format!("Batch 1 data {}", i))
+        env.add_object_to_db_and_s3(object, &format!("Batch 1 data {i}"))
             .await;
     }
 
@@ -390,9 +391,9 @@ async fn multiple_sync_runs_with_new_objects() {
     let batch2_time = base_time - Duration::hours(1);
     let mut batch2_objects = Vec::new();
     for i in 0..3 {
-        let object = create_test_object_index_s3(&format!("test/batch2-{}.jsonl", i), batch2_time);
+        let object = create_test_object_index_s3(&format!("test/batch2-{i}.jsonl"), batch2_time);
         batch2_objects.push(object.clone());
-        env.add_object_to_db_and_s3(object, &format!("Batch 2 data {}", i))
+        env.add_object_to_db_and_s3(object, &format!("Batch 2 data {i}"))
             .await;
     }
 
@@ -418,14 +419,12 @@ async fn multiple_sync_runs_with_new_objects() {
 
     assert_eq!(
         batch1_synced_count, 5,
-        "5 objects from batch1 should be synced, got {}",
-        batch1_synced_count
+        "5 objects from batch1 should be synced, got {batch1_synced_count}"
     );
 
     assert_eq!(
         batch2_synced_count, 1,
-        "1 object from batch2 should be synced, got {}",
-        batch2_synced_count
+        "1 object from batch2 should be synced, got {batch2_synced_count}"
     );
 }
 
@@ -440,11 +439,11 @@ async fn when_since_param_includes_already_synced_objects_they_are_skipped() {
 
     for i in 0..5 {
         let object = create_test_object_index_s3(
-            &format!("test/obj-{}.jsonl", i),
+            &format!("test/obj-{i}.jsonl"),
             base_time + Duration::hours(i as i64),
         );
         objects.push(object.clone());
-        env.add_object_to_db_and_s3(object, &format!("Test data {}", i))
+        env.add_object_to_db_and_s3(object, &format!("Test data {i}"))
             .await;
     }
 
@@ -461,11 +460,11 @@ async fn when_since_param_includes_already_synced_objects_they_are_skipped() {
 
     for i in 5..10 {
         let object = create_test_object_index_s3(
-            &format!("test/obj-{}.jsonl", i),
+            &format!("test/obj-{i}.jsonl"),
             base_time + Duration::hours(i as i64),
         );
         objects.push(object.clone());
-        env.add_object_to_db_and_s3(object, &format!("Test data {}", i))
+        env.add_object_to_db_and_s3(object, &format!("Test data {i}"))
             .await;
     }
 
@@ -476,13 +475,13 @@ async fn when_since_param_includes_already_synced_objects_they_are_skipped() {
     for (i, object) in objects.iter().enumerate().take(8) {
         env.verify_object_synced(object)
             .await
-            .unwrap_or_else(|e| panic!("Object {} should be synced: {}", i, e));
+            .unwrap_or_else(|e| panic!("Object {i} should be synced: {e}"));
     }
 
     for (i, object) in objects.iter().enumerate().skip(8).take(2) {
         env.verify_object_not_synced(object)
             .await
-            .unwrap_or_else(|e| panic!("Object {} should not be synced: {}", i, e));
+            .unwrap_or_else(|e| panic!("Object {i} should not be synced: {e}"));
     }
 }
 
@@ -497,11 +496,11 @@ async fn when_since_param_skips_unsynced_objects_they_remain_unsynced() {
 
     for i in 0..8 {
         let object = create_test_object_index_s3(
-            &format!("test/obj-{}.jsonl", i),
+            &format!("test/obj-{i}.jsonl"),
             base_time + Duration::hours(i as i64),
         );
         objects.push(object.clone());
-        env.add_object_to_db_and_s3(object, &format!("Test data {}", i))
+        env.add_object_to_db_and_s3(object, &format!("Test data {i}"))
             .await;
     }
 
@@ -512,19 +511,19 @@ async fn when_since_param_skips_unsynced_objects_they_remain_unsynced() {
     for (i, object) in objects.iter().enumerate().take(3) {
         env.verify_object_not_synced(object)
             .await
-            .unwrap_or_else(|e| panic!("Object {} should not be synced: {}", i, e));
+            .unwrap_or_else(|e| panic!("Object {i} should not be synced: {e}"));
     }
 
     for (i, object) in objects.iter().enumerate().skip(3).take(3) {
         env.verify_object_synced(object)
             .await
-            .unwrap_or_else(|e| panic!("Object {} should be synced: {}", i, e));
+            .unwrap_or_else(|e| panic!("Object {i} should be synced: {e}"));
     }
 
     for (i, object) in objects.iter().enumerate().skip(6).take(2) {
         env.verify_object_not_synced(object)
             .await
-            .unwrap_or_else(|e| panic!("Object {} should not be synced: {}", i, e));
+            .unwrap_or_else(|e| panic!("Object {i} should not be synced: {e}"));
     }
 
     env.synchronizer.run(None).await.unwrap();
@@ -532,13 +531,13 @@ async fn when_since_param_skips_unsynced_objects_they_remain_unsynced() {
     for (i, object) in objects.iter().enumerate().take(3) {
         env.verify_object_not_synced(object)
             .await
-            .unwrap_or_else(|e| panic!("Object {} should still not be synced: {}", i, e));
+            .unwrap_or_else(|e| panic!("Object {i} should still not be synced: {e}"));
     }
 
     for (i, object) in objects.iter().enumerate().skip(3).take(5) {
         env.verify_object_synced(object)
             .await
-            .unwrap_or_else(|e| panic!("Object {} should be synced: {}", i, e));
+            .unwrap_or_else(|e| panic!("Object {i} should be synced: {e}"));
     }
 }
 
@@ -554,19 +553,19 @@ async fn regular_sync_processes_all_unsynced_objects_from_all_competitions() {
 
     for i in 0..3 {
         let mut object = create_test_object_index_s3(
-            &format!("comp1/obj-{}.jsonl", i),
+            &format!("comp1/obj-{i}.jsonl"),
             base_time + Duration::minutes(i as i64),
         );
         object.competition_id = Some(comp1_id);
-        env.add_object_to_db_and_s3(object, &format!("Comp1 data {}", i))
+        env.add_object_to_db_and_s3(object, &format!("Comp1 data {i}"))
             .await;
 
         let mut object = create_test_object_index_s3(
-            &format!("comp2/obj-{}.jsonl", i),
+            &format!("comp2/obj-{i}.jsonl"),
             base_time + Duration::minutes((i + 5) as i64),
         );
         object.competition_id = Some(comp2_id);
-        env.add_object_to_db_and_s3(object, &format!("Comp2 data {}", i))
+        env.add_object_to_db_and_s3(object, &format!("Comp2 data {i}"))
             .await;
     }
 
@@ -610,11 +609,11 @@ async fn reset_clears_sync_state_and_allows_resyncing() {
     let mut objects = Vec::new();
     for i in 0..3 {
         let object = create_test_object_index_s3(
-            &format!("test/reset-{}.jsonl", i),
+            &format!("test/reset-{i}.jsonl"),
             Utc::now() - Duration::hours(i as i64),
         );
         objects.push(object.clone());
-        env.add_object_to_db_and_s3(object, &format!("Test data {}", i))
+        env.add_object_to_db_and_s3(object, &format!("Test data {i}"))
             .await;
     }
 
@@ -632,7 +631,7 @@ async fn reset_clears_sync_state_and_allows_resyncing() {
         env.recall_storage
             .delete_blob(&recall_key)
             .await
-            .unwrap_or_else(|e| panic!("Failed to delete blob {}: {}", recall_key, e));
+            .unwrap_or_else(|e| panic!("Failed to delete blob {recall_key}: {e}"));
     }
 
     // Verify sync doesn't re-upload (sync state still shows complete)
@@ -676,10 +675,10 @@ async fn start_synchronizer_runs_at_interval() {
 
     for i in 0..6 {
         let object = create_test_object_index_s3(
-            &format!("test/interval-{}.jsonl", i),
+            &format!("test/interval-{i}.jsonl"),
             base_time - Duration::minutes(i as i64),
         );
-        env.add_object_to_db_and_s3(object, &format!("Test data {}", i))
+        env.add_object_to_db_and_s3(object, &format!("Test data {i}"))
             .await;
     }
 
@@ -754,8 +753,7 @@ async fn recall_key_structure_follows_required_format() {
 
     assert!(
         exists_with_correct_key,
-        "Object should be stored in Recall with key: {}",
-        expected_key
+        "Object should be stored in Recall with key: {expected_key}"
     );
 
     let exists_with_s3_key = env

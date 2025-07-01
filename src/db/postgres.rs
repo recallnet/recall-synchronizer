@@ -27,7 +27,7 @@ impl PostgresDatabase {
     fn get_enum_values() -> String {
         DataType::all_variants()
             .iter()
-            .map(|dt| format!("'{}'", dt))
+            .map(|dt| format!("'{dt}'"))
             .collect::<Vec<_>>()
             .join(",\n        ")
     }
@@ -35,33 +35,37 @@ impl PostgresDatabase {
     /// Create enum type, handling race conditions gracefully
     async fn create_enum_type(&self, schema_prefix: Option<&str>) -> Result<(), DatabaseError> {
         let (enum_name, debug_name) = match schema_prefix {
-            Some(schema) => (format!("{}.sync_data_type", schema), format!("{}.sync_data_type", schema)),
+            Some(schema) => (
+                format!("{schema}.sync_data_type"),
+                format!("{schema}.sync_data_type"),
+            ),
             None => ("sync_data_type".to_string(), "sync_data_type".to_string()),
         };
 
-        let create_enum_query = format!(
-            "CREATE TYPE {} AS ENUM (\n        {}\n    )",
-            enum_name,
-            Self::get_enum_values()
-        );
+        let enum_values = Self::get_enum_values();
+        let create_enum_query =
+            format!("CREATE TYPE {enum_name} AS ENUM (\n        {enum_values}\n    )");
 
-        debug!("Creating {} enum", debug_name);
-        
+        debug!("Creating {debug_name} enum");
+
         match sqlx::query(&create_enum_query).execute(&self.pool).await {
             Ok(_) => {
-                debug!("Successfully created {} enum", debug_name);
+                debug!("Successfully created {debug_name} enum");
                 Ok(())
             }
             Err(e) => {
                 let error_str = e.to_string();
-                if error_str.contains("already exists") || 
-                   error_str.contains("duplicate key value") ||
-                   error_str.contains("pg_type_typname_nsp_index") {
-                    debug!("{} enum already exists", debug_name);
+                if error_str.contains("already exists")
+                    || error_str.contains("duplicate key value")
+                    || error_str.contains("pg_type_typname_nsp_index")
+                {
+                    debug!("{debug_name} enum already exists");
                     Ok(())
                 } else {
-                    error!("Failed to create {} enum: {}", debug_name, e);
-                    Err(DatabaseError::QueryError(format!("Failed to create enum type: {}", e)))
+                    error!("Failed to create {debug_name} enum: {e}");
+                    Err(DatabaseError::QueryError(format!(
+                        "Failed to create enum type: {e}"
+                    )))
                 }
             }
         }
@@ -79,15 +83,14 @@ impl PostgresDatabase {
             .idle_timeout(Duration::from_secs(60))
             .connect_lazy(database_url)
             .map_err(|e| {
-                error!("Failed to create connection pool: {}", e);
+                error!("Failed to create connection pool: {e}");
                 DatabaseError::ConnectionError(e.to_string())
             })?;
 
         if let Err(e) = sqlx::query("SELECT 1").execute(&pool).await {
-            error!("Database connectivity test failed: {}", e);
+            error!("Database connectivity test failed: {e}");
             return Err(DatabaseError::ConnectionError(format!(
-                "Database is not accessible: {}",
-                e
+                "Database is not accessible: {e}"
             )));
         };
 
@@ -112,20 +115,20 @@ impl PostgresDatabase {
 
     /// Initialize a schema with the required tables
     async fn initialize_schema(&self, schema_name: &str) -> Result<(), DatabaseError> {
-        info!("Initializing schema: {}", schema_name);
+        info!("Initializing schema: {schema_name}");
 
         // First ensure the enum exists in public schema (needed for type casting)
         self.ensure_enum_exists().await?;
 
         // Create schema if it doesn't exist
-        let create_schema_query = format!("CREATE SCHEMA IF NOT EXISTS {}", schema_name);
-        debug!("Executing: {}", create_schema_query);
+        let create_schema_query = format!("CREATE SCHEMA IF NOT EXISTS {schema_name}");
+        debug!("Executing: {create_schema_query}");
         sqlx::query(&create_schema_query)
             .execute(&self.pool)
             .await
             .map_err(|e| {
-                error!("Failed to create schema '{}': {}", schema_name, e);
-                DatabaseError::QueryError(format!("Failed to create schema: {}", e))
+                error!("Failed to create schema '{schema_name}': {e}");
+                DatabaseError::QueryError(format!("Failed to create schema: {e}"))
             })?;
 
         // Create the enum type in the schema if it doesn't exist
@@ -136,24 +139,22 @@ impl PostgresDatabase {
 
         let create_table_query = format!(
             r#"
-            CREATE TABLE IF NOT EXISTS {}.object_index ({})
-            "#,
-            schema_name, table_definition
+            CREATE TABLE IF NOT EXISTS {schema_name}.object_index ({table_definition})
+            "#
         );
 
-        debug!("Creating object_index table in schema '{}'", schema_name);
+        debug!("Creating object_index table in schema '{schema_name}'");
         sqlx::query(&create_table_query)
             .execute(&self.pool)
             .await
             .map_err(|e| {
-                error!("Failed to create object_index table: {}", e);
-                DatabaseError::QueryError(format!("Failed to create table: {}", e))
+                error!("Failed to create object_index table: {e}");
+                DatabaseError::QueryError(format!("Failed to create table: {e}"))
             })?;
 
         // Create index on created_at
         let create_index_query = format!(
-            "CREATE INDEX IF NOT EXISTS object_index_created_at_idx ON {}.object_index (created_at)",
-            schema_name
+            "CREATE INDEX IF NOT EXISTS object_index_created_at_idx ON {schema_name}.object_index (created_at)"
         );
 
         debug!("Creating index on created_at");
@@ -161,21 +162,18 @@ impl PostgresDatabase {
             .execute(&self.pool)
             .await
             .map_err(|e| {
-                error!("Failed to create index: {}", e);
-                DatabaseError::QueryError(format!("Failed to create index: {}", e))
+                error!("Failed to create index: {e}");
+                DatabaseError::QueryError(format!("Failed to create index: {e}"))
             })?;
 
-        info!(
-            "Schema '{}' initialization completed successfully",
-            schema_name
-        );
+        info!("Schema '{schema_name}' initialization completed successfully");
         Ok(())
     }
 
     /// Get the table name with schema prefix if applicable
     fn table_name(&self) -> String {
         match &self.schema {
-            Some(schema) => format!("{}.object_index", schema),
+            Some(schema) => format!("{schema}.object_index"),
             None => "object_index".to_string(),
         }
     }
@@ -189,19 +187,16 @@ impl Database for PostgresDatabase {
         since: Option<DateTime<Utc>>,
         after_id: Option<uuid::Uuid>,
     ) -> Result<Vec<ObjectIndex>, DatabaseError> {
-        debug!(
-            "Querying objects with limit={}, since={:?}, after_id={:?}",
-            limit, since, after_id
-        );
+        debug!("Querying objects with limit={limit}, since={since:?}, after_id={after_id:?}");
 
+        let select_columns = self.mode.select_columns();
+        let table_name = self.table_name();
         let query_base = format!(
             r#"
             SELECT
-                {}
-            FROM {}
-            "#,
-            self.mode.select_columns(),
-            self.table_name()
+                {select_columns}
+            FROM {table_name}
+            "#
         );
 
         // Build WHERE clause dynamically based on provided filters
@@ -212,18 +207,16 @@ impl Database for PostgresDatabase {
         // Timestamp and after_id filters
         match (since, after_id) {
             (Some(_), Some(_)) => {
+                let next_param = param_count + 1;
                 where_clauses.push(format!(
-                    "(created_at > ${} OR (created_at = ${} AND id > ${}))",
-                    param_count,
-                    param_count,
-                    param_count + 1
+                    "(created_at > ${param_count} OR (created_at = ${param_count} AND id > ${next_param}))"
                 ));
                 bind_params.push("since".to_string());
                 bind_params.push("after_id".to_string());
                 param_count += 2;
             }
             (Some(_), None) => {
-                where_clauses.push(format!("created_at > ${}", param_count));
+                where_clauses.push(format!("created_at > ${param_count}"));
                 bind_params.push("since".to_string());
                 param_count += 1;
             }
@@ -232,20 +225,15 @@ impl Database for PostgresDatabase {
 
         // Build final query
         let query = if where_clauses.is_empty() {
-            format!(
-                "{} ORDER BY created_at ASC, id ASC LIMIT ${}",
-                query_base, param_count
-            )
+            format!("{query_base} ORDER BY created_at ASC, id ASC LIMIT ${param_count}")
         } else {
+            let where_clause = where_clauses.join(" AND ");
             format!(
-                "{} WHERE {} ORDER BY created_at ASC, id ASC LIMIT ${}",
-                query_base,
-                where_clauses.join(" AND "),
-                param_count
+                "{query_base} WHERE {where_clause} ORDER BY created_at ASC, id ASC LIMIT ${param_count}"
             )
         };
 
-        debug!("Executing query: {}", query);
+        debug!("Executing query: {query}");
 
         // Execute query with appropriate bindings
         let mut query_builder = sqlx::query(&query);
@@ -267,7 +255,8 @@ impl Database for PostgresDatabase {
 
         let rows = match query_builder.fetch_all(&self.pool).await {
             Ok(rows) => {
-                debug!("Query returned {} rows", rows.len());
+                let row_count = rows.len();
+                debug!("Query returned {row_count} rows");
                 rows
             }
             Err(e) => {
@@ -275,7 +264,7 @@ impl Database for PostgresDatabase {
                     warn!("Table does not exist, returning empty result");
                     return Ok(Vec::new());
                 }
-                error!("Database query failed: {}", e);
+                error!("Database query failed: {e}");
                 return Err(DatabaseError::QueryError(e.to_string()));
             }
         };
@@ -286,7 +275,8 @@ impl Database for PostgresDatabase {
             result.push(self.mode.object_from_row(row)?);
         }
 
-        info!("Retrieved {} objects from database", result.len());
+        let object_count = result.len();
+        info!("Retrieved {object_count} objects from database");
         Ok(result)
     }
 
@@ -297,7 +287,7 @@ impl Database for PostgresDatabase {
         let query = self.mode.new_insert_query(&object, &self.table_name());
 
         query.execute(&self.pool).await.map_err(|e| {
-            error!("Failed to insert object: {}", e);
+            error!("Failed to insert object: {e}");
             DatabaseError::QueryError(e.to_string())
         })?;
 
