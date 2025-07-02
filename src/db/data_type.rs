@@ -8,10 +8,10 @@ use std::str::FromStr;
 pub enum DataType {
     #[serde(rename = "trade")]
     Trade,
-    #[serde(rename = "agent_rank_history")]
-    AgentRankHistory,
-    #[serde(rename = "agent_rank")]
-    AgentRank,
+    #[serde(rename = "agent_score_history")]
+    AgentScoreHistory,
+    #[serde(rename = "agent_score")]
+    AgentScore,
     #[serde(rename = "competitions_leaderboard")]
     CompetitionsLeaderboard,
     #[serde(rename = "portfolio_snapshot")]
@@ -23,8 +23,8 @@ impl DataType {
     pub fn all_variants() -> &'static [DataType] {
         &[
             DataType::Trade,
-            DataType::AgentRankHistory,
-            DataType::AgentRank,
+            DataType::AgentScoreHistory,
+            DataType::AgentScore,
             DataType::CompetitionsLeaderboard,
             DataType::PortfolioSnapshot,
         ]
@@ -35,8 +35,8 @@ impl fmt::Display for DataType {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let s = match self {
             DataType::Trade => "trade",
-            DataType::AgentRankHistory => "agent_rank_history",
-            DataType::AgentRank => "agent_rank",
+            DataType::AgentScoreHistory => "agent_score_history",
+            DataType::AgentScore => "agent_score",
             DataType::CompetitionsLeaderboard => "competitions_leaderboard",
             DataType::PortfolioSnapshot => "portfolio_snapshot",
         };
@@ -50,8 +50,8 @@ impl FromStr for DataType {
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         match s {
             "trade" => Ok(DataType::Trade),
-            "agent_rank_history" => Ok(DataType::AgentRankHistory),
-            "agent_rank" => Ok(DataType::AgentRank),
+            "agent_score_history" => Ok(DataType::AgentScoreHistory),
+            "agent_score" => Ok(DataType::AgentScore),
             "competitions_leaderboard" => Ok(DataType::CompetitionsLeaderboard),
             "portfolio_snapshot" => Ok(DataType::PortfolioSnapshot),
             _ => Err(format!("Unknown data type: {s}")),

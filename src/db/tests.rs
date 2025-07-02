@@ -84,7 +84,7 @@ async fn add_test_objects_s3(db: &(dyn Database + Send + Sync)) -> Vec<ObjectInd
         object.size_bytes = Some(1024 * (i + 1));
         object.data_type = match i % 3 {
             0 => DataType::Trade,
-            1 => DataType::AgentRank,
+            1 => DataType::AgentScore,
             _ => DataType::PortfolioSnapshot,
         };
 
@@ -114,7 +114,7 @@ async fn add_test_objects_direct(db: &(dyn Database + Send + Sync)) -> Vec<Objec
 
         object.data_type = match i % 3 {
             0 => DataType::Trade,
-            1 => DataType::AgentRank,
+            1 => DataType::AgentScore,
             _ => DataType::PortfolioSnapshot,
         };
 

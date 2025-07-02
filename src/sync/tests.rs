@@ -730,7 +730,7 @@ async fn recall_key_structure_follows_required_format() {
     object.id = object_id;
     object.competition_id = Some(competition_id);
     object.agent_id = Some(agent_id);
-    object.data_type = DataType::AgentRankHistory;
+    object.data_type = DataType::AgentScoreHistory;
 
     env.add_object_to_db_and_s3(object.clone(), "Test data for recall key format")
         .await;
@@ -746,7 +746,7 @@ async fn recall_key_structure_follows_required_format() {
 
     let expected_key = format!(
         "{}/{}/{}/{}",
-        competition_id, agent_id, "agent_rank_history", object_id
+        competition_id, agent_id, "agent_score_history", object_id
     );
 
     let exists_with_correct_key = env.recall_storage.has_blob(&expected_key).await.unwrap();
