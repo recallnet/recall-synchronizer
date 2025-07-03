@@ -32,7 +32,6 @@ impl PostgresDatabase {
             None => ("sync_data_type".to_string(), "sync_data_type".to_string()),
         };
 
-        // Use default values for initial creation
         let default_values = [
             "trade",
             "agent_score_history",
