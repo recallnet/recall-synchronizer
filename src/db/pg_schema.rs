@@ -182,7 +182,7 @@ impl SchemaMode {
                     .expect("object_key required for S3 mode");
                 let competition_id = object.competition_id;
                 let agent_id = object.agent_id;
-                let data_type = object.data_type;
+                let data_type = object.data_type.clone();
                 let size_bytes = object.size_bytes;
                 let metadata = object.metadata.clone();
                 let event_timestamp = object.event_timestamp;
@@ -222,7 +222,7 @@ impl SchemaMode {
                 let id = object.id;
                 let competition_id = object.competition_id;
                 let agent_id = object.agent_id;
-                let data_type = object.data_type;
+                let data_type = object.data_type.clone();
                 let size_bytes = object.size_bytes;
                 let metadata = object.metadata.clone();
                 let event_timestamp = object.event_timestamp;

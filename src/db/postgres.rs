@@ -1,4 +1,3 @@
-use crate::db::data_type::DataType;
 use crate::db::database::Database;
 use crate::db::error::DatabaseError;
 use crate::db::models::ObjectIndex;
@@ -23,16 +22,7 @@ impl PostgresDatabase {
         Self::new_with_schema(database_url, None, mode).await
     }
 
-    /// Get the enum values for sync_data_type
-    fn get_enum_values() -> String {
-        DataType::all_variants()
-            .iter()
-            .map(|dt| format!("'{dt}'"))
-            .collect::<Vec<_>>()
-            .join(",\n        ")
-    }
-
-    /// Create enum type, handling race conditions gracefully
+    /// Create enum type with default values if it doesn't exist
     async fn create_enum_type(&self, schema_prefix: Option<&str>) -> Result<(), DatabaseError> {
         let (enum_name, debug_name) = match schema_prefix {
             Some(schema) => (
@@ -42,11 +32,25 @@ impl PostgresDatabase {
             None => ("sync_data_type".to_string(), "sync_data_type".to_string()),
         };
 
-        let enum_values = Self::get_enum_values();
+        // Use default values for initial creation
+        let default_values = [
+            "trade",
+            "agent_score_history",
+            "agent_score",
+            "competitions_leaderboard",
+            "portfolio_snapshot",
+        ];
+
+        let enum_values = default_values
+            .iter()
+            .map(|v| format!("'{v}'"))
+            .collect::<Vec<_>>()
+            .join(",\n        ");
+
         let create_enum_query =
             format!("CREATE TYPE {enum_name} AS ENUM (\n        {enum_values}\n    )");
 
-        debug!("Creating {debug_name} enum");
+        debug!("Creating {debug_name} enum with default values");
 
         match sqlx::query(&create_enum_query).execute(&self.pool).await {
             Ok(_) => {

@@ -1,5 +1,5 @@
 use crate::config::{load_config, Config};
-use crate::db::{data_type::DataType, ObjectIndex};
+use crate::db::ObjectIndex;
 use chrono::{DateTime, Utc};
 use uuid::Uuid;
 
@@ -55,7 +55,7 @@ pub fn create_test_object_index_s3(object_key: &str, created_at: DateTime<Utc>) 
         object_key: Some(object_key.to_string()),
         competition_id: Some(Uuid::new_v4()),
         agent_id: Some(Uuid::new_v4()),
-        data_type: DataType::Trade,
+        data_type: "trade".into(),
         size_bytes: Some(1024),
         metadata: None,
         event_timestamp: Some(created_at),
@@ -83,7 +83,7 @@ pub fn create_test_object_index_direct(
         id: Uuid::new_v4(),
         competition_id: Some(Uuid::parse_str(&competition_id).unwrap_or_else(|_| Uuid::new_v4())),
         agent_id: Some(Uuid::parse_str(&agent_id).unwrap_or_else(|_| Uuid::new_v4())),
-        data_type: DataType::Trade,
+        data_type: "trade".into(),
         size_bytes: Some(data.len() as i64),
         metadata: None,
         event_timestamp: Some(now),

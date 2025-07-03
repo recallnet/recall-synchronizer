@@ -168,7 +168,7 @@ where
         let object_id = object.id;
         let competition_id = object.competition_id;
         let agent_id = object.agent_id;
-        let data_type = object.data_type;
+        let data_type = object.data_type.clone();
         let created_at = object.created_at;
 
         // Create sync record with detailed information
