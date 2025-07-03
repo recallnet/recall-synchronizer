@@ -4,6 +4,7 @@ pub mod error;
 #[cfg(test)]
 pub mod fake;
 pub mod models;
+pub mod pg_data_type;
 pub mod pg_schema;
 pub mod postgres;
 #[cfg(test)]
