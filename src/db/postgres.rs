@@ -99,21 +99,12 @@ impl PostgresDatabase {
 
         let db = PostgresDatabase { pool, schema, mode };
 
-        // If a schema is specified, create it and the tables
         if let Some(ref schema_name) = db.schema {
             db.initialize_schema(schema_name).await?;
-        } else {
-            // Create enum in public schema if no specific schema is provided
-            db.ensure_enum_exists().await?;
         }
 
         info!("PostgreSQL database connection established successfully");
         Ok(db)
-    }
-
-    /// Ensure the enum type exists in the public schema
-    async fn ensure_enum_exists(&self) -> Result<(), DatabaseError> {
-        self.create_enum_type(None).await
     }
 
     /// Initialize a schema with the required tables
@@ -121,7 +112,7 @@ impl PostgresDatabase {
         info!("Initializing schema: {schema_name}");
 
         // First ensure the enum exists in public schema (needed for type casting)
-        self.ensure_enum_exists().await?;
+        self.create_enum_type(None).await?;
 
         // Create schema if it doesn't exist
         let create_schema_query = format!("CREATE SCHEMA IF NOT EXISTS {schema_name}");
