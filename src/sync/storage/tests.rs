@@ -1,7 +1,9 @@
-use crate::sync::storage::models::{SyncRecord, SyncStatus};
+use crate::db::data_type::DataType;
+use crate::sync::storage::models::{FailureType, SyncRecord, SyncStatus};
 use crate::sync::storage::{FakeSyncStorage, SqliteSyncStorage, SyncStorage};
 use crate::test_utils::is_sqlite_enabled;
 use chrono::{Duration, Utc};
+use std::str::FromStr;
 use std::sync::Arc;
 use uuid::Uuid;
 
@@ -17,6 +19,7 @@ fn create_test_record(_object_key: &str, timestamp: chrono::DateTime<Utc>) -> Sy
         Some(Uuid::new_v4()),
         "trade".into(),
         timestamp,
+        SyncStatus::PendingSync,
     )
 }
 
@@ -260,16 +263,23 @@ async fn get_last_object_returns_none_when_empty() {
 }
 
 #[tokio::test]
-async fn clear_all_removes_all_records() {
+async fn clear_all_removes_all_records_and_state() {
     for storage_factory in get_test_storages() {
         let storage = storage_factory().await;
         let test_data = setup_test_data(storage.as_ref()).await;
+
+        // Set last synced object ID
+        storage
+            .set_last_synced_object_id(Uuid::new_v4())
+            .await
+            .unwrap();
 
         let retrieved = storage.get_object(test_data[0].id).await.unwrap();
         assert!(retrieved.is_some());
 
         storage.clear_all().await.unwrap();
 
+        // Verify all records are removed
         for record in &test_data {
             let retrieved = storage.get_object(record.id).await.unwrap();
             assert_eq!(
@@ -279,10 +289,18 @@ async fn clear_all_removes_all_records() {
             );
         }
 
+        // Verify last object is None
         let last_object = storage.get_last_object().await.unwrap();
         assert!(
             last_object.is_none(),
             "Last object should be None after clear_all"
+        );
+
+        // Verify last synced object ID is cleared
+        assert_eq!(
+            storage.get_last_synced_object_id().await.unwrap(),
+            None,
+            "Expected None after clear_all for last synced ID"
         );
     }
 }
@@ -420,22 +438,440 @@ async fn set_last_synced_object_id_overwrites_previous_value() {
 }
 
 #[tokio::test]
-async fn clear_all_removes_last_synced_object_id() {
+async fn record_failure_with_temporary_failure() {
     for storage_factory in get_test_storages() {
         let storage = storage_factory().await;
         storage.clear_all().await.unwrap();
 
+        let record = create_test_record("test/object.jsonl", Utc::now());
+        let id = record.id;
+
+        storage.add_object(record).await.unwrap();
+
         storage
-            .set_last_synced_object_id(Uuid::new_v4())
+            .record_failure(
+                id,
+                FailureType::S3DataRetrieval,
+                "Temporary S3 error".to_string(),
+                false,
+            )
             .await
             .unwrap();
 
-        storage.clear_all().await.unwrap();
-
-        assert_eq!(
-            storage.get_last_synced_object_id().await.unwrap(),
-            None,
-            "Expected None after clear_all for last synced ID"
-        );
+        let retrieved = storage.get_object(id).await.unwrap().unwrap();
+        assert_eq!(retrieved.status, SyncStatus::Failed);
+        assert_eq!(retrieved.retry_count, 1);
+        assert_eq!(retrieved.last_error, Some("Temporary S3 error".to_string()));
+        assert_eq!(retrieved.failure_type, Some(FailureType::S3DataRetrieval));
     }
 }
+
+#[tokio::test]
+async fn record_failure_with_permanent_failure() {
+    for storage_factory in get_test_storages() {
+        let storage = storage_factory().await;
+        storage.clear_all().await.unwrap();
+
+        let record = create_test_record("test/object.jsonl", Utc::now());
+        let id = record.id;
+
+        storage.add_object(record).await.unwrap();
+
+        storage
+            .record_failure(
+                id,
+                FailureType::RecallStorage,
+                "Permanent recall error".to_string(),
+                true,
+            )
+            .await
+            .unwrap();
+
+        let retrieved = storage.get_object(id).await.unwrap().unwrap();
+        assert_eq!(retrieved.status, SyncStatus::FailedPermanently);
+        assert_eq!(retrieved.retry_count, 1);
+        assert_eq!(
+            retrieved.last_error,
+            Some("Permanent recall error".to_string())
+        );
+        assert_eq!(retrieved.failure_type, Some(FailureType::RecallStorage));
+    }
+}
+
+#[tokio::test]
+async fn record_failure_increments_retry_count() {
+    for storage_factory in get_test_storages() {
+        let storage = storage_factory().await;
+        storage.clear_all().await.unwrap();
+
+        let record = create_test_record("test/object.jsonl", Utc::now());
+        let id = record.id;
+
+        storage.add_object(record).await.unwrap();
+
+        storage
+            .record_failure(
+                id,
+                FailureType::S3DataRetrieval,
+                "First failure".to_string(),
+                false,
+            )
+            .await
+            .unwrap();
+
+        storage
+            .record_failure(
+                id,
+                FailureType::S3DataRetrieval,
+                "Second failure".to_string(),
+                false,
+            )
+            .await
+            .unwrap();
+
+        storage
+            .record_failure(
+                id,
+                FailureType::RecallStorage,
+                "Third failure".to_string(),
+                false,
+            )
+            .await
+            .unwrap();
+
+        let retrieved = storage.get_object(id).await.unwrap().unwrap();
+        assert_eq!(retrieved.status, SyncStatus::Failed);
+        assert_eq!(retrieved.retry_count, 3);
+        assert_eq!(retrieved.last_error, Some("Third failure".to_string()));
+        assert_eq!(retrieved.failure_type, Some(FailureType::RecallStorage));
+    }
+}
+
+#[tokio::test]
+async fn get_failed_objects_returns_only_failed_records() {
+    for storage_factory in get_test_storages() {
+        let storage = storage_factory().await;
+        storage.clear_all().await.unwrap();
+
+        let mut records = Vec::new();
+        for i in 0..5 {
+            let record = create_test_record(&format!("test/object_{}.jsonl", i), Utc::now());
+            records.push(record.clone());
+            storage.add_object(record).await.unwrap();
+        }
+
+        storage
+            .set_object_status(records[0].id, SyncStatus::Complete)
+            .await
+            .unwrap();
+        storage
+            .set_object_status(records[1].id, SyncStatus::Processing)
+            .await
+            .unwrap();
+
+        storage
+            .record_failure(
+                records[2].id,
+                FailureType::S3DataRetrieval,
+                "Failed".to_string(),
+                false,
+            )
+            .await
+            .unwrap();
+
+        storage
+            .record_failure(
+                records[3].id,
+                FailureType::RecallStorage,
+                "Failed".to_string(),
+                false,
+            )
+            .await
+            .unwrap();
+
+        storage
+            .record_failure(
+                records[4].id,
+                FailureType::Other,
+                "Permanent fail".to_string(),
+                true,
+            )
+            .await
+            .unwrap();
+
+        let failed_objects = storage.get_failed_objects().await.unwrap();
+
+        assert_eq!(failed_objects.len(), 2);
+        let failed_ids: Vec<_> = failed_objects.iter().map(|r| r.id).collect();
+        assert!(failed_ids.contains(&records[2].id));
+        assert!(failed_ids.contains(&records[3].id));
+        assert!(!failed_ids.contains(&records[4].id));
+    }
+}
+
+#[tokio::test]
+async fn get_permanently_failed_objects_returns_only_permanently_failed_records() {
+    for storage_factory in get_test_storages() {
+        let storage = storage_factory().await;
+        storage.clear_all().await.unwrap();
+
+        let mut records = Vec::new();
+        for i in 0..5 {
+            let record = create_test_record(&format!("test/object_{}.jsonl", i), Utc::now());
+            records.push(record.clone());
+            storage.add_object(record).await.unwrap();
+        }
+
+        storage
+            .set_object_status(records[0].id, SyncStatus::Complete)
+            .await
+            .unwrap();
+        storage
+            .set_object_status(records[1].id, SyncStatus::Processing)
+            .await
+            .unwrap();
+
+        storage
+            .record_failure(
+                records[2].id,
+                FailureType::S3DataRetrieval,
+                "Failed".to_string(),
+                false,
+            )
+            .await
+            .unwrap();
+
+        storage
+            .record_failure(
+                records[3].id,
+                FailureType::RecallStorage,
+                "Permanent fail 1".to_string(),
+                true,
+            )
+            .await
+            .unwrap();
+
+        storage
+            .record_failure(
+                records[4].id,
+                FailureType::Other,
+                "Permanent fail 2".to_string(),
+                true,
+            )
+            .await
+            .unwrap();
+
+        let permanently_failed = storage.get_permanently_failed_objects().await.unwrap();
+
+        assert_eq!(permanently_failed.len(), 2);
+        let failed_ids: Vec<_> = permanently_failed.iter().map(|r| r.id).collect();
+        assert!(failed_ids.contains(&records[3].id));
+        assert!(failed_ids.contains(&records[4].id));
+        assert!(!failed_ids.contains(&records[2].id));
+    }
+}
+
+#[tokio::test]
+async fn sync_record_with_object_index_data() {
+    for storage_factory in get_test_storages() {
+        let storage = storage_factory().await;
+        storage.clear_all().await.unwrap();
+
+        // Create a record with ObjectIndex data
+        let mut record = create_test_record("test/object.jsonl", Utc::now());
+        record.object_key = Some("s3://bucket/key".to_string());
+        record.size_bytes = Some(1024);
+        record.metadata = Some(serde_json::json!({"key": "value"}));
+        record.event_timestamp = Some(Utc::now());
+        record.data = Some(b"test data".to_vec());
+
+        storage.add_object(record.clone()).await.unwrap();
+
+        let retrieved = storage.get_object(record.id).await.unwrap().unwrap();
+        assert_eq!(retrieved.object_key, Some("s3://bucket/key".to_string()));
+        assert_eq!(retrieved.size_bytes, Some(1024));
+        assert_eq!(
+            retrieved.metadata,
+            Some(serde_json::json!({"key": "value"}))
+        );
+        assert_eq!(retrieved.data, Some(b"test data".to_vec()));
+        assert!(retrieved.event_timestamp.is_some());
+    }
+}
+
+#[tokio::test]
+async fn sync_record_from_object_index_conversion() {
+    use crate::db::ObjectIndex;
+
+    let object_index = ObjectIndex {
+        id: Uuid::new_v4(),
+        object_key: Some("s3://bucket/key".to_string()),
+        competition_id: Some(Uuid::new_v4()),
+        agent_id: Some(Uuid::new_v4()),
+        data_type: DataType::from_str("trade").unwrap(),
+        size_bytes: Some(2048),
+        metadata: Some(serde_json::json!({"test": "data"})),
+        event_timestamp: Some(Utc::now()),
+        created_at: Utc::now(),
+        data: Some(b"embedded data".to_vec()),
+    };
+
+    let sync_record = SyncRecord::from_object_index(&object_index, SyncStatus::PendingSync);
+
+    assert_eq!(sync_record.id, object_index.id);
+    assert_eq!(sync_record.object_key, object_index.object_key);
+    assert_eq!(sync_record.competition_id, object_index.competition_id);
+    assert_eq!(sync_record.agent_id, object_index.agent_id);
+    assert_eq!(sync_record.data_type, object_index.data_type);
+    assert_eq!(sync_record.size_bytes, object_index.size_bytes);
+    assert_eq!(sync_record.metadata, object_index.metadata);
+    assert_eq!(sync_record.event_timestamp, object_index.event_timestamp);
+    assert_eq!(sync_record.data, object_index.data);
+    assert_eq!(sync_record.status, SyncStatus::PendingSync);
+    assert_eq!(sync_record.retry_count, 0);
+    assert_eq!(sync_record.last_error, None);
+    assert_eq!(sync_record.failure_type, None);
+}
+
+#[tokio::test]
+async fn sync_record_to_object_index_conversion() {
+    let mut sync_record = create_test_record("test/object.jsonl", Utc::now());
+    sync_record.object_key = Some("s3://bucket/key".to_string());
+    sync_record.size_bytes = Some(1024);
+    sync_record.metadata = Some(serde_json::json!({"key": "value"}));
+    sync_record.event_timestamp = Some(Utc::now());
+    sync_record.data = Some(b"test data".to_vec());
+
+    let object_index = sync_record.to_object_index();
+
+    assert_eq!(object_index.id, sync_record.id);
+    assert_eq!(object_index.object_key, sync_record.object_key);
+    assert_eq!(object_index.competition_id, sync_record.competition_id);
+    assert_eq!(object_index.agent_id, sync_record.agent_id);
+    assert_eq!(object_index.data_type, sync_record.data_type);
+    assert_eq!(object_index.size_bytes, sync_record.size_bytes);
+    assert_eq!(object_index.metadata, sync_record.metadata);
+    assert_eq!(object_index.event_timestamp, sync_record.event_timestamp);
+    assert_eq!(object_index.data, sync_record.data);
+    assert_eq!(object_index.created_at, sync_record.timestamp);
+}
+
+#[tokio::test]
+async fn record_failure_on_nonexistent_object_fails() {
+    for storage_factory in get_test_storages() {
+        let storage = storage_factory().await;
+        storage.clear_all().await.unwrap();
+
+        let nonexistent_id = Uuid::new_v4();
+
+        let result = storage
+            .record_failure(
+                nonexistent_id,
+                FailureType::S3DataRetrieval,
+                "Error".to_string(),
+                false,
+            )
+            .await;
+
+        assert!(result.is_err());
+        assert!(matches!(
+            result.unwrap_err(),
+            crate::sync::storage::error::SyncStorageError::ObjectNotFound(ref id) if id == &nonexistent_id.to_string()
+        ));
+    }
+}
+
+#[tokio::test]
+async fn retry_workflow_simulation() {
+    for storage_factory in get_test_storages() {
+        let storage = storage_factory().await;
+        storage.clear_all().await.unwrap();
+
+        let record = create_test_record("test/object.jsonl", Utc::now());
+        let id = record.id;
+
+        storage.add_object(record).await.unwrap();
+
+        storage
+            .set_object_status(id, SyncStatus::Processing)
+            .await
+            .unwrap();
+
+        storage
+            .record_failure(
+                id,
+                FailureType::S3DataRetrieval,
+                "Temporary network error".to_string(),
+                false,
+            )
+            .await
+            .unwrap();
+
+        let failed_objects = storage.get_failed_objects().await.unwrap();
+        assert_eq!(failed_objects.len(), 1);
+        assert_eq!(failed_objects[0].id, id);
+        assert_eq!(failed_objects[0].retry_count, 1);
+
+        storage
+            .set_object_status(id, SyncStatus::Processing)
+            .await
+            .unwrap();
+
+        storage
+            .record_failure(
+                id,
+                FailureType::RecallStorage,
+                "Recall service unavailable".to_string(),
+                false,
+            )
+            .await
+            .unwrap();
+
+        let failed_objects = storage.get_failed_objects().await.unwrap();
+        assert_eq!(failed_objects.len(), 1);
+        assert_eq!(failed_objects[0].retry_count, 2);
+
+        storage
+            .set_object_status(id, SyncStatus::Processing)
+            .await
+            .unwrap();
+
+        storage
+            .record_failure(
+                id,
+                FailureType::Other,
+                "Data corruption detected".to_string(),
+                true,
+            )
+            .await
+            .unwrap();
+
+        let failed_objects = storage.get_failed_objects().await.unwrap();
+        assert_eq!(failed_objects.len(), 0);
+
+        let permanently_failed = storage.get_permanently_failed_objects().await.unwrap();
+        assert_eq!(permanently_failed.len(), 1);
+        assert_eq!(permanently_failed[0].id, id);
+        assert_eq!(permanently_failed[0].retry_count, 3);
+    }
+}
+
+#[tokio::test]
+async fn large_data_storage_and_retrieval() {
+    for storage_factory in get_test_storages() {
+        let storage = storage_factory().await;
+        storage.clear_all().await.unwrap();
+
+        let mut record = create_test_record("test/large.jsonl", Utc::now());
+        let large_data = vec![0u8; 1024 * 1024]; // 1MB of data
+        record.data = Some(large_data.clone());
+        record.size_bytes = Some(large_data.len() as i64);
+
+        storage.add_object(record.clone()).await.unwrap();
+
+        let retrieved = storage.get_object(record.id).await.unwrap().unwrap();
+        assert_eq!(retrieved.data, Some(large_data));
+        assert_eq!(retrieved.size_bytes, Some(1024 * 1024));
+    }
+}
+

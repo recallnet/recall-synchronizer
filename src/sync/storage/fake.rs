@@ -1,5 +1,5 @@
 use crate::sync::storage::error::SyncStorageError;
-use crate::sync::storage::models::{SyncRecord, SyncStatus};
+use crate::sync::storage::models::{SyncRecord, SyncStatus, FailureType};
 use crate::sync::storage::sync_storage::SyncStorage;
 use async_trait::async_trait;
 use std::collections::HashMap;
@@ -26,6 +26,12 @@ impl FakeSyncStorage {
 #[async_trait]
 impl SyncStorage for FakeSyncStorage {
     async fn add_object(&self, record: SyncRecord) -> Result<(), SyncStorageError> {
+        let mut records = self.records.write().unwrap();
+        records.insert(record.id, record);
+        Ok(())
+    }
+
+    async fn upsert_object(&self, record: SyncRecord) -> Result<(), SyncStorageError> {
         let mut records = self.records.write().unwrap();
         records.insert(record.id, record);
         Ok(())
@@ -91,5 +97,50 @@ impl SyncStorage for FakeSyncStorage {
         let mut last_id = self.last_synced_id.write().unwrap();
         *last_id = None;
         Ok(())
+    }
+
+    async fn record_failure(
+        &self,
+        id: Uuid,
+        failure_type: FailureType,
+        error_message: String,
+        is_permanent: bool,
+    ) -> Result<(), SyncStorageError> {
+        let mut records = self.records.write().unwrap();
+        if let Some(record) = records.get_mut(&id) {
+            record.retry_count += 1;
+            record.last_error = Some(error_message);
+            record.failure_type = Some(failure_type);
+            record.last_attempt_at = chrono::Utc::now();
+            
+            record.status = if is_permanent {
+                SyncStatus::FailedPermanently
+            } else {
+                SyncStatus::Failed
+            };
+            
+            Ok(())
+        } else {
+            Err(SyncStorageError::ObjectNotFound(id.to_string()))
+        }
+    }
+
+    async fn get_failed_objects(&self) -> Result<Vec<SyncRecord>, SyncStorageError> {
+        self.get_objects_with_status(SyncStatus::Failed).await
+    }
+
+    async fn get_permanently_failed_objects(&self) -> Result<Vec<SyncRecord>, SyncStorageError> {
+        self.get_objects_with_status(SyncStatus::FailedPermanently).await
+    }
+
+    async fn clear_object_data(&self, id: Uuid) -> Result<(), SyncStorageError> {
+        let mut records = self.records.write().unwrap();
+        match records.get_mut(&id) {
+            Some(record) => {
+                record.data = None;
+                Ok(())
+            }
+            None => Err(SyncStorageError::ObjectNotFound(id.to_string())),
+        }
     }
 }

@@ -8,6 +8,7 @@ use crate::config::SyncConfig;
 use crate::db::{Database, ObjectIndex};
 use crate::recall::Storage as RecallStorage;
 use crate::s3::Storage as S3Storage;
+use crate::sync::storage::models::FailureType;
 use crate::sync::storage::{SyncRecord, SyncStatus, SyncStorage};
 
 /// Synchronizer that works with ObjectIndex database
@@ -124,6 +125,53 @@ where
         Ok(objects)
     }
 
+    /// Fetch objects from database with retry on failure
+    async fn fetch_objects_with_retry(
+        &self,
+        since: Option<DateTime<Utc>>,
+        limit: usize,
+    ) -> Result<Vec<ObjectIndex>> {
+        const MAX_DB_RETRIES: u32 = 3;
+        const DB_RETRY_DELAY_MS: u64 = 500;
+
+        for attempt in 1..=MAX_DB_RETRIES {
+            match self
+                .fetch_objects_to_sync(since, None, Some(limit as u32))
+                .await
+            {
+                Ok(objects) => return Ok(objects),
+                Err(e) => {
+                    warn!(
+                        "Database fetch attempt {}/{} failed: {}",
+                        attempt, MAX_DB_RETRIES, e
+                    );
+                    if attempt < MAX_DB_RETRIES {
+                        tokio::time::sleep(Duration::from_millis(
+                            DB_RETRY_DELAY_MS * attempt as u64,
+                        ))
+                        .await;
+                    } else {
+                        error!("All database fetch attempts failed, checking for existing failed objects");
+                        return Ok(Vec::new());
+                    }
+                }
+            }
+        }
+
+        Ok(Vec::new())
+    }
+
+    /// Get object indices for failed records that need retry
+    async fn get_object_indices_for_failed_records(&self) -> Result<Vec<ObjectIndex>> {
+        let failed_records = self.sync_storage.get_failed_objects().await?;
+        let object_indices = failed_records
+            .into_iter()
+            .map(|record| record.to_object_index())
+            .collect();
+
+        Ok(object_indices)
+    }
+
     /// Checks if an object should be processed based on its current status
     async fn should_process_object(&self, object: &ObjectIndex) -> Result<bool> {
         let object_id = object.id;
@@ -137,7 +185,11 @@ where
                     debug!("Object {object_id} is already being processed, skipping");
                     Ok(false)
                 }
-                _ => Ok(true),
+                SyncStatus::FailedPermanently => {
+                    debug!("Object {object_id} has failed permanently, skipping");
+                    Ok(false)
+                }
+                SyncStatus::PendingSync | SyncStatus::Failed => Ok(true),
             },
             None => Ok(true),
         }
@@ -166,26 +218,14 @@ where
     /// Synchronizes a single object to Recall
     async fn sync_object(&self, object: &ObjectIndex) -> Result<()> {
         let object_id = object.id;
-        let competition_id = object.competition_id;
-        let agent_id = object.agent_id;
-        let data_type = object.data_type.clone();
-        let created_at = object.created_at;
 
-        // Create sync record with detailed information
-        let sync_record =
-            SyncRecord::new(object_id, competition_id, agent_id, data_type, created_at);
-
-        self.sync_storage.add_object(sync_record).await?;
-        self.sync_storage
-            .set_object_status(object_id, SyncStatus::Processing)
-            .await?;
+        let sync_record = SyncRecord::from_object_index(object, SyncStatus::Processing);
+        self.sync_storage.upsert_object(sync_record).await?;
 
         // Get data based on storage type
         let data_result = if let Some(data) = &object.data {
-            // Object has embedded data
             Ok(data.clone())
         } else if let Some(s3_key) = &object.object_key {
-            // Object uses S3 storage
             match &self.s3_storage {
                 Some(s3) => s3
                     .get_object(s3_key)
@@ -202,7 +242,6 @@ where
 
         match data_result {
             Ok(data) => {
-                // Use the recall key for storing in Recall
                 let recall_key = Self::construct_recall_key(object);
                 match self.recall_storage.add_blob(&recall_key, data).await {
                     Ok(()) => {
@@ -210,16 +249,32 @@ where
                         self.sync_storage
                             .set_object_status(object_id, SyncStatus::Complete)
                             .await?;
+                        // Clear embedded data after successful sync to save space
+                        self.sync_storage.clear_object_data(object_id).await?;
                     }
                     Err(e) => {
                         error!("Failed to submit {recall_key} to Recall: {e}");
-                        // TODO: Implement retry logic
+                        self.sync_storage
+                            .record_failure(
+                                object_id,
+                                FailureType::RecallStorage,
+                                e.to_string(),
+                                false,
+                            )
+                            .await?;
                     }
                 }
             }
             Err(e) => {
                 error!("Failed to get data: {e}");
-                // TODO: Implement retry logic
+                self.sync_storage
+                    .record_failure(
+                        object_id,
+                        FailureType::S3DataRetrieval,
+                        e.to_string(),
+                        false,
+                    )
+                    .await?;
             }
         }
 
@@ -252,73 +307,66 @@ where
     }
 
     /// Runs the synchronization process
-    pub async fn run(&self, since: Option<DateTime<Utc>>) -> Result<()> {
+    pub async fn run(&self, since: Option<DateTime<Utc>>, only_failed: bool) -> Result<()> {
         info!("Starting synchronization");
-
-        let (mut current_since_time, mut current_after_id) = self.get_sync_state(since).await?;
-
-        if let Some(ts) = current_since_time {
-            info!("Synchronizing data since: {ts}");
-        } else {
-            info!("No previous sync timestamp found, syncing all objects");
-        }
 
         let batch_size = self.config.batch_size;
         let mut total_processed = 0;
 
         loop {
-            // Calculate how many more objects we can process
-            let remaining_quota = batch_size.saturating_sub(total_processed);
-            if remaining_quota == 0 {
-                debug!("Batch quota filled. Total processed: {total_processed}");
+            let mut objects_to_process = Vec::new();
+
+            if only_failed {
+                let failed_objects = self.get_object_indices_for_failed_records().await?;
+                objects_to_process.extend(failed_objects);
+            } else {
+                let failed_objects = self.get_object_indices_for_failed_records().await?;
+                let failed_count = failed_objects.len();
+                objects_to_process.extend(failed_objects);
+
+                let remaining_quota = batch_size.saturating_sub(failed_count);
+                if remaining_quota > 0 {
+                    let new_objects = self
+                        .fetch_objects_with_retry(since, remaining_quota)
+                        .await?;
+                    objects_to_process.extend(new_objects);
+                }
+            }
+
+            if objects_to_process.is_empty() {
+                info!("No objects found to synchronize");
                 break;
             }
 
-            // Fetch objects, but limit to our remaining quota
-            let fetch_limit = std::cmp::min(batch_size as u32, remaining_quota as u32);
-            let objects = self
-                .fetch_objects_to_sync(current_since_time, current_after_id, Some(fetch_limit))
-                .await?;
+            let failed_count = if only_failed {
+                objects_to_process.len()
+            } else {
+                self.sync_storage.get_failed_objects().await?.len()
+            };
 
-            if objects.is_empty() {
-                if total_processed == 0 {
-                    info!("No objects found to synchronize");
-                } else {
-                    info!("Synchronization completed. Processed {total_processed} objects");
-                }
-                return Ok(());
-            }
+            info!(
+                "Processing {} objects ({} retries + {} new)",
+                objects_to_process.len(),
+                failed_count,
+                objects_to_process.len() - failed_count
+            );
 
-            info!("Found {} objects to synchronize", objects.len());
-
-            let (last_synced_object, batch_processed) = self.process_object_batch(&objects).await?;
+            let (last_synced_object, batch_processed) =
+                self.process_object_batch(&objects_to_process).await?;
             total_processed += batch_processed;
 
             if let Some(last_object) = last_synced_object {
-                let object_id = last_object.id;
                 self.sync_storage
-                    .set_last_synced_object_id(object_id)
+                    .set_last_synced_object_id(last_object.id)
                     .await?;
             }
 
-            if total_processed >= batch_size {
-                break;
-            }
-
-            // Update state for next iteration if there might be more objects
-            if let Some(last_obj) = objects.last() {
-                current_since_time = Some(last_obj.created_at);
-                current_after_id = Some(last_obj.id);
-
-                debug!(
-                    "Total processed: {total_processed}, continuing to fill batch of {batch_size}"
-                );
-            } else {
+            if only_failed || total_processed >= batch_size {
                 break;
             }
         }
 
-        info!("Synchronization completed");
+        info!("Synchronization completed. Processed {total_processed} objects");
         Ok(())
     }
 
@@ -328,6 +376,22 @@ where
         self.sync_storage.clear_all().await?;
         info!("Synchronization state has been reset");
         Ok(())
+    }
+
+    /// Get failed objects that can be retried
+    pub async fn get_failed_objects(&self) -> Result<Vec<SyncRecord>> {
+        self.sync_storage
+            .get_failed_objects()
+            .await
+            .map_err(|e| anyhow::anyhow!("Failed to get failed objects: {e}"))
+    }
+
+    /// Get permanently failed objects
+    pub async fn get_permanently_failed_objects(&self) -> Result<Vec<SyncRecord>> {
+        self.sync_storage
+            .get_permanently_failed_objects()
+            .await
+            .map_err(|e| anyhow::anyhow!("Failed to get permanently failed objects: {e}"))
     }
 
     /// Starts the synchronizer to run continuously at the specified interval
@@ -340,7 +404,7 @@ where
             interval_timer.tick().await;
 
             info!("Starting synchronization run");
-            match self.run(since).await {
+            match self.run(since, false).await {
                 Ok(()) => {
                     debug!("Synchronization run completed successfully");
                 }

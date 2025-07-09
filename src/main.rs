@@ -44,6 +44,9 @@ enum Commands {
         /// Synchronize only data updated since this timestamp (RFC3339 format)
         #[arg(long)]
         since: Option<String>,
+        /// Process only failed objects (ignore new objects)
+        #[arg(long)]
+        only_failed: bool,
     },
     /// Start the synchronizer to run continuously at specified interval
     Start {
@@ -57,6 +60,12 @@ enum Commands {
     },
     /// Reset synchronization state
     Reset,
+    /// List failed objects
+    ListFailed {
+        /// Show only permanently failed objects
+        #[arg(long)]
+        permanent_only: bool,
+    },
 }
 
 #[tokio::main]
@@ -74,14 +83,15 @@ async fn main() -> Result<()> {
     let _guard = logging::init_logging(config.logging.as_ref())?;
 
     match cli.command {
-        Commands::Run { since } => run_synchronizer(config, since).await,
+        Commands::Run { since, only_failed } => run_synchronizer(config, since, only_failed).await,
         Commands::Start { interval, since } => start_synchronizer(config, interval, since).await,
         Commands::Reset => reset_synchronizer(config).await,
+        Commands::ListFailed { permanent_only } => list_failed_objects(config, permanent_only).await,
     }
 }
 
 /// Run the synchronizer with real database and storage implementations
-async fn run_synchronizer(config: config::Config, since: Option<String>) -> Result<()> {
+async fn run_synchronizer(config: config::Config, since: Option<String>, only_failed: bool) -> Result<()> {
     let since_time = if let Some(ts) = since {
         Some(
             DateTime::parse_from_rfc3339(&ts)
@@ -94,7 +104,7 @@ async fn run_synchronizer(config: config::Config, since: Option<String>) -> Resu
 
     let synchronizer = initialize_synchronizer(config).await?;
 
-    if let Err(e) = synchronizer.run(since_time).await {
+    if let Err(e) = synchronizer.run(since_time, only_failed).await {
         error!("Synchronizer failed: {e}");
         process::exit(1);
     }
@@ -112,6 +122,43 @@ async fn reset_synchronizer(config: config::Config) -> Result<()> {
 
     info!("Synchronization state has been reset successfully");
 
+    Ok(())
+}
+
+/// List failed objects from the sync storage
+async fn list_failed_objects(config: config::Config, permanent_only: bool) -> Result<()> {
+    let synchronizer = initialize_synchronizer(config).await?;
+    
+    let failed_objects = if permanent_only {
+        synchronizer.get_permanently_failed_objects().await?
+    } else {
+        synchronizer.get_failed_objects().await?
+    };
+    
+    if failed_objects.is_empty() {
+        let status_type = if permanent_only { "permanently failed" } else { "failed" };
+        info!("No {status_type} objects found");
+        return Ok(());
+    }
+    
+    let status_type = if permanent_only { "permanently failed" } else { "failed" };
+    info!("Found {} {status_type} objects:", failed_objects.len());
+    
+    for record in failed_objects {
+        let error_msg = record.last_error.as_deref().unwrap_or("No error message");
+        let failure_type = record.failure_type.as_ref().map(|ft| format!("{:?}", ft)).unwrap_or("Unknown".to_string());
+        
+        println!("ID: {}", record.id);
+        println!("  Status: {:?}", record.status);
+        println!("  Data Type: {}", record.data_type);
+        println!("  Retry Count: {}", record.retry_count);
+        println!("  Failure Type: {}", failure_type);
+        println!("  Last Error: {}", error_msg);
+        println!("  First Attempt: {}", record.first_attempt_at.format("%Y-%m-%d %H:%M:%S UTC"));
+        println!("  Last Attempt: {}", record.last_attempt_at.format("%Y-%m-%d %H:%M:%S UTC"));
+        println!();
+    }
+    
     Ok(())
 }
 

@@ -11,13 +11,34 @@ use uuid::Uuid;
 #[derive(Clone)]
 pub struct FakeDatabase {
     objects: Arc<RwLock<HashMap<Uuid, ObjectIndex>>>,
+    should_fail_get_objects: Arc<RwLock<bool>>,
+    failure_count: Arc<RwLock<u32>>,
 }
 
 impl FakeDatabase {
     pub fn new() -> Self {
         FakeDatabase {
             objects: Arc::new(RwLock::new(HashMap::new())),
+            should_fail_get_objects: Arc::new(RwLock::new(false)),
+            failure_count: Arc::new(RwLock::new(0)),
         }
+    }
+
+    /// Simulate failures for get_objects operations
+    /// - fail_count: Number of consecutive failures before success (0 = always fail)
+    pub fn fake_fail_get_objects(&self, fail_count: u32) {
+        let mut should_fail = self.should_fail_get_objects.write().unwrap();
+        *should_fail = true;
+        let mut count = self.failure_count.write().unwrap();
+        *count = fail_count;
+    }
+
+    /// Clear all failures to allow subsequent operations to succeed
+    pub fn fake_clear_failures(&self) {
+        let mut should_fail = self.should_fail_get_objects.write().unwrap();
+        *should_fail = false;
+        let mut count = self.failure_count.write().unwrap();
+        *count = 0;
     }
 }
 
@@ -29,6 +50,23 @@ impl Database for FakeDatabase {
         since: Option<DateTime<Utc>>,
         after_id: Option<Uuid>,
     ) -> Result<Vec<ObjectIndex>, DatabaseError> {
+        // Check if we should simulate a failure
+        let should_fail = {
+            let should_fail = self.should_fail_get_objects.read().unwrap();
+            *should_fail
+        };
+
+        if should_fail {
+            let mut count = self.failure_count.write().unwrap();
+            if *count > 0 {
+                *count -= 1;
+                return Err(DatabaseError::ConnectionError("Simulated database failure".to_string()));
+            } else if *count == 0 {
+                // Always fail
+                return Err(DatabaseError::ConnectionError("Simulated permanent database failure".to_string()));
+            }
+        }
+
         let objects = self.objects.read().unwrap();
 
         let mut filtered: Vec<ObjectIndex> = objects

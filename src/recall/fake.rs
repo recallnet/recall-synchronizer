@@ -10,6 +10,7 @@ use std::sync::{Arc, Mutex};
 pub struct FakeRecallStorage {
     data: Arc<Mutex<HashMap<String, Vec<u8>>>>,
     fail_blobs: Arc<Mutex<HashSet<String>>>,
+    fail_add_blob: Arc<Mutex<HashMap<String, u32>>>,
 }
 
 impl FakeRecallStorage {
@@ -18,6 +19,7 @@ impl FakeRecallStorage {
         FakeRecallStorage {
             data: Arc::new(Mutex::new(HashMap::new())),
             fail_blobs: Arc::new(Mutex::new(HashSet::new())),
+            fail_add_blob: Arc::new(Mutex::new(HashMap::new())),
         }
     }
 
@@ -33,6 +35,22 @@ impl FakeRecallStorage {
         let mut fail_blobs = self.fail_blobs.lock().unwrap();
         fail_blobs.remove(key);
     }
+
+    /// Simulate failures for add_blob operations
+    /// - key: The blob key to fail
+    /// - fail_count: Number of consecutive failures before success (0 = always fail)
+    pub fn fake_fail_add_blob(&self, key: &str, fail_count: u32) {
+        let mut fail_add_blob = self.fail_add_blob.lock().unwrap();
+        fail_add_blob.insert(key.to_string(), fail_count);
+    }
+
+    /// Clear all failures to allow subsequent operations to succeed
+    pub async fn fake_clear_failures(&self) {
+        let mut fail_blobs = self.fail_blobs.lock().unwrap();
+        fail_blobs.clear();
+        let mut fail_add_blob = self.fail_add_blob.lock().unwrap();
+        fail_add_blob.clear();
+    }
 }
 
 #[async_trait]
@@ -45,6 +63,25 @@ impl Storage for FakeRecallStorage {
             )));
         }
         drop(fail_blobs);
+
+        // Check if we should simulate a failure
+        let mut fail_add_blob = self.fail_add_blob.lock().unwrap();
+        if let Some(fail_count) = fail_add_blob.get_mut(key) {
+            if *fail_count > 0 {
+                *fail_count -= 1;
+                return Err(RecallError::Operation(format!(
+                    "Simulated add_blob failure for key: {}",
+                    key
+                )));
+            } else if *fail_count == 0 {
+                // Always fail
+                return Err(RecallError::Operation(format!(
+                    "Simulated permanent add_blob failure for key: {}",
+                    key
+                )));
+            }
+        }
+        drop(fail_add_blob);
 
         let mut storage_data = self.data.lock().unwrap();
         storage_data.insert(key.to_string(), data);

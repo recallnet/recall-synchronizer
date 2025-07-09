@@ -39,6 +39,8 @@ pub struct RecallConfig {
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct SyncConfig {
     pub batch_size: usize,
+    #[serde(default = "default_max_retries")]
+    pub max_retries: u32,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -57,6 +59,10 @@ pub struct LoggingConfig {
 
 fn default_max_files() -> usize {
     5
+}
+
+fn default_max_retries() -> u32 {
+    3
 }
 
 pub fn load_config(path: &str) -> Result<Config> {
